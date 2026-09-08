@@ -1,0 +1,56 @@
+name: build-accdb-941848
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'accdb-941848/**'
+      - '.github/workflows/build-accdb-941848.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: accdb-941848
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Resolve Jackcess classpath
+        run: mvn -q dependency:build-classpath -Dmdep.outputFile=cp.txt
+
+      - name: Compile generator and verifier
+        run: |
+          CP="$(cat cp.txt)"
+          javac -encoding UTF-8 -cp "$CP" CreateLibraryAccess.java VerifyLibraryAccess.java
+
+      - name: Build ACCDB
+        run: |
+          CP="$(cat cp.txt)"
+          java -cp ".:$CP" CreateLibraryAccess
+
+      - name: Verify ACCDB by reopening it
+        run: |
+          CP="$(cat cp.txt)"
+          java -cp ".:$CP" VerifyLibraryAccess | tee 941848_access_verify.txt
+          file 941848_БД_Библиотека.accdb | tee -a 941848_access_verify.txt
+          sha256sum 941848_БД_Библиотека.accdb | tee -a 941848_access_verify.txt
+
+      - name: Produce text bridge
+        run: base64 -w 0 941848_БД_Библиотека.accdb > 941848_БД_Библиотека.accdb.b64
+
+      - name: Upload result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: accdb-941848
+          path: |
+            accdb-941848/941848_БД_Библиотека.accdb
+            accdb-941848/941848_access_verify.txt
+            accdb-941848/941848_БД_Библиотека.accdb.b64
+          if-no-files-found: error
