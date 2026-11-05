@@ -33,32 +33,39 @@ Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
-function Click-UiButtonByName([string]$name){
+function Click-UiButtonForProcess {
+  param([int]$ProcessId,[string]$Name)
   try{
     $root=[System.Windows.Automation.AutomationElement]::RootElement
-    $cond=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,$name)
-    $el=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$cond)
+    $pidCond=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty,$ProcessId)
+    $nameCond=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,$Name)
+    $andCond=New-Object System.Windows.Automation.AndCondition($pidCond,$nameCond)
+    $el=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$andCond)
     if($el){
       $pat=$el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
       $pat.Invoke()
-      L ("UI Automation clicked: " + $name)
+      L ("UI Automation clicked for PID " + $ProcessId + ": " + $Name)
       return $true
     }
-  }catch{L ("UI Automation click error for " + $name + ": " + $_.Exception.Message)}
+  }catch{
+    L ("UI Automation click error for PID " + $ProcessId + " / " + $Name + ": " + $_.Exception.Message)
+  }
   return $false
 }
 
 function Handle-MultisimActivation {
-  $clicked=$false
-  for($i=0;$i -lt 10;$i++){
-    if(Click-UiButtonByName "Begin 7 Day Trial"){$clicked=$true;Start-Sleep -Seconds 5}
-    foreach($n in @("Continue","OK","Close","Start Trial","Begin Trial","Finish")){
-      if(Click-UiButtonByName $n){$clicked=$true;Start-Sleep -Seconds 2}
+  param([int]$ProcessId)
+  for($i=0;$i -lt 20;$i++){
+    if(Click-UiButtonForProcess -ProcessId $ProcessId -Name "Begin 7 Day Trial"){
+      Start-Sleep -Seconds 12
+      return $true
     }
-    if(-not (Click-UiButtonByName "Begin 7 Day Trial")){Start-Sleep -Seconds 1}
+    Start-Sleep -Seconds 1
   }
-  return $clicked
+  L "Begin 7 Day Trial button was not found for Multisim PID"
+  return $false
 }
+
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -182,7 +189,7 @@ GrabWindow $mp.MainWindowHandle "01_blank_multisim.png"
 
 # First launch may be covered by the official NI activation dialog.
 # Use the legitimate 7-day evaluation mode so the GUI can be automated.
-$trialHandled=Handle-MultisimActivation
+$trialHandled=Handle-MultisimActivation -ProcessId $mp.Id
 L ("Activation/trial dialog handled=" + $trialHandled)
 Start-Sleep -Seconds 6
 GrabDesktop "01b_after_trial_activation.png"
