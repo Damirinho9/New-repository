@@ -6,6 +6,28 @@ New-Item -ItemType Directory -Force -Path $A | Out-Null
 $Log=Join-Path $A "gui-runner.log"
 function L([string]$m){$s="[$(Get-Date -Format o)] $m";Write-Host $s;Add-Content $Log $s}
 
+function Start-WatchedProcess {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments,
+    [int]$TimeoutSeconds,
+    [string]$Label
+  )
+  L ("Starting " + $Label)
+  try{
+    $p=Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru
+    L ($Label + " PID=" + $p.Id)
+    $finished=$p.WaitForExit($TimeoutSeconds*1000)
+    if($finished){L ($Label + " exited code=" + $p.ExitCode);return $p.ExitCode}
+    L ($Label + " wrapper timeout after " + $TimeoutSeconds + " sec")
+    try{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}catch{}
+    return 99998
+  }catch{
+    L ($Label + " start error=" + $_.Exception.Message)
+    return 99999
+  }
+}
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
@@ -65,13 +87,40 @@ $sig=Get-AuthenticodeSignature $installer
 L "Signature status=$($sig.Status) signer=$($sig.SignerCertificate.Subject)"
 if($sig.Status -ne "Valid"){L "Installer signature invalid";exit 11}
 
-L "Installing NI Circuit Design Suite Professional 14.3 silently"
-try{
-  $p=Start-Process -FilePath $installer -ArgumentList @("--quiet","--accept-eulas","--prevent-reboot") -Wait -PassThru
-  L "Installer exit=$($p.ExitCode)"
-}catch{L "Installer exception=$($_.Exception.ToString())"}
+L "Installing NI Circuit Design Suite Professional 14.3 with bounded bootstrapper wait"
+$boot=Start-WatchedProcess -FilePath $installer -Arguments @("--quiet","--accept-eulas","--prevent-reboot") -TimeoutSeconds 480 -Label "NI bootstrapper"
+L ("Bootstrapper stage returned " + $boot)
 
-$ms=Get-ChildItem "C:\Program Files (x86)\National Instruments","C:\Program Files\National Instruments" -Filter "Multisim.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+function Find-Multisim {
+  Get-ChildItem "C:\Program Files (x86)\National Instruments","C:\Program Files\National Instruments" -Filter "Multisim.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+}
+
+$ms=$null
+for($i=0;$i -lt 12;$i++){
+  $ms=Find-Multisim
+  if($ms){break}
+  Start-Sleep -Seconds 10
+}
+
+# If wrapper ended but product is not present, use NI Package Manager URI embedded in the signed bootstrapper.
+if(-not $ms){
+  $nipm=@(
+    "C:\Program Files\National Instruments\NI Package Manager\NIPackageManager.exe",
+    "C:\Program Files (x86)\National Instruments\NI Package Manager\NIPackageManager.exe"
+  ) | Where-Object {Test-Path $_} | Select-Object -First 1
+  if($nipm){
+    L "Multisim not found after bootstrapper; trying direct NI install-item URI"
+    $uri="nipkg://store/1/install-item/ni-cds-professional_14.3"
+    $dc=Start-WatchedProcess -FilePath $nipm -Arguments @("--uri=$uri","--quiet","--accept-eulas","--prevent-reboot") -TimeoutSeconds 900 -Label "NI Package Manager direct install"
+    L ("Direct URI stage returned " + $dc)
+  }
+  for($i=0;$i -lt 30;$i++){
+    $ms=Find-Multisim
+    if($ms){break}
+    Start-Sleep -Seconds 10
+  }
+}
+
 if(-not $ms){L "Multisim.exe not found";GrabDesktop "00_install_failed.png";exit 12}
 L "Multisim.exe=$($ms.FullName)"
 L "Multisim SHA256=$((Get-FileHash $ms.FullName -Algorithm SHA256).Hash)"
