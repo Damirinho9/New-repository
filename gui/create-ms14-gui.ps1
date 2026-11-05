@@ -49,9 +49,9 @@ function GrabWindow([IntPtr]$h,[string]$name){
   }catch{L "Window screenshot error: $($_.Exception.Message)"}
 }
 
-$installerUrl="https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe"
-$installer=Join-Path $env:RUNNER_TEMP "ni-cds-educational_14.3_online.exe"
-L "Downloading official NI Education 14.3 bootstrapper"
+$installerUrl="https://download.ni.com/support/nipkg/products/ni-c/ni-cds-professional/14.3/online/ni-cds-professional_14.3_online.exe"
+$installer=Join-Path $env:RUNNER_TEMP "ni-cds-professional_14.3_online.exe"
+L "Downloading official NI Professional 14.3 bootstrapper"
 try{
   Invoke-WebRequest -Uri $installerUrl -OutFile $installer -UseBasicParsing
 }catch{
@@ -60,12 +60,12 @@ try{
 }
 $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
 L "Installer size=$((Get-Item $installer).Length) SHA256=$hash"
-L "User-uploaded reference SHA256=c16a976a805c44e247c852236f01a292174aed6ac5cf2eee559f361b9a78309d"
+L "Known Professional bootstrapper SHA256=2cae359f70209dde2b3c1a6737a107a32a0847fdaacd2d31530788c247dcd9f2"
 $sig=Get-AuthenticodeSignature $installer
 L "Signature status=$($sig.Status) signer=$($sig.SignerCertificate.Subject)"
 if($sig.Status -ne "Valid"){L "Installer signature invalid";exit 11}
 
-L "Installing NI Circuit Design Suite Education 14.3 silently"
+L "Installing NI Circuit Design Suite Professional 14.3 silently"
 try{
   $p=Start-Process -FilePath $installer -ArgumentList @("--quiet","--accept-eulas","--prevent-reboot") -Wait -PassThru
   L "Installer exit=$($p.ExitCode)"
