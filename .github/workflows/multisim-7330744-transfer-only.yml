@@ -1,0 +1,45 @@
+name: Multisim Stage 5 transfer only - order 7330744
+
+on:
+  push:
+    branches:
+      - multisim-7330744-windows
+    paths:
+      - ".github/workflows/multisim-7330744-transfer-only.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: multisim-7330744-transfer-only
+  cancel-in-progress: true
+
+jobs:
+  transfer:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Multisim silently
+        shell: powershell
+        run: |
+          $ProgressPreference="SilentlyContinue"
+          $url="https://download.ni.com/support/nipkg/products/ni-c/ni-cds-professional/14.3/online/ni-cds-professional_14.3_online.exe"
+          $exe=Join-Path $env:RUNNER_TEMP "ni-cds-professional_14.3_online.exe"
+          Invoke-WebRequest -Uri $url -OutFile $exe -UseBasicParsing
+          $p=Start-Process -FilePath $exe -ArgumentList @("--quiet","--accept-eulas","--prevent-reboot") -Wait -PassThru
+          Write-Host "Installer exit: $($p.ExitCode)"
+      - name: Run actual Multisim DC transfer sweep
+        shell: powershell
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force -Path .\stage5-artifacts | Out-Null
+          $ps32="$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+          & $ps32 -NoProfile -ExecutionPolicy Bypass -File .\stage5\run-transfer-com.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+          Write-Host "Transfer exit: $LASTEXITCODE"
+      - name: Upload transfer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330744-transfer
+          path: stage5-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
