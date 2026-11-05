@@ -1,16 +1,16 @@
-name: Multisim direct CIR import MS14 coordinate trial - order 7330744
+name: Multisim direct CIR import MS14 coordinate trial v2 - order 7330744
 
 on:
   push:
     branches:
-      - multisim-7330744-gui-prof-direct-click
+      - multisim-7330744-gui-prof-direct-click2
     paths:
       - ".github/workflows/multisim-7330744-gui.yml"
       - "gui/**"
   workflow_dispatch:
 
 concurrency:
-  group: multisim-7330744-gui-prof-direct-click
+  group: multisim-7330744-gui-prof-direct-click2
   cancel-in-progress: true
 
 jobs:
