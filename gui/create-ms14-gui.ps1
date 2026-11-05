@@ -166,7 +166,7 @@ $target=Join-Path $A "7330744_V6_PhotoRelay.ms14"
 L "GUI import source=$cir"
 L "Target design=$target"
 
-$launched=Start-Process -FilePath $ms.FullName -PassThru
+$launched=Start-Process -FilePath $ms.FullName -ArgumentList @("`"$cir`"") -PassThru
 L "Started Multisim PID=$($launched.Id)"
 Start-Sleep -Seconds 4
 
@@ -203,16 +203,10 @@ if($mp){
   Start-Sleep -Seconds 2
 }
 
-$ws.SendKeys("^o")
-Start-Sleep -Seconds 2
-$ws.SendKeys($cir)
-$ws.SendKeys("{ENTER}")
-L "Sent File/Open for .cir"
-Start-Sleep -Seconds 18
-GrabDesktop "02_after_cir_open_desktop.png"
-
-$ws.SendKeys("{ENTER}")
-Start-Sleep -Seconds 6
+# The .cir path was passed directly on the Multisim command line.
+# After the trial dialog is dismissed, Multisim continues the pending netlist import.
+L "Waiting for direct .cir import to complete"
+Start-Sleep -Seconds 22
 $mp=(Get-Process -Name "Multisim" -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1)
 if($mp){
   [NativeWin]::ShowWindow($mp.MainWindowHandle,3)|Out-Null
