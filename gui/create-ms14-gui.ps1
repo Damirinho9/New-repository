@@ -55,15 +55,41 @@ function Click-UiButtonForProcess {
 
 function Handle-MultisimActivation {
   param([int]$ProcessId)
-  for($i=0;$i -lt 20;$i++){
+
+  # First try the semantic UI Automation button. Some NI builds expose it.
+  for($i=0;$i -lt 4;$i++){
     if(Click-UiButtonForProcess -ProcessId $ProcessId -Name "Begin 7 Day Trial"){
       Start-Sleep -Seconds 12
       return $true
     }
     Start-Sleep -Seconds 1
   }
-  L "Begin 7 Day Trial button was not found for Multisim PID"
-  return $false
+
+  # NI 14.3.3 can render this activation page as a custom control that does
+  # not expose the trial button through UI Automation. In that case click only
+  # the known trial-button location relative to the Multisim window.
+  try{
+    $p=Get-Process -Id $ProcessId -ErrorAction Stop
+    $h=$p.MainWindowHandle
+    if($h -eq 0){L "Cannot coordinate-click trial button: no main window";return $false}
+    $r=New-Object NativeWin+RECT
+    if(-not [NativeWin]::GetWindowRect($h,[ref]$r)){L "GetWindowRect failed";return $false}
+    $w=$r.Right-$r.Left
+    $hh=$r.Bottom-$r.Top
+    $x=[int]($r.Left + $w*0.640)
+    $y=[int]($r.Top  + $hh*0.677)
+    L ("Coordinate-clicking only the NI trial button at " + $x + "," + $y + " within " + $w + "x" + $hh)
+    [NativeWin]::SetForegroundWindow($h)|Out-Null
+    [NativeWin]::SetCursorPos($x,$y)|Out-Null
+    Start-Sleep -Milliseconds 300
+    [NativeWin]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+    [NativeWin]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+    Start-Sleep -Seconds 15
+    return $true
+  }catch{
+    L ("Coordinate trial click error: " + $_.Exception.Message)
+    return $false
+  }
 }
 
 Add-Type @"
@@ -74,7 +100,7 @@ public static class NativeWin {
   public struct RECT { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);\n  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);\n  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
 }
 "@
 
