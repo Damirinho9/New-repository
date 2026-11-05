@@ -13,6 +13,23 @@ function Log([string]$Message) {
   Add-Content -Path $Diag -Value $line
 }
 
+function Capture-Desktop([string]$Path) {
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+    $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+    $g.Dispose()
+    $bmp.Dispose()
+    Log "Screenshot saved: $Path"
+  } catch {
+    Log "Screenshot error: $($_.Exception.Message)"
+  }
+}
+
 Log "COM worker starting."
 Log "Is64BitProcess=$([Environment]::Is64BitProcess)"
 Log "PowerShell=$($PSVersionTable.PSVersion)"
@@ -26,8 +43,10 @@ try {
   Log "COM object created."
 
   try {
-    $connectResult = $app.Connect()
-    Log "Connect() returned: $connectResult"
+    $app.Connect()
+    Log "Connect() completed. IsConnected=$($app.IsConnected)"
+    Log "VersionInfo=$($app.VersionInfo)"
+    Log "MultisimPath=$($app.Path)"
   } catch {
     Log "Connect() exception: $($_.Exception.Message)"
   }
@@ -36,9 +55,12 @@ try {
     $circuit = $app.NewFile()
     Log "NewFile() returned a circuit object."
     ($circuit | Get-Member | Out-String) | Set-Content (Join-Path $Artifacts "multisim-circuit-members.txt")
+    Log "Initial SimulationState=$($circuit.SimulationState)"
   } catch {
     Log "NewFile() exception: $($_.Exception.Message)"
   }
+
+  Capture-Desktop (Join-Path $Artifacts "multisim-window-before-sim.png")
 
   $netlist = Join-Path $Workspace "multisim\7330744_V6_PhotoRelay_3state_Multisim.cir"
   $commandFile = Join-Path $Artifacts "multisim-commands.txt"
@@ -48,10 +70,11 @@ try {
   $n = $netlist.Replace("\","/")
   $r = $rawFile.Replace("\","/")
   $dq = [char]34
+
   @(
     ("source " + $dq + $n + $dq),
     "tran 0.0001 12",
-    ("write " + $dq + $r + $dq + " v(sens) v(gdrv) v(l) v(sw)")
+    ("write " + $dq + $r + $dq)
   ) | Set-Content -Path $commandFile -Encoding ASCII
 
   Log "Command file written: $commandFile"
@@ -60,56 +83,51 @@ try {
   $started = $false
   if ($circuit) {
     try {
-      Log "Trying circuit.DoCommandLine(commandFile, logFile)"
+      Log "Calling circuit.DoCommandLine(commandFile, logFile)"
       $circuit.DoCommandLine($commandFile, $simLog)
       $started = $true
-      Log "DoCommandLine accepted by MultisimCircuit."
+      Log "DoCommandLine accepted. SimulationState=$($circuit.SimulationState)"
     } catch {
-      Log "Circuit DoCommandLine exception: $($_.Exception.Message)"
-    }
-  }
-
-  if (-not $started -and $app) {
-    try {
-      Log "Trying app.DoCommandLine(commandFile, logFile)"
-      $app.DoCommandLine($commandFile, $simLog)
-      $started = $true
-      Log "DoCommandLine accepted by MultisimApp."
-    } catch {
-      Log "App DoCommandLine exception: $($_.Exception.Message)"
+      Log "DoCommandLine exception: $($_.Exception.Message)"
     }
   }
 
   if ($started) {
-    Log "Waiting for simulation output."
-    $stableCount = 0
-    $lastSize = -1
-    for ($i=0; $i -lt 60; $i++) {
-      Start-Sleep -Seconds 5
-      if (Test-Path $rawFile) {
-        $size = (Get-Item $rawFile).Length
-        Log "RAW exists, size=$size"
-        if ($size -eq $lastSize -and $size -gt 0) { $stableCount++ } else { $stableCount = 0 }
-        $lastSize = $size
-        if ($stableCount -ge 2) { break }
-      } else {
-        Log "RAW not present yet."
+    $deadline = (Get-Date).AddSeconds(120)
+    $lastState = $null
+    while ((Get-Date) -lt $deadline) {
+      $state = [int]$circuit.SimulationState
+      if ($state -ne $lastState) {
+        Log "SimulationState=$state"
+        $lastState = $state
       }
+      if ($state -eq 0) { break }
+      Start-Sleep -Milliseconds 500
+    }
+
+    if ([int]$circuit.SimulationState -ne 0) {
+      Log "Simulation timeout; calling StopSimulation()."
+      try { $circuit.StopSimulation() } catch {}
     }
   } else {
     Log "Simulation was not started."
   }
 
+  Start-Sleep -Seconds 2
+
   if (Test-Path $simLog) {
     Log "Simulation log exists, size=$((Get-Item $simLog).Length)"
-  }
-  if (Test-Path $rawFile) {
-    Log "Simulation RAW exists, size=$((Get-Item $rawFile).Length)"
+  } else {
+    Log "Simulation log missing."
   }
 
-  try {
-    if ($circuit) { $circuit.StopSimulation() }
-  } catch {}
+  if (Test-Path $rawFile) {
+    Log "Simulation RAW exists, size=$((Get-Item $rawFile).Length)"
+  } else {
+    Log "Simulation RAW missing."
+  }
+
+  Capture-Desktop (Join-Path $Artifacts "multisim-window-after-sim.png")
 
   try {
     if ($app) { $app.Disconnect() }
