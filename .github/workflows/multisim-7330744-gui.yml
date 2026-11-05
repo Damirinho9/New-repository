@@ -1,16 +1,16 @@
-name: Multisim GUI import and MS14 - order 7330744
+name: Multisim GUI import and MS14 Professional fallback - order 7330744
 
 on:
   push:
     branches:
-      - multisim-7330744-gui
+      - multisim-7330744-gui-prof
     paths:
       - ".github/workflows/multisim-7330744-gui.yml"
       - "gui/**"
   workflow_dispatch:
 
 concurrency:
-  group: multisim-7330744-gui
+  group: multisim-7330744-gui-prof
   cancel-in-progress: true
 
 jobs:
