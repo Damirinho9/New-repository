@@ -1,0 +1,31 @@
+name: Multisim installer probe - order 7330744
+
+on:
+  push:
+    branches:
+      - multisim-7330744-windows
+    paths:
+      - ".github/workflows/multisim-7330744-probe.yml"
+      - "scripts/probe-ni-installer.ps1"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe NI installer
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\scripts\probe-ni-installer.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+      - name: Upload probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330744-probe
+          path: probe-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
