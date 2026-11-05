@@ -1,0 +1,45 @@
+name: Multisim GUI import and MS14 - order 7330744
+
+on:
+  push:
+    branches:
+      - multisim-7330744-gui
+    paths:
+      - ".github/workflows/multisim-7330744-gui.yml"
+      - "gui/**"
+  workflow_dispatch:
+
+concurrency:
+  group: multisim-7330744-gui
+  cancel-in-progress: true
+
+jobs:
+  gui:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Education 14.3 and create real MS14 through GUI
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\gui\create-ms14-gui.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+
+      - name: Inventory outputs
+        if: always()
+        shell: powershell
+        run: |
+          if(Test-Path .\gui-artifacts){
+            Get-ChildItem .\gui-artifacts -Recurse | Select FullName,Length,LastWriteTime | Format-Table -AutoSize
+          }
+
+      - name: Upload real Multisim GUI/MS14 outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330744-gui-ms14
+          path: gui-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
