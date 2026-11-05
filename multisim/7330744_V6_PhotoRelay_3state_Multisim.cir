@@ -1,79 +1,50 @@
-* 7330744 Variant 6 - Photo Relay - Multisim-compatible functional SPICE model
-* Purpose: functional verification of light-controlled AC load switching.
-* Documentation circuit must retain original Soviet/Russian part designations.
-* This simulation uses functional SPICE equivalents.
+* 7330744 Variant 6 - Photo Relay - Functional Multisim SPICE model v2
+* Demonstrates: illumination -> photodiode current -> RC/control stage -> anti-parallel SCR stage -> load
+* Original documentation parts remain in the report; simulation uses stable functional equivalents.
 
-* --- AC mains and simulated load ---
-VLINE LSRC 0 SIN(0 311 50)
-RFU1 LSRC L 0.01
-RFU2 N 0 0.01
-RLOAD L SW 1k
+* --- Control supply ---
+VCTRL VDD 0 DC 12
 
-* --- Low-current rectified control supply (functional equivalent of RB154 + KS512A) ---
-RPS L AC1 47k
-DBR1 AC1 VDD DBR
-DBR2 N VDD DBR
-DBR3 COM AC1 DBR
-DBR4 COM N DBR
-CPS VDD COM 10u
-D_VD2 COM VDD DZ12
-RBLEED VDD COM 10k
+* --- Photodiode FD320 functional equivalent ---
+* Bright light = 10 uA (0-4 s), near threshold = 6 uA (4-8 s), dark = 1 uA (8-12 s)
+I_PHOTO SENS 0 PWL(0 10u 3.999 10u 4.000 6u 7.999 6u 8.000 1u 12 1u)
+D_PHOTO 0 SENS DPHOTO
+R_SENS VDD SENS 1MEG
+C_SENS SENS 0 1u
 
-* --- Light sensor (FD320 functional equivalent) ---
-R1 VDD N12 4.7MEG
-R2 N12 SENS 47k
-D_VD1 COM SENS DPHOTO
-I_PHOTO SENS COM PWL(0 5u 3.999 5u 4.000 2.7u 7.999 2.7u 8.000 0.1u 12.000 0.1u)
-C1 SENS COM 0.47u
+* --- Functional equivalent of transistor control cascade VT1-VT3 ---
+* SENS below threshold => GDRV=0; SENS above threshold => GDRV about 10 V.
+VDRIVE DRVSRC 0 DC 10
+S_CTRL DRVSRC GDRV SENS 0 SWCTRL
+R_GDRV GDRV 0 10k
+C_GDRV GDRV 0 10n
 
-* --- Logic amplifier: KP501A -> generic small-signal NMOS ---
-R3 SENS GVT1 330
-M_VT1 T1 GVT1 COM COM NLOGIC
-R4 VDD T1 10k
-M_VT2 T2 T1 COM COM NLOGIC
-R5 VDD T2 5.1k
+* Status LED equivalent
+R_LED GDRV LEDA 2.2k
+D_LED LEDA 0 DLEDRED
 
-* --- Output driver: KP707B2 -> generic power NMOS ---
-M_VT3 VDD T2 T3S COM NPOWER
-R6 T3S GDRV 51
-RPD GDRV COM 47k
+* --- 220 V / 50 Hz power path and test load ---
+VLINE L 0 SIN(0 311 50)
+RLOAD L LOAD 1k
 
-* --- Status LED chain ---
-R7 GDRV NLED1 58k
-D_VD3 NLED1 NLED2 DGEN
-D_HL1 NLED2 COM DLEDRED
+* Functional equivalents of two anti-parallel T123-250 thyristors.
+* Each branch is a controlled ideal contact plus a directional power diode.
+S_VS1 LOAD XVS1 GDRV 0 SWPWR
+D_VS1 XVS1 0 DPOWER
+S_VS2 0 XVS2 GDRV 0 SWPWR
+D_VS2 XVS2 LOAD DPOWER
 
-* --- Gate shaping / protection branches ---
-R8 GDRV GPOS 56
-D_VD4 COM GPOS DGEN
-R9 GDRV GNEG 56
-D_VD5 COM GNEG DGEN
+* Snubber / protection functional equivalents
+C_SNUB LOAD 0 47n
+R_SNUB LOAD SNUB 100
+C_SNUB2 SNUB 0 47n
 
-* --- T123-250 functional equivalents ---
-S_VS1 SW XVS1 GPOS COM SWTH
-D_VS1 XVS1 N DPOWER
-S_VS2 N XVS2 GNEG COM SWTH
-D_VS2 XVS2 SW DPOWER
-
-C2 VDD COM 100n
-C3 SW N 47n
-
-* --- FNR-20K391 functional equivalent ---
-D_RU1A L VMOV DZ390
-D_RU1B N VMOV DZ390
-
-* --- Device models ---
-.MODEL DBR D(IS=5n RS=0.5 N=1.8 BV=600 IBV=5u CJO=20p)
-.MODEL DGEN D(IS=10n RS=0.6 N=1.9 BV=400 IBV=10u CJO=10p)
-.MODEL DPOWER D(IS=100n RS=0.03 N=1.5 BV=800 IBV=50u CJO=200p)
 .MODEL DPHOTO D(IS=2n RS=20 N=1.4 BV=30 IBV=1u CJO=20p)
-.MODEL DLEDRED D(IS=1n RS=10 N=2.0 EG=1.8)
-.MODEL DZ12 D(IS=5n RS=2 N=1.5 BV=12 IBV=1m)
-.MODEL DZ390 D(IS=5n RS=2 N=1.5 BV=390 IBV=1m)
-.MODEL NLOGIC NMOS(VTO=2.5 KP=20m LAMBDA=0.02 RD=1 RS=1 CGS=20p CGD=10p)
-.MODEL NPOWER NMOS(VTO=3.5 KP=2 LAMBDA=0.01 RD=0.05 RS=0.05 CGS=500p CGD=150p)
-.MODEL SWTH SW(RON=0.05 ROFF=1G VON=4 VOFF=2)
+.MODEL DLEDRED D(IS=1n RS=10 N=2 EG=1.8)
+.MODEL DPOWER D(IS=100n RS=0.03 N=1.5 BV=800 IBV=50u CJO=200p)
+.MODEL SWCTRL SW(RON=1 ROFF=1G VON=5.0 VOFF=4.8)
+.MODEL SWPWR SW(RON=0.05 ROFF=1G VON=5.0 VOFF=4.0)
 
 .TRAN 0.1m 12
-.PROBE V(L) V(SW) V(SENS) V(GDRV) V(VDD,COM) I(RLOAD)
+.PROBE V(SENS) V(GDRV) V(L) V(LOAD) I(RLOAD)
 .END

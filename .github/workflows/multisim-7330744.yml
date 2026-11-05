@@ -10,10 +10,14 @@ on:
       - "scripts/**"
   workflow_dispatch:
 
+concurrency:
+  group: multisim-7330744
+  cancel-in-progress: true
+
 jobs:
   multisim:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
