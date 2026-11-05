@@ -1,0 +1,42 @@
+name: Multisim Stage 5 results - order 7330744
+
+on:
+  push:
+    branches:
+      - multisim-7330744-windows
+    paths:
+      - ".github/workflows/multisim-7330744-stage5.yml"
+      - "stage5/**"
+  workflow_dispatch:
+
+concurrency:
+  group: multisim-7330744-stage5
+  cancel-in-progress: true
+
+jobs:
+  stage5:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Multisim, import circuit, run transfer sweep
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\stage5\capture-stage5.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+      - name: Inventory
+        if: always()
+        shell: powershell
+        run: |
+          if(Test-Path .\stage5-artifacts){
+            Get-ChildItem .\stage5-artifacts -Recurse | Select FullName,Length,LastWriteTime | Format-Table -AutoSize
+          }
+      - name: Upload Stage 5
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330744-stage5
+          path: stage5-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
