@@ -30,6 +30,35 @@ function Start-WatchedProcess {
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+
+function Click-UiButtonByName([string]$name){
+  try{
+    $root=[System.Windows.Automation.AutomationElement]::RootElement
+    $cond=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,$name)
+    $el=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$cond)
+    if($el){
+      $pat=$el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+      $pat.Invoke()
+      L ("UI Automation clicked: " + $name)
+      return $true
+    }
+  }catch{L ("UI Automation click error for " + $name + ": " + $_.Exception.Message)}
+  return $false
+}
+
+function Handle-MultisimActivation {
+  $clicked=$false
+  for($i=0;$i -lt 10;$i++){
+    if(Click-UiButtonByName "Begin 7 Day Trial"){$clicked=$true;Start-Sleep -Seconds 5}
+    foreach($n in @("Continue","OK","Close","Start Trial","Begin Trial","Finish")){
+      if(Click-UiButtonByName $n){$clicked=$true;Start-Sleep -Seconds 2}
+    }
+    if(-not (Click-UiButtonByName "Begin 7 Day Trial")){Start-Sleep -Seconds 1}
+  }
+  return $clicked
+}
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -150,6 +179,22 @@ $ws=New-Object -ComObject WScript.Shell
 $ws.AppActivate($mp.Id)|Out-Null
 Start-Sleep -Seconds 2
 GrabWindow $mp.MainWindowHandle "01_blank_multisim.png"
+
+# First launch may be covered by the official NI activation dialog.
+# Use the legitimate 7-day evaluation mode so the GUI can be automated.
+$trialHandled=Handle-MultisimActivation
+L ("Activation/trial dialog handled=" + $trialHandled)
+Start-Sleep -Seconds 6
+GrabDesktop "01b_after_trial_activation.png"
+
+# Re-acquire the actual Multisim workspace after activation UI closes.
+$mp=(Get-Process -Name "Multisim" -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1)
+if($mp){
+  [NativeWin]::ShowWindow($mp.MainWindowHandle,3)|Out-Null
+  [NativeWin]::SetForegroundWindow($mp.MainWindowHandle)|Out-Null
+  $ws.AppActivate($mp.Id)|Out-Null
+  Start-Sleep -Seconds 2
+}
 
 $ws.SendKeys("^o")
 Start-Sleep -Seconds 2
