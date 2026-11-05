@@ -1,0 +1,53 @@
+name: Multisim 14.3 - order 7330744
+
+on:
+  push:
+    branches:
+      - multisim-7330744-windows
+    paths:
+      - ".github/workflows/multisim-7330744.yml"
+      - "multisim/**"
+      - "scripts/**"
+  workflow_dispatch:
+
+jobs:
+  multisim:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: System information
+        shell: powershell
+        run: |
+          Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsArchitecture | Format-List
+          [Environment]::Is64BitOperatingSystem
+          Test-Path "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+
+      - name: Install Multisim and run SPICE/COM diagnostics
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\scripts\install-and-run-multisim.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+
+      - name: List artifacts
+        if: always()
+        shell: powershell
+        run: |
+          if (Test-Path .\artifacts) {
+            Get-ChildItem .\artifacts -Recurse | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize
+          } else {
+            Write-Host "No artifacts directory."
+          }
+
+      - name: Upload Multisim diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330744-diagnostics
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
