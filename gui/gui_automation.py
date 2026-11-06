@@ -1,255 +1,277 @@
 import os, sys, time, subprocess, traceback
 from pathlib import Path
 
-MULTISIM = Path(sys.argv[1])
-CIR = Path(sys.argv[2])
-TARGET = Path(sys.argv[3])
-OUT = Path(sys.argv[4])
-OUT.mkdir(parents=True, exist_ok=True)
-LOG = OUT / "python-gui.log"
+MULTISIM=Path(sys.argv[1]); CIR=Path(sys.argv[2]); TARGET=Path(sys.argv[3]); OUT=Path(sys.argv[4])
+OUT.mkdir(parents=True,exist_ok=True)
+LOG=OUT/"python-gui.log"
 
-def log(msg):
-    s = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
-    print(s, flush=True)
-    with LOG.open("a", encoding="utf-8") as f:
-        f.write(s+"\n")
+def log(m):
+    s=f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {m}"
+    print(s,flush=True)
+    with LOG.open("a",encoding="utf-8") as f:f.write(s+"\n")
 
-def shot(name):
+def shot(n):
     try:
         import pyautogui
-        p = OUT / name
-        pyautogui.screenshot(str(p))
-        log(f"screenshot {p}")
-    except Exception as e:
-        log(f"screenshot failed: {e}")
+        p=OUT/n; pyautogui.screenshot(str(p)); log(f"screenshot {p}")
+    except Exception as e: log(f"screenshot error {e}")
 
-def dump_windows(name):
-    try:
-        from pywinauto import Desktop
-        lines=[]
-        for backend in ("win32","uia"):
-            try:
-                for w in Desktop(backend=backend).windows():
-                    try:
-                        lines.append(f"{backend}\t{w.window_text()}\tclass={w.class_name()}\trect={w.rectangle()}")
-                    except Exception:
-                        pass
-            except Exception as e:
-                lines.append(f"{backend} ERROR {e}")
-        (OUT/name).write_text("\n".join(lines), encoding="utf-8")
-    except Exception as e:
-        log(f"dump_windows failed: {e}")
-
-def find_multisim_window():
+def mainwin():
     from pywinauto import Desktop
-    candidates=[]
+    wins=[]
     for w in Desktop(backend="win32").windows():
         try:
-            if "Multisim" in w.window_text():
-                candidates.append(w)
-        except Exception:
-            pass
-    return candidates[0] if candidates else None
+            t=w.window_text()
+            if "Multisim" in t and "Select a Component" not in t and "Arbitrary SPICE" not in t:
+                wins.append(w)
+        except: pass
+    wins.sort(key=lambda w:("Design" not in w.window_text(),-(w.rectangle().width()*w.rectangle().height())))
+    return wins[0] if wins else None
 
 def focus_main():
-    w=find_multisim_window()
+    w=mainwin()
     if w:
-        try: w.restore()
-        except Exception: pass
-        try: w.set_focus()
-        except Exception: pass
-        return w
-    return None
+        try:w.restore()
+        except:pass
+        try:w.set_focus()
+        except:pass
+    return w
 
 def trial_present():
-    try:
-        from pywinauto import Desktop
-        for w in Desktop(backend="uia").windows():
-            try:
-                for desc in w.descendants():
-                    try:
-                        txt=desc.window_text()
-                    except Exception:
-                        txt=""
-                    if txt in ("Log in to Extend Trial","Begin 7 Day Trial"):
-                        return True
-            except Exception:
-                pass
-    except Exception:
-        pass
+    from pywinauto import Desktop
+    for w in Desktop(backend="uia").windows():
+        try:
+            for d in w.descendants():
+                try:t=d.window_text()
+                except:t=""
+                if t in ("Log in to Extend Trial","Begin 7 Day Trial"):return True
+        except:pass
     return False
 
-def click_trial():
+def dismiss_trial():
     import pyautogui
     from pywinauto import Desktop
-    dump_windows("windows_before_trial.txt")
-
-    # First try any real clickable trial control that pywinauto can see.
-    for backend in ("win32","uia"):
+    for backend in ("uia","win32"):
         try:
             for w in Desktop(backend=backend).windows():
-                try:
-                    for desc in w.descendants():
+                for d in w.descendants():
+                    try:t=d.window_text(); r=d.rectangle()
+                    except:continue
+                    if ("Trial" in t or "Extend Trial" in t) and r.width()>5 and r.height()>5:
                         try:
-                            txt=desc.window_text()
-                        except Exception:
-                            txt=""
-                        if "Trial" in txt or "Extend Trial" in txt:
-                            try:
-                                rect=desc.rectangle()
-                                log(f"trial candidate backend={backend} text={txt!r} rect={rect}")
-                                # Ignore ghost UIA elements with an empty rectangle.
-                                if rect.width() > 5 and rect.height() > 5:
-                                    desc.click_input()
-                                    time.sleep(5)
-                                    if not trial_present():
-                                        log("trial dialog disappeared after pywinauto click_input")
-                                        return True
-                            except Exception as e:
-                                log(f"click_input failed: {e}")
-                except Exception:
-                    pass
-        except Exception as e:
-            log(f"backend {backend} trial scan failed: {e}")
+                            d.click_input(); time.sleep(5)
+                            if not trial_present(): return True
+                        except:pass
+        except:pass
+    pyautogui.click(656,520); time.sleep(8)
+    return not trial_present()
 
-    # The GitHub Windows desktop is fixed at 1024x768 in these runs.
-    # NI's modal is consistently centered and the visible Begin 7 Day Trial
-    # button center is x=656,y=520.
-    log("trial still visible; using real pyautogui click at 656,520")
-    pyautogui.moveTo(656,520,duration=.5)
-    pyautogui.mouseDown()
-    time.sleep(.15)
-    pyautogui.mouseUp()
-    time.sleep(8)
-    shot("11a_after_physical_trial_click.png")
-    if not trial_present():
-        log("trial dialog disappeared after physical pyautogui click")
-        return True
-
-    # Keyboard fallback: activate Multisim and try common tab navigation.
-    log("trial still visible after physical click; trying keyboard navigation")
-    focus_main()
-    pyautogui.click(500,190)
-    time.sleep(.5)
-    # Tab sequence around the licensing dialog, with screenshots for diagnosis.
-    for n in range(1,9):
-        pyautogui.press("tab")
-        time.sleep(.25)
-        if n in (3,5,6,7):
-            pyautogui.press("enter")
-            time.sleep(3)
-            if not trial_present():
-                log(f"trial dialog disappeared after keyboard tab/enter n={n}")
-                return True
-    log("trial dialog remains after all real-input methods")
-    return False
-
-def handle_standard_dialog(title_re, file_path, action_names):
-    from pywinauto import Desktop
-    import pyautogui
-    for _ in range(20):
+def dump_dialog(dlg,path):
+    lines=[]
+    for d in dlg.descendants():
         try:
-            dlg=Desktop(backend="win32").window(title_re=title_re)
-            if dlg.exists(timeout=.5):
-                log(f"found dialog {dlg.window_text()!r}")
-                try: dlg.set_focus()
-                except Exception: pass
-                edits=dlg.descendants(class_name="Edit")
-                if edits:
-                    e=edits[-1]
-                    try:
-                        e.set_edit_text(str(file_path))
-                    except Exception:
-                        e.click_input(); pyautogui.hotkey("ctrl","a"); pyautogui.write(str(file_path), interval=.002)
-                else:
-                    pyautogui.write(str(file_path), interval=.002)
-                for name in action_names:
-                    try:
-                        b=dlg.child_window(title_re=name, class_name="Button")
-                        if b.exists(timeout=.3):
-                            b.click_input()
-                            return True
-                    except Exception:
-                        pass
-                pyautogui.press("enter")
-                return True
-        except Exception:
-            pass
-        time.sleep(.5)
-    return False
+            lines.append(f"{d.window_text()!r}\tclass={d.class_name()}\tctrl={getattr(d.element_info,'control_type','')}\trect={d.rectangle()}")
+        except:pass
+    (OUT/path).write_text("\n".join(lines),encoding="utf-8")
+
+def clean_netlist():
+    out=[]
+    for line in CIR.read_text(encoding="utf-8",errors="replace").splitlines():
+        u=line.strip().upper()
+        if u.startswith(".TRAN") or u.startswith(".PROBE") or u==".END":continue
+        out.append(line)
+    return "\r\n".join(out).strip()+"\r\n"
+
+def open_component_browser():
+    import pyautogui
+    from pywinauto import Desktop
+    w=focus_main()
+    if not w:return None
+    try:w.menu_select("Place->Component...")
+    except Exception as e:
+        log(f"menu_select Place/Component failed: {e}")
+        pyautogui.hotkey("alt","p"); time.sleep(.5); pyautogui.press("c")
+    time.sleep(2)
+    for backend in ("uia","win32"):
+        try:
+            d=Desktop(backend=backend).window(title_re=".*Select a Component.*")
+            if d.exists(timeout=2):
+                try:d.set_focus()
+                except:pass
+                log(f"component browser backend={backend} rect={d.rectangle()}")
+                return d
+        except:pass
+    return None
+
+def choose_spice_block(dlg):
+    import pyautogui
+    from pywinauto import Desktop
+    title=dlg.window_text()
+    u=Desktop(backend="uia").window(title=title)
+    dump_dialog(u,"component-browser-controls.txt")
+    r=u.rectangle()
+
+    # Set Group=Basic if exposed. Database is normally first combo, Group second.
+    combos=[]
+    for d in u.descendants():
+        try:
+            if getattr(d.element_info,"control_type","")=="ComboBox":combos.append(d)
+        except:pass
+    if len(combos)>=2:
+        try:combos[1].select("Basic");time.sleep(1)
+        except:pass
+
+    # Select BASIC_VIRTUAL family if it is exposed.
+    for d in u.descendants():
+        try:
+            if d.window_text().strip().upper()=="BASIC_VIRTUAL" and d.rectangle().width()>5:
+                d.click_input();time.sleep(1);break
+        except:pass
+
+    # Type exact component name in Component field (upper-middle of dialog).
+    pyautogui.click(r.left+300,r.top+55)
+    pyautogui.hotkey("ctrl","a")
+    pyautogui.write("ARBITRARY_SPICE_BLOCK",interval=.02)
+    time.sleep(2)
+
+    # Select exact list row where available.
+    for d in u.descendants():
+        try:
+            if d.window_text().strip().upper()=="ARBITRARY_SPICE_BLOCK" and d.rectangle().width()>5:
+                d.click_input();time.sleep(.5)
+        except:pass
+
+    # OK
+    for d in u.descendants():
+        try:
+            if d.window_text().replace("&","").strip()=="OK" and d.rectangle().width()>5:
+                d.click_input();time.sleep(2);return True
+        except:pass
+    pyautogui.press("enter");time.sleep(2)
+    return True
+
+def place_block(nettext):
+    import pyautogui, pyperclip
+    from pywinauto import Desktop
+    dlg=open_component_browser()
+    if not dlg:
+        log("component browser missing");return False
+    shot("40_component_browser.png")
+    if not choose_spice_block(dlg):return False
+
+    w=focus_main()
+    rr=w.rectangle() if w else None
+    x=(rr.left+520 if rr else 520); y=(rr.top+300 if rr else 330)
+    pyautogui.click(x,y);time.sleep(2);pyautogui.press("esc");time.sleep(1)
+    shot("41_spiceblock_placed.png")
+
+    pyautogui.doubleClick(x,y,interval=.15);time.sleep(3)
+    prop=None
+    for backend in ("uia","win32"):
+        try:
+            p=Desktop(backend=backend).window(title_re=".*Arbitrary SPICE.*")
+            if p.exists(timeout=2):prop=p;break
+        except:pass
+    if not prop:
+        log("properties dialog missing");return False
+    try:prop.set_focus()
+    except:pass
+    dump_dialog(prop,"spiceblock-properties-controls.txt")
+    shot("42_spiceblock_properties.png")
+
+    # Ensure Value tab.
+    for d in prop.descendants():
+        try:
+            if d.window_text().strip()=="Value" and d.rectangle().width()>5:
+                d.click_input();time.sleep(1);break
+        except:pass
+
+    edits=[]
+    for d in prop.descendants():
+        try:
+            if "Edit" in d.class_name() or getattr(d.element_info,"control_type","")=="Edit":
+                r=d.rectangle();edits.append((r.width()*r.height(),d,r))
+        except:pass
+    pyperclip.copy(nettext)
+    if edits:
+        edits.sort(reverse=True,key=lambda z:z[0]);_,e,r=edits[0]
+        log(f"netlist edit rect={r}")
+        try:e.click_input()
+        except:pyautogui.click((r.left+r.right)//2,(r.top+r.bottom)//2)
+    else:
+        r=prop.rectangle();pyautogui.click(r.left+250,r.top+250)
+    pyautogui.hotkey("ctrl","a");pyautogui.hotkey("ctrl","v");time.sleep(2)
+    shot("43_netlist_pasted.png")
+
+    for d in prop.descendants():
+        try:
+            if d.window_text().replace("&","").strip()=="OK" and d.rectangle().width()>5:
+                d.click_input();time.sleep(3);shot("44_spiceblock_ready.png");return True
+        except:pass
+    pyautogui.press("enter");time.sleep(3);shot("44_spiceblock_ready.png")
+    return True
+
+def save_as():
+    import pyautogui
+    from pywinauto import Desktop
+    w=focus_main()
+    try:w.menu_select("File->Save As...")
+    except:
+        pyautogui.hotkey("alt","f");time.sleep(.5);pyautogui.press("a")
+    time.sleep(2)
+    dlg=None
+    for backend in ("win32","uia"):
+        try:
+            d=Desktop(backend=backend).window(title_re=".*[Ss]ave.*")
+            if d.exists(timeout=1):dlg=d;break
+        except:pass
+    if not dlg:
+        log("Save As dialog missing");return False
+    try:dlg.set_focus()
+    except:pass
+    edits=dlg.descendants(class_name="Edit")
+    if edits:
+        e=edits[-1]
+        try:e.set_edit_text(str(TARGET))
+        except:
+            e.click_input();pyautogui.hotkey("ctrl","a");pyautogui.write(str(TARGET),interval=.002)
+    else:pyautogui.write(str(TARGET),interval=.002)
+    clicked=False
+    for b in dlg.descendants(class_name="Button"):
+        try:
+            if b.window_text().replace("&","").strip().lower()=="save":
+                b.click_input();clicked=True;break
+        except:pass
+    if not clicked:pyautogui.press("enter")
+    time.sleep(8);pyautogui.press("enter");time.sleep(2)
+    shot("50_saved_ms14.png")
+    return TARGET.exists()
 
 def main():
     import pyautogui
     pyautogui.FAILSAFE=False
+    nettext=clean_netlist()
+    (OUT/"arbitrary_spice_block_netlist.txt").write_text(nettext,encoding="utf-8")
+
     log(f"launching {MULTISIM}")
-    p=subprocess.Popen([str(MULTISIM)])
-    log(f"PID={p.pid}")
-    time.sleep(10)
-    shot("10_license_before_click.png")
-    trial_ok=click_trial()
-    shot("11_after_trial_click.png")
-    if not trial_ok:
-        log("Trial could not be started with real GUI input; stopping before Open.")
-        return 14
-    dump_windows("windows_after_trial.txt")
-
-    w=focus_main()
-    if w:
-        log(f"Multisim top window after trial: {w.window_text()!r} rect={w.rectangle()}")
-    else:
-        log("No Multisim top-level window found after trial click")
-        return 15
+    p=subprocess.Popen([str(MULTISIM)]);log(f"PID={p.pid}")
+    time.sleep(10);shot("10_license_before_click.png")
+    if trial_present() and not dismiss_trial():
+        log("trial activation failed");return 11
     time.sleep(3)
+    if not focus_main():
+        log("main window missing");return 12
 
-    focus_main()
-    pyautogui.hotkey("ctrl","o")
-    time.sleep(2)
-    if not handle_standard_dialog(r".*[Oo]pen.*", CIR, (r"&Open", r"Open")):
-        log("Open dialog wrapper not found, keyboard fallback")
-        pyautogui.write(str(CIR), interval=.002)
-        pyautogui.press("enter")
-    log("Open request submitted")
-    time.sleep(18)
-    shot("20_after_open.png")
-    dump_windows("windows_after_open.txt")
-
-    focus_main()
-    pyautogui.hotkey("ctrl","shift","s")
-    time.sleep(2)
-    saved=handle_standard_dialog(r".*[Ss]ave.*", TARGET, (r"&Save", r"Save"))
-    if not saved:
-        log("Ctrl+Shift+S did not produce Save As; trying Alt+F then A")
-        focus_main(); pyautogui.hotkey("alt","f"); time.sleep(.7); pyautogui.press("a"); time.sleep(2)
-        saved=handle_standard_dialog(r".*[Ss]ave.*", TARGET, (r"&Save", r"Save"))
-    time.sleep(8)
-    pyautogui.press("enter")
-    time.sleep(3)
-    shot("30_after_save.png")
-    dump_windows("windows_after_save.txt")
-
-    if not TARGET.exists():
-        roots=[OUT, Path(os.environ.get("USERPROFILE","C:/Users/runneradmin")), Path.cwd()]
-        found=[]
-        for r in roots:
-            try: found.extend(r.rglob("*.ms14"))
-            except Exception: pass
-        found=sorted(set(found), key=lambda x:x.stat().st_mtime if x.exists() else 0, reverse=True)
-        (OUT/"python-found-ms14.txt").write_text("\n".join(map(str,found)), encoding="utf-8")
-        if found:
-            import shutil
-            shutil.copy2(found[0], TARGET)
-            log(f"normalized discovered ms14 {found[0]} -> {TARGET}")
-
-    if TARGET.exists():
-        log(f"SUCCESS ms14={TARGET} size={TARGET.stat().st_size}")
-        return 0
-    log("MS14 not created")
-    return 20
+    # Create a genuine Multisim design using NI's supported Arbitrary SPICE Block.
+    pyautogui.hotkey("ctrl","n");time.sleep(2)
+    if not place_block(nettext):return 20
+    if TARGET.exists():TARGET.unlink()
+    if not save_as():
+        log("MS14 not created");return 21
+    log(f"SUCCESS ms14={TARGET} size={TARGET.stat().st_size}")
+    return 0
 
 if __name__=="__main__":
-    try:
-        sys.exit(main())
+    try:sys.exit(main())
     except Exception:
-        log(traceback.format_exc())
-        shot("99_exception.png")
-        sys.exit(99)
+        log(traceback.format_exc());shot("99_exception.png");sys.exit(99)
