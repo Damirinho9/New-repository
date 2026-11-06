@@ -1,0 +1,39 @@
+name: Build Altium project - order 7330744
+
+on:
+  push:
+    branches: [altium-7330744-project]
+    paths:
+      - ".github/workflows/altium-stage7.yml"
+      - "altium-stage7/**"
+  workflow_dispatch:
+
+concurrency:
+  group: altium-7330744-project
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Altium and build native Stage 7 project
+        shell: powershell
+        continue-on-error: true
+        run: .\altium-stage7\run-stage7.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+      - name: Inventory
+        if: always()
+        shell: powershell
+        run: |
+          if(Test-Path .\stage7-artifacts){
+            Get-ChildItem .\stage7-artifacts | Select Name,Length,LastWriteTime | Format-Table -AutoSize
+          }
+      - name: Upload Stage 7
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-stage7-altium-project
+          path: stage7-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
