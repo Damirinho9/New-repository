@@ -516,13 +516,25 @@ const assignedPatterns=pcbParsed.components.map((component:any)=>({
 }))
 const badPatterns=assignedPatterns.filter(({reference,pattern}:any)=>footprintNameByRef.get(reference)!==pattern)
 
+const trackRecords=pcbParsed.getRecordsByKind("Track")
+const viaRecords=pcbParsed.getRecordsByKind("Via")
+const polygonRecords=pcbParsed.getRecordsByKind("Polygon")
+const regionRecords=pcbParsed.getRecordsByKind("Region")
+const textRecords=pcbParsed.getRecordsByKind("Text")
+const topTrackCount=trackRecords.filter((record:any)=>record.get("LAYER")==="TOP").length
+const bottomTrackCount=trackRecords.filter((record:any)=>record.get("LAYER")==="BOTTOM").length
+const routedTraceElements=elements.filter((element:any)=>element.type==="pcb_trace")
+const routedNetNames=[...new Set(routedTraceElements.map((element:any)=>String(element.source_trace_id).replace(/^trace_/,"")))].sort()
+const copperPourElements=elements.filter((element:any)=>element.type==="pcb_copper_pour")
+
 const validation={
-  stage:9,
+  stage:10,
   generator:"circuit-json-to-altium pinned a399f6a + altiumts 0.0.95",
   project_filename:"7330744_Variant6_PhotoRelay.PrjPcb",
   schematic_filename:schematic.filename,
   pcb_filename:output.pcb.filename,
   board_size_mm:{width:160,height:110},
+  pcb_layers:["Top Layer","Bottom Layer"],
   component_specs:components.length,
   source_nets:netNames.size,
   source_ports:components.reduce((n,c)=>n+c.pins.length,0),
@@ -531,17 +543,26 @@ const validation={
   pcb_components:pcbParsed.components.length,
   pcb_pads:pcbParsed.getRecordsByKind("Pad").length,
   pcb_nets:pcbParsed.nets.length,
+  top_track_records:topTrackCount,
+  bottom_track_records:bottomTrackCount,
+  via_records:viaRecords.length,
+  polygon_records:polygonRecords.length,
+  region_records:regionRecords.length,
+  pcb_text_records:textRecords.length,
+  manual_pcb_trace_objects:routedTraceElements.length,
+  routed_nets:routedNetNames,
+  copper_pours:copperPourElements.map((p:any)=>({id:p.pcb_copper_pour_id,layer:p.layer,net:p.source_net_id,shape:p.shape})),
+  explicitly_external_high_current_interfaces:["XP1.2 LOAD","XP1.4 N main path","XP1.1 SW/load output","VS1 A/K","VS2 A/K"],
+  autoroute_used:false,
   project_documents:projectParsed.documents.map((d:any)=>d.path),
   assigned_patterns:assignedPatterns,
   all_patterns_match:badPatterns.length===0,
   schematic_strict_valid:schValidation.valid,
   pcb_strict_valid:pcbValidation.valid,
   pcb_dangling_references:dangling,
-  functional_zones:["photo sensor / sensitive","control","220V input / protection","rectifier / drive","power stage / external SCR"],
   keepout_barrier_mm:6,
   keepout_control_crossing_mm:25,
-  manually_routed_tracks:[{net:"BR_A",width_mm:2.0},{net:"G1",width_mm:0.8},{net:"G2",width_mm:0.8}],
-  load_current_policy:"L/N/SW high-current path intentionally not routed as ordinary PCB copper; external bus/terminal path required for the educational 55 kW concept.",
+  high_current_policy:"55 kW load current is not represented by ordinary PCB copper. Main L/N/SW and SCR A/K power paths remain external bus/terminal wiring.",
 }
 if(!schValidation.valid) throw new Error("Schematic strict validation failed: "+JSON.stringify(schValidation))
 if(!pcbValidation.valid) throw new Error("PCB strict validation failed: "+JSON.stringify(pcbValidation))
@@ -549,85 +570,81 @@ if(dangling.length) throw new Error("Dangling PCB references: "+JSON.stringify(d
 if(badPatterns.length) throw new Error("Footprint PATTERN mismatch: "+JSON.stringify(badPatterns))
 if(schParsed.components.length!==components.length) throw new Error("Schematic component count mismatch")
 if(pcbParsed.components.length!==components.length) throw new Error("PCB component count mismatch")
+if(topTrackCount===0) throw new Error("Top Layer has no routed tracks")
+if(bottomTrackCount===0) throw new Error("Bottom Layer has no routed tracks")
+if(viaRecords.length===0) throw new Error("No vias found in two-layer routing")
+if(polygonRecords.length<2) throw new Error("Expected at least two COM polygons")
 
-const csvCell=(value:any)=>{
-  const s=String(value ?? "")
-  return `"${s.replaceAll('"','""')}"`
-}
-const footprintRows=components.map((component)=>{
-  const fp=footprints[component.ref]
-  return [component.ref,component.value,fp.mounting,fp.name,fp.width,fp.height,fp.note].map(csvCell).join(",")
-})
-const footprintCsv=[
-  ["Reference","Value","Mounting","Footprint","Width_mm","Height_mm","Engineering_note"].map(csvCell).join(","),
-  ...footprintRows,
-].join("\r\n")
-
-const footprintMd=[
-  "# Этап 8. Назначение реальных корпусов",
+const routingMd=[
+  "# Этап 10. Ручная/полуручная двухслойная трассировка",
   "",
   "Проект: заказ 7330744, вариант 6, фотореле.",
   "",
-  "Принцип выбора: SMD применяется там, где это не ухудшает электрическую правдоподобность. Силовые, оптические, высоковольтные и механические элементы оставлены THT или вынесены во внешний монтаж.",
+  "## Архитектура слоев",
   "",
-  "## Ключевые решения",
+  "- Top Layer - короткие локальные сигнальные цепи, чувствительные связи и gate-drive.",
+  "- Bottom Layer - шины U_CTRL и COM, возвратные соединения и межзонные переходы.",
+  "- Переходы между слоями выполнены vias; autoroute не использовался.",
+  "- Два ограниченных COM-полигона находятся на Bottom Layer в управляющих областях. Сплошной полигон по всей плате намеренно не применен.",
   "",
-  "- R1 - 1206; R2/R3/R4/R5 - 0805; R6/R8/R9 - 1206; R7 - 2512 HV.",
-  "- C1 К50-35 - радиальный электролит D5 P2; C2 К73 - пленочный THT P5; C3 К73 в сетевой цепи - пленочный HV P15.",
-  "- VD1 ФД320 - собственный THT-корпус около 11 x 11 мм с шагом выводов 1.5 мм.",
-  "- VD2 КС512А - THT KD-8; VD3/VD4/VD5 КД243Ж - осевой KD-4B, посадка P10.16.",
-  "- HL1 L383SRWT - прямоугольный THT LED 5.0 x 2.5 мм, P2.54.",
-  "- VD6 RB154 - RB-15, круглый 4-выводный THT около 9.1 x 9.1 мм.",
-  "- VT1/VT2 КП501А - КТ-26 / TO-92, P2.54.",
-  "- VT3 - разрешенная замена КП707Б1 в КТ-28 / TO-220-3.",
-  "- RU1 FNR-20K391 - дисковый варистор класса 20 мм, корпус около 24 x 28 x 9 мм, P10.",
-  "- FU1/FU2 - 32 A: корпус 10 x 38 мм с THT-клипсами, P45; малый 5 x 20 мм не используется.",
-  "- VS1/VS2 T123-250 - внешний силовой монтаж. На PCB оставлен 3-контактный интерфейс A/K/G; сам тиристор не изображается как ложный паяемый корпус.",
-  "- XP1 - реальный 5-позиционный THT-коннектор Phoenix MSTBA 2,5/5-G-5,08 как CAD/layout-замена старого МРН-5Ш. При обязательном применении именно МРН-5Ш его точный механический чертеж нужно подставить перед производством.",
+  "## Основные трассы",
   "",
-  "## Проверка",
+  "- N_R1, SENS, G12, T1 - Top, 0.35 мм.",
+  "- T2 - Bottom, 0.35 мм с переходом для SMD R5.",
+  "- VT3_R6 - Top, 0.50 мм.",
+  "- U_CTRL - Bottom bus 0.60 мм с короткими Top-to-Bottom переходами.",
+  "- COM - Bottom polygons + ответвления 0.60-0.80 мм.",
+  "- LED_R/LED_A - Top, 0.45 мм.",
+  "- DRV - межзонная трасса через выделенный проход, 0.80 мм.",
+  "- BR_A - ручная Top-трасса 2.00 мм.",
+  "- G1/G2 - ручные Top-трассы 0.80 мм.",
+  "- L auxiliary branch - 1.50 мм, только для вспомогательной сетевой части.",
   "",
-  `В PcbDoc назначено ${assignedPatterns.length} PATTERN-полей. Несовпадений: ${badPatterns.length}.`,
+  "## Силовая часть",
+  "",
+  "Основной ток нагрузки заявленного устройства 55 кВт не проводится по обычным дорожкам платы. XP1.2 LOAD, основной N/SW и силовые A/K тиристоров VS1/VS2 оставлены под внешний шинный/клеммный монтаж. Это сознательное инженерное ограничение, а не недотрассированная случайным образом плата.",
+  "",
+  "## Маркировка",
+  "",
+  "На Top Overlay добавлены обозначения всех компонентов, функциональных зон, pinout XP1, подписи VS1/VS2 и пояснение назначения слоев.",
+  "",
+  "## Контроль",
+  "",
+  `Top track records: ${topTrackCount}.`,
+  `Bottom track records: ${bottomTrackCount}.`,
+  `Vias: ${viaRecords.length}.`,
+  `Polygon records: ${polygonRecords.length}.`,
+  `PCB text records: ${textRecords.length}.`,
+  `Manual PCB trace objects: ${routedTraceElements.length}.`,
+  `Routed nets: ${routedNetNames.join(", ")}.`,
   `Strict validation SchDoc: ${schValidation.valid ? "PASS" : "FAIL"}.`,
   `Strict validation PcbDoc: ${pcbValidation.valid ? "PASS" : "FAIL"}.`,
   `Dangling PCB references: ${dangling.length}.`,
-  "",
-  "Плата на этом этапе увеличена до 140 x 100 мм, чтобы крупные THT-компоненты и держатели предохранителей не пересекались. Трассировка остается следующим этапом.",
 ].join("\r\n")
 
 await Bun.write(`${outDir}/PhotoRelay_V6.SchDoc`,schematic.content)
 await Bun.write(`${outDir}/PhotoRelay_V6.PcbDoc`,pcbContent)
 await Bun.write(`${outDir}/7330744_Variant6_PhotoRelay.PrjPcb`,projectContent)
 await Bun.write(`${outDir}/PhotoRelay_V6.circuit.json`,JSON.stringify(elements,null,2))
-await Bun.write(`${outDir}/7330744_Stage9_Validation.json`,JSON.stringify(validation,null,2))
-await Bun.write(`${outDir}/7330744_Этап9_Корпуса.csv`,footprintCsv)
-await Bun.write(`${outDir}/7330744_Этап9_Корпуса.md`,footprintMd)
-
-const placementCsv=[
-  ["Reference","Zone","X_mm","Y_mm","Footprint"].map(csvCell).join(","),
-  ...components.map((component)=>[component.ref,
-    (component.pcbY >= 18 ? (component.ref==="VD1" ? "PHOTO SENSOR" : "SENSITIVE / CONTROL") :
-      (component.ref==="VS1" || component.ref==="VS2" ? "POWER OUTPUT / EXT SCR" :
-        (component.ref==="VD6" ? "RECTIFIER" : "220V / POWER"))),
-    component.pcbX,component.pcbY,footprints[component.ref].name].map(csvCell).join(","))
-].join("\r\n")
-await Bun.write(`${outDir}/7330744_Этап9_Размещение.csv`,placementCsv)
+await Bun.write(`${outDir}/7330744_Stage10_Validation.json`,JSON.stringify(validation,null,2))
+await Bun.write(`${outDir}/7330744_Этап10_Трассировка.md`,routingMd)
 
 const readme=[
-  "7330744 Variant 6 - Photo Relay - Stage 9 functional PCB placement",
+  "7330744 Variant 6 - Photo Relay - Stage 10 two-layer manual routing",
   "",
-  "Native Altium files:",
+  "Files:",
   "- 7330744_Variant6_PhotoRelay.PrjPcb",
   "- PhotoRelay_V6.SchDoc",
   "- PhotoRelay_V6.PcbDoc",
+  "- 7330744_Stage10_Validation.json",
+  "- 7330744_Этап10_Трассировка.md",
   "",
-  "Stage 9 places all components by functional zones; no autorouter is used.",
-  "SMD is preferred for suitable low-power resistors. Legacy/high-voltage/power parts remain THT or external.",
-  "T123-250 devices are chassis-mounted and represented by external A/K/G interfaces.",
-  "XP1 uses a real 5.08 mm Phoenix board connector as a CAD substitute because a reliable MRN-5Sh mechanical drawing was not available.",
-  "Only short BR_A and G1/G2 segments are manually routed; high-current L/N/SW remains external-bus territory.",
+  "No autorouter was used.",
+  "Top and Bottom copper are both used; vias provide controlled layer transitions.",
+  "COM uses two local Bottom Layer pours rather than a full-board plane.",
+  "High-current 55 kW load paths remain external bus/terminal wiring.",
 ].join("\r\n")
-await Bun.write(`${outDir}/README_STAGE9.txt`,readme)
+await Bun.write(`${outDir}/README_STAGE10.txt`,readme)
 
 function sha256(data:Uint8Array|string){
   return createHash("sha256").update(data).digest("hex")
@@ -644,12 +661,10 @@ zip.file("7330744_Variant6_PhotoRelay.PrjPcb",projectContent)
 zip.file("PhotoRelay_V6.SchDoc",schematic.content)
 zip.file("PhotoRelay_V6.PcbDoc",pcbContent)
 zip.file("PhotoRelay_V6.circuit.json",JSON.stringify(elements,null,2))
-zip.file("7330744_Stage9_Validation.json",JSON.stringify(validation,null,2))
-zip.file("7330744_Этап9_Корпуса.csv",footprintCsv)
-zip.file("7330744_Этап9_Корпуса.md",footprintMd)
-zip.file("7330744_Этап9_Размещение.csv",placementCsv)
-zip.file("README_STAGE9.txt",readme)
+zip.file("7330744_Stage10_Validation.json",JSON.stringify(validation,null,2))
+zip.file("7330744_Этап10_Трассировка.md",routingMd)
+zip.file("README_STAGE10.txt",readme)
 zip.file("SHA256SUMS.json",JSON.stringify(manifest,null,2))
-await Bun.write(`${outDir}/7330744_Этап9_Функциональные_зоны_PCB.zip`,await zip.generateAsync({type:"uint8array",compression:"DEFLATE"}))
+await Bun.write(`${outDir}/7330744_Этап10_Двухслойная_трассировка.zip`,await zip.generateAsync({type:"uint8array",compression:"DEFLATE"}))
 
 console.log(JSON.stringify(validation,null,2))
