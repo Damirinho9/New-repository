@@ -1,0 +1,42 @@
+name: Multisim MCP native MS14 - order 7330744
+
+on:
+  push:
+    branches:
+      - multisim-7330744-mcp
+    paths:
+      - ".github/workflows/multisim-7330744-mcp.yml"
+      - "mcp/**"
+  workflow_dispatch:
+
+concurrency:
+  group: multisim-7330744-mcp
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build editable native MS14 with multisim-mcp
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\mcp\run-mcp-generation.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+      - name: Inventory
+        if: always()
+        shell: powershell
+        run: |
+          if(Test-Path .\mcp-artifacts){
+            Get-ChildItem .\mcp-artifacts -Recurse | Select FullName,Length,LastWriteTime | Format-Table -AutoSize
+          }
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330744-mcp-native-ms14
+          path: mcp-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
