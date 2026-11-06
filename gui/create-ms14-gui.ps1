@@ -38,7 +38,7 @@ public static class NativeWin {
   public struct RECT { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);\n  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);\n  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
 }
 "@
 
@@ -210,27 +210,44 @@ GrabWindow $mp.MainWindowHandle "01_blank_multisim.png"
 GrabDesktop "01_license_dialog.png"
 Dump-UIButtons "01_ui_buttons_before_trial.txt"
 
-# Education edition opens a first-run activation dialog. Start the official 7-day trial.
-if(Wait-ForUIButton "Begin 7 Day Trial" 20){
-  if(Invoke-UIButtonExact "Begin 7 Day Trial"){
-    L "Begin 7 Day Trial invoked"
-    Start-Sleep -Seconds 8
-    GrabDesktop "01b_after_trial_click.png"
-    Dump-UIButtons "01b_ui_buttons_after_trial.txt"
-
-    # Some NI builds show one confirmation/continue dialog after starting the trial.
-    foreach($bn in @("Continue","OK","Start Trial","Begin Trial")){
-      if(Wait-ForUIButton $bn 2){
-        if(Invoke-UIButtonExact $bn){
-          L ("Invoked post-trial button: " + $bn)
-          Start-Sleep -Seconds 5
-          break
-        }
-      }
+# Education edition opens a first-run activation dialog. NI exposes the visual
+# "Begin 7 Day Trial" button through UI Automation as "Log in to Extend Trial"
+# on this build, so try both names before falling back to a coordinate click.
+$trialInvoked=$false
+foreach($trialName in @("Begin 7 Day Trial","Log in to Extend Trial")){
+  if(Wait-ForUIButton $trialName 3){
+    if(Invoke-UIButtonExact $trialName){
+      L ("Trial action invoked through UI Automation name: " + $trialName)
+      $trialInvoked=$true
+      break
     }
   }
-}else{
-  L "Begin 7 Day Trial button did not appear"
+}
+
+if(-not $trialInvoked){
+  L "Trial button not exposed with expected names; using visible-button coordinate fallback"
+  # The NI licensing dialog is centered on the 1024x768 GitHub runner desktop.
+  # Visible Begin 7 Day Trial button center is approximately x=656, y=520.
+  [NativeWin]::SetCursorPos(656,520)|Out-Null
+  Start-Sleep -Milliseconds 300
+  [NativeWin]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+  [NativeWin]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+  $trialInvoked=$true
+}
+
+Start-Sleep -Seconds 10
+GrabDesktop "01b_after_trial_click.png"
+Dump-UIButtons "01b_ui_buttons_after_trial.txt"
+
+# Handle a possible confirmation/continuation dialog.
+foreach($bn in @("Continue","OK","Start Trial","Begin Trial","Close")){
+  if(Wait-ForUIButton $bn 2){
+    if(Invoke-UIButtonExact $bn){
+      L ("Invoked post-trial button: " + $bn)
+      Start-Sleep -Seconds 5
+      break
+    }
+  }
 }
 
 # Wait until the blocking activation button is gone and bring Multisim back to foreground.
