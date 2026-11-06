@@ -59,12 +59,14 @@ const components: ComponentSpec[] = [
   {ref:"XP1", value:"MRN-5Sh 5-pin", pins:[{name:"1 SW",net:"SW"},{name:"2 LOAD",net:"L"},{name:"3 MAINS_L",net:"L"},{name:"4 MAINS_N",net:"N"},{name:"5 CASE",net:"CASE"}], schX:6,schY:-12,pcbX:12,pcbY:-24,through:true,pcbW:10,pcbH:4},
 ]
 
+for (const c of components) c.schX = c.schX * 4 / 3
+
 const elements: any[] = [
   {type:"pcb_board", pcb_board_id:"pcb_board_0", center:{x:0,y:0}, width:100, height:70},
-  {type:"schematic_text", schematic_text_id:"title", position:{x:-22,y:15}, text:"7330744 Variant 6 - Photo Relay", font_size:0.65},
-  {type:"schematic_text", schematic_text_id:"note1", position:{x:-22,y:14}, text:"Educational Altium reconstruction from the verified Multisim topology.", font_size:0.35},
-  {type:"schematic_text", schematic_text_id:"note2", position:{x:-22,y:-15}, text:"Power stage is an educational equivalent. Not fabrication-ready for 220 V / tens of kW.", font_size:0.30},
-  {type:"schematic_text", schematic_text_id:"note3", position:{x:-22,y:-16}, text:"XP1.5 CASE/SERVICE assignment requires verification against the original assembly.", font_size:0.30},
+  {type:"schematic_text", schematic_text_id:"title", position:{x:-28,y:15}, text:"7330744 Variant 6 - Photo Relay", font_size:0.65},
+  {type:"schematic_text", schematic_text_id:"note1", position:{x:-28,y:14}, text:"Educational Altium reconstruction from the verified Multisim topology.", font_size:0.35},
+  {type:"schematic_text", schematic_text_id:"note2", position:{x:-28,y:-15}, text:"Power stage is an educational equivalent. Not fabrication-ready for 220 V / tens of kW.", font_size:0.30},
+  {type:"schematic_text", schematic_text_id:"note3", position:{x:-28,y:-16}, text:"XP1.5 CASE/SERVICE assignment requires verification against the original assembly.", font_size:0.30},
 ]
 
 const netPorts = new Map<string,string[]>()
@@ -215,7 +217,7 @@ await Bun.write(`${outDir}/PhotoRelay_V6.circuit.json`,JSON.stringify(elements,n
 const converter=new CircuitJsonToAltiumConverter(elements,{
   projectName:"PhotoRelay_V6",
   schematicUnitsPerCircuitUnit:20,
-  schematicSheets:[{width:50,height:34,circuitOrigin:{x:25,y:17}}],
+  schematicSheets:[{width:64,height:36,circuitOrigin:{x:32,y:18}}],
   schematicProjectContext:{
     projectName:"7330744_Variant6_PhotoRelay",
     documentName:"PhotoRelay_V6.SchDoc",
