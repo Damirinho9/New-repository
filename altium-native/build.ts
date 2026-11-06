@@ -114,8 +114,8 @@ const pcbPlacement: Record<string,{x:number;y:number}> = {
   VT1:{x:-58,y:30}, R3:{x:-48,y:30}, R4:{x:-39,y:30}, VT2:{x:-29,y:30}, R5:{x:-19,y:30}, VT3:{x:-7,y:30}, R6:{x:5,y:30},
   R7:{x:25,y:44}, VD3:{x:39,y:44}, HL1:{x:52,y:44},
   XP1:{x:-66,y:-45}, FU1:{x:-27,y:-28}, FU2:{x:-27,y:-45}, C3:{x:10,y:-45}, RU1:{x:-64,y:-10},
-  VD6:{x:5,y:-10}, R8:{x:20,y:-5}, VD4:{x:32,y:-5}, VS1:{x:58,y:-5},
-  R9:{x:20,y:-19}, VD5:{x:32,y:-19}, VS2:{x:58,y:-19},
+  VD6:{x:5,y:-10}, R8:{x:30,y:-5}, VD4:{x:45,y:-5}, VS1:{x:69,y:-5},
+  R9:{x:30,y:-19}, VD5:{x:45,y:-19}, VS2:{x:69,y:-19},
 }
 
 for (const c of components) {
@@ -451,25 +451,35 @@ await Bun.write(`${outDir}/PhotoRelay_V6.SchDoc`,schematic.content)
 await Bun.write(`${outDir}/PhotoRelay_V6.PcbDoc`,pcbContent)
 await Bun.write(`${outDir}/7330744_Variant6_PhotoRelay.PrjPcb`,projectContent)
 await Bun.write(`${outDir}/PhotoRelay_V6.circuit.json`,JSON.stringify(elements,null,2))
-await Bun.write(`${outDir}/7330744_Stage8_Validation.json`,JSON.stringify(validation,null,2))
+await Bun.write(`${outDir}/7330744_Stage9_Validation.json`,JSON.stringify(validation,null,2))
 await Bun.write(`${outDir}/7330744_Этап9_Корпуса.csv`,footprintCsv)
 await Bun.write(`${outDir}/7330744_Этап9_Корпуса.md`,footprintMd)
 
+const placementCsv=[
+  ["Reference","Zone","X_mm","Y_mm","Footprint"].map(csvCell).join(","),
+  ...components.map((component)=>[component.ref,
+    (component.pcbY >= 18 ? (component.ref==="VD1" ? "PHOTO SENSOR" : "SENSITIVE / CONTROL") :
+      (component.ref==="VS1" || component.ref==="VS2" ? "POWER OUTPUT / EXT SCR" :
+        (component.ref==="VD6" ? "RECTIFIER" : "220V / POWER"))),
+    component.pcbX,component.pcbY,footprints[component.ref].name].map(csvCell).join(","))
+].join("\r\n")
+await Bun.write(`${outDir}/7330744_Этап9_Размещение.csv`,placementCsv)
+
 const readme=[
-  "7330744 Variant 6 - Photo Relay - Stage 9 real footprints",
+  "7330744 Variant 6 - Photo Relay - Stage 9 functional PCB placement",
   "",
   "Native Altium files:",
   "- 7330744_Variant6_PhotoRelay.PrjPcb",
   "- PhotoRelay_V6.SchDoc",
   "- PhotoRelay_V6.PcbDoc",
   "",
-  "Stage 9 assigns realistic footprint names and pad geometry to all 28 PCB components.",
+  "Stage 9 places all components by functional zones; no autorouter is used.",
   "SMD is preferred for suitable low-power resistors. Legacy/high-voltage/power parts remain THT or external.",
   "T123-250 devices are chassis-mounted and represented by external A/K/G interfaces.",
   "XP1 uses a real 5.08 mm Phoenix board connector as a CAD substitute because a reliable MRN-5Sh mechanical drawing was not available.",
-  "Routing is not part of Stage 9.",
+  "Only short BR_A and G1/G2 segments are manually routed; high-current L/N/SW remains external-bus territory.",
 ].join("\r\n")
-await Bun.write(`${outDir}/README_STAGE8.txt`,readme)
+await Bun.write(`${outDir}/README_STAGE9.txt`,readme)
 
 function sha256(data:Uint8Array|string){
   return createHash("sha256").update(data).digest("hex")
@@ -486,11 +496,12 @@ zip.file("7330744_Variant6_PhotoRelay.PrjPcb",projectContent)
 zip.file("PhotoRelay_V6.SchDoc",schematic.content)
 zip.file("PhotoRelay_V6.PcbDoc",pcbContent)
 zip.file("PhotoRelay_V6.circuit.json",JSON.stringify(elements,null,2))
-zip.file("7330744_Stage8_Validation.json",JSON.stringify(validation,null,2))
+zip.file("7330744_Stage9_Validation.json",JSON.stringify(validation,null,2))
 zip.file("7330744_Этап9_Корпуса.csv",footprintCsv)
 zip.file("7330744_Этап9_Корпуса.md",footprintMd)
-zip.file("README_STAGE8.txt",readme)
+zip.file("7330744_Этап9_Размещение.csv",placementCsv)
+zip.file("README_STAGE9.txt",readme)
 zip.file("SHA256SUMS.json",JSON.stringify(manifest,null,2))
-await Bun.write(`${outDir}/7330744_Этап9_Реальные_корпуса_Altium.zip`,await zip.generateAsync({type:"uint8array",compression:"DEFLATE"}))
+await Bun.write(`${outDir}/7330744_Этап9_Функциональные_зоны_PCB.zip`,await zip.generateAsync({type:"uint8array",compression:"DEFLATE"}))
 
 console.log(JSON.stringify(validation,null,2))
