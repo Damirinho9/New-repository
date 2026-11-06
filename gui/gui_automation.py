@@ -105,49 +105,38 @@ def open_component_browser():
 
 def choose_spice_block(dlg):
     import pyautogui
-    from pywinauto import Desktop
-    title=dlg.window_text()
-    u=Desktop(backend="uia").window(title=title)
-    dump_dialog(u,"component-browser-controls.txt")
-    r=u.rectangle()
 
-    # Set Group=Basic if exposed. Database is normally first combo, Group second.
-    combos=[]
-    for d in u.descendants():
-        try:
-            if getattr(d.element_info,"control_type","")=="ComboBox":combos.append(d)
-        except:pass
-    if len(combos)>=2:
-        try:combos[1].select("Basic");time.sleep(1)
-        except:pass
+    # The Win32 wrapper is reliable on hosted Windows. UIA sometimes exposes
+    # the child controls but not the top-level "Select a Component" window.
+    try:
+        dump_dialog(dlg,"component-browser-controls.txt")
+    except Exception as e:
+        log(f"component browser dump skipped: {e}")
 
-    # Select BASIC_VIRTUAL family if it is exposed.
-    for d in u.descendants():
-        try:
-            if d.window_text().strip().upper()=="BASIC_VIRTUAL" and d.rectangle().width()>5:
-                d.click_input();time.sleep(1);break
-        except:pass
+    r=dlg.rectangle()
+    log(f"component browser rect={r}")
 
-    # Type exact component name in Component field (upper-middle of dialog).
-    pyautogui.click(r.left+300,r.top+55)
+    # Group and Family are "All" by default. Filter the Master Database using
+    # the exact NI component name in the Component field.
+    pyautogui.click(r.left+300,r.top+64)
     pyautogui.hotkey("ctrl","a")
     pyautogui.write("ARBITRARY_SPICE_BLOCK",interval=.02)
-    time.sleep(2)
+    time.sleep(3)
+    shot("40b_component_filtered.png")
 
-    # Select exact list row where available.
-    for d in u.descendants():
-        try:
-            if d.window_text().strip().upper()=="ARBITRARY_SPICE_BLOCK" and d.rectangle().width()>5:
-                d.click_input();time.sleep(.5)
-        except:pass
+    # Select the first filtered row and press the dialog OK button.
+    pyautogui.click(r.left+300,r.top+91)
+    time.sleep(.7)
+    pyautogui.click(r.right-52,r.top+50)
+    time.sleep(3)
 
-    # OK
-    for d in u.descendants():
-        try:
-            if d.window_text().replace("&","").strip()=="OK" and d.rectangle().width()>5:
-                d.click_input();time.sleep(2);return True
-        except:pass
-    pyautogui.press("enter");time.sleep(2)
+    # Keyboard fallback in case the button click did not dismiss the dialog.
+    try:
+        if dlg.exists(timeout=.5):
+            pyautogui.press("enter")
+            time.sleep(2)
+    except Exception:
+        pass
     return True
 
 def place_block(nettext):
