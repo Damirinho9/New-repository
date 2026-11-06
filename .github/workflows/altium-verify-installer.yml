@@ -1,0 +1,27 @@
+name: Verify Altium offline installer
+
+on:
+  push:
+    branches: [altium-7330744-verify-installer]
+    paths:
+      - ".github/workflows/altium-verify-installer.yml"
+      - "altium/**"
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify offline installer
+        shell: powershell
+        run: .\altium\verify-installer.ps1
+      - name: Upload verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: altium-offline-installer-verification
+          path: altium-verify/
+          if-no-files-found: warn
+          retention-days: 3
