@@ -110,12 +110,12 @@ const footprints: Record<string, FootprintSpec> = {
 }
 
 const pcbPlacement: Record<string,{x:number;y:number}> = {
-  R1:{x:-62,y:39}, R2:{x:-53,y:39}, VD1:{x:-42,y:39}, C1:{x:-28,y:39}, C2:{x:-17,y:39}, VD2:{x:-4,y:39},
-  VT1:{x:10,y:39}, R3:{x:20,y:39}, R4:{x:29,y:39}, VT2:{x:39,y:39}, R5:{x:49,y:39}, VT3:{x:61,y:39},
-  R6:{x:-62,y:24}, R7:{x:-51,y:24}, VD3:{x:-37,y:24}, HL1:{x:-23,y:24}, RU1:{x:-5,y:24}, VD6:{x:17,y:24},
-  R8:{x:31,y:24}, VD4:{x:43,y:24}, VS1:{x:58,y:24},
-  R9:{x:-62,y:8}, VD5:{x:-49,y:8}, VS2:{x:-33,y:8}, C3:{x:-10,y:8}, XP1:{x:20,y:8},
-  FU1:{x:-36,y:-30}, FU2:{x:27,y:-30},
+  VD1:{x:-72,y:44}, R1:{x:-61,y:44}, R2:{x:-52,y:44}, C1:{x:-42,y:44}, C2:{x:-31,y:44}, VD2:{x:-18,y:44},
+  VT1:{x:-58,y:30}, R3:{x:-48,y:30}, R4:{x:-39,y:30}, VT2:{x:-29,y:30}, R5:{x:-19,y:30}, VT3:{x:-7,y:30}, R6:{x:5,y:30},
+  R7:{x:25,y:44}, VD3:{x:39,y:44}, HL1:{x:52,y:44},
+  XP1:{x:-66,y:-45}, FU1:{x:-27,y:-28}, FU2:{x:-27,y:-45}, C3:{x:10,y:-45}, RU1:{x:-64,y:-10},
+  VD6:{x:5,y:-10}, R8:{x:20,y:-5}, VD4:{x:32,y:-5}, VS1:{x:58,y:-5},
+  R9:{x:20,y:-19}, VD5:{x:32,y:-19}, VS2:{x:58,y:-19},
 }
 
 for (const c of components) {
@@ -131,12 +131,24 @@ for (const c of components) {
 }
 
 const elements: any[] = [
-  {type:"pcb_board", pcb_board_id:"pcb_board_0", center:{x:0,y:0}, width:140, height:100},
+  {type:"pcb_board", pcb_board_id:"pcb_board_0", center:{x:0,y:0}, width:160, height:110},
   {type:"schematic_text", schematic_text_id:"title", position:{x:-28,y:15}, text:"7330744 Variant 6 - Photo Relay", font_size:0.65},
   {type:"schematic_text", schematic_text_id:"note1", position:{x:-28,y:14}, text:"Educational Altium reconstruction from the verified Multisim topology.", font_size:0.35},
   {type:"schematic_text", schematic_text_id:"note2", position:{x:-28,y:-15}, text:"Power stage is an educational equivalent. Not fabrication-ready for 220 V / tens of kW.", font_size:0.30},
   {type:"schematic_text", schematic_text_id:"note3", position:{x:-28,y:-16}, text:"XP1.5 CASE/SERVICE assignment requires verification against the original assembly.", font_size:0.30},
 ]
+
+elements.push(
+  {type:"pcb_keepout",pcb_keepout_id:"zone_barrier_left",shape:"rect",center:{x:-40,y:15},width:70,height:6,layers:["all"]},
+  {type:"pcb_keepout",pcb_keepout_id:"zone_barrier_right",shape:"rect",center:{x:50,y:15},width:60,height:6,layers:["all"]},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"zone_sensor",layer:"top",font:"tscircuit2024",font_size:1.1,text:"PHOTO SENSOR / SENSITIVE",anchor_position:{x:-52,y:52},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"zone_control",layer:"top",font:"tscircuit2024",font_size:1.1,text:"CONTROL",anchor_position:{x:-10,y:36},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"zone_mains",layer:"top",font:"tscircuit2024",font_size:1.0,text:"220V INPUT / PROTECTION",anchor_position:{x:-48,y:6},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"zone_rectifier",layer:"top",font:"tscircuit2024",font_size:1.0,text:"RECTIFIER / DRIVE",anchor_position:{x:5,y:6},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"zone_power",layer:"top",font:"tscircuit2024",font_size:1.0,text:"POWER STAGE / EXT SCR",anchor_position:{x:52,y:6},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"zone_cross",layer:"top",font:"tscircuit2024",font_size:0.8,text:"CONTROL CROSSING",anchor_position:{x:8,y:15},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"warn_bus",layer:"top",font:"tscircuit2024",font_size:0.75,text:"LOAD CURRENT: EXTERNAL BUS / TERMINALS",anchor_position:{x:42,y:-48},anchor_alignment:"center"}
+)
 
 const netPorts = new Map<string,string[]>()
 const netNames = new Set<string>()
@@ -279,7 +291,33 @@ for (const [net,ports] of netPorts.entries()) {
   })
 }
 
-for (const [i,point] of [[-66,-46],[66,-46],[-66,46],[66,46]].entries()) {
+function pad(ref:string,pinIndex:number){
+  const component=components.find((item)=>item.ref===ref)
+  if(!component) throw new Error("Unknown component "+ref)
+  return pcbPadPosition(component,pinIndex-1)
+}
+function addManualTrace(id:string,net:string,width:number,points:{x:number;y:number}[]){
+  elements.push({
+    type:"pcb_trace",pcb_trace_id:id,source_trace_id:`trace_${net}`,
+    route:points.map((p)=>({route_type:"wire",x:p.x,y:p.y,width,layer:"top"}))
+  })
+}
+
+// Manually routed short power/control links only - no autorouter.
+{
+  const a=pad("FU1",2), b=pad("VD6",1)
+  addManualTrace("power_BR_A","BR_A",2.0,[a,{x:b.x,y:a.y},b])
+}
+{
+  const b=pad("VD6",3), r=pad("R8",1), d=pad("VD4",2), g=pad("VS1",3)
+  addManualTrace("gate_G1","G1",0.8,[b,{x:r.x,y:b.y},r,d,g])
+}
+{
+  const b=pad("VD6",4), r=pad("R9",1), d=pad("VD5",2), g=pad("VS2",3)
+  addManualTrace("gate_G2","G2",0.8,[b,{x:r.x,y:b.y},r,d,g])
+}
+
+for (const [i,point] of [[-76,-51],[76,-51],[-76,51],[76,51]].entries()) {
   const [x,y]=point as number[]
   elements.push({
     type:"pcb_hole",pcb_hole_id:`mh_${i+1}`,x,y,hole_diameter:3.2,
@@ -313,7 +351,7 @@ const pcbAsciiWithFootprints=output.pcb.asciiContent
     if(!match) return line
     const ref=match[1]!
     const footprint=footprintNameByRef.get(ref)
-    if(!footprint) throw new Error("No Stage 8 footprint for " + ref)
+    if(!footprint) throw new Error("No Stage 9 footprint for " + ref)
     return line.replace(/\|PATTERN=[^|]*/,"|PATTERN="+footprint)
   })
   .join("\r\n")
@@ -336,12 +374,12 @@ const assignedPatterns=pcbParsed.components.map((component:any)=>({
 const badPatterns=assignedPatterns.filter(({reference,pattern}:any)=>footprintNameByRef.get(reference)!==pattern)
 
 const validation={
-  stage:8,
+  stage:9,
   generator:"circuit-json-to-altium pinned a399f6a + altiumts 0.0.95",
   project_filename:"7330744_Variant6_PhotoRelay.PrjPcb",
   schematic_filename:schematic.filename,
   pcb_filename:output.pcb.filename,
-  board_size_mm:{width:140,height:100},
+  board_size_mm:{width:160,height:110},
   component_specs:components.length,
   source_nets:netNames.size,
   source_ports:components.reduce((n,c)=>n+c.pins.length,0),
@@ -355,7 +393,7 @@ const validation={
   all_patterns_match:badPatterns.length===0,
   schematic_strict_valid:schValidation.valid,
   pcb_strict_valid:pcbValidation.valid,
-  pcb_dangling_references:dangling,
+  pcb_dangling_references:dangling,\n  functional_zones:["photo sensor / sensitive","control","220V input / protection","rectifier / drive","power stage / external SCR"],\n  keepout_barrier_mm:6,\n  keepout_control_crossing_mm:25,\n  manually_routed_tracks:[{net:"BR_A",width_mm:2.0},{net:"G1",width_mm:0.8},{net:"G2",width_mm:0.8}],\n  load_current_policy:"L/N/SW high-current path intentionally not routed as ordinary PCB copper; external bus/terminal path required for the educational 55 kW concept.",
 }
 if(!schValidation.valid) throw new Error("Schematic strict validation failed: "+JSON.stringify(schValidation))
 if(!pcbValidation.valid) throw new Error("PCB strict validation failed: "+JSON.stringify(pcbValidation))
@@ -414,22 +452,22 @@ await Bun.write(`${outDir}/PhotoRelay_V6.PcbDoc`,pcbContent)
 await Bun.write(`${outDir}/7330744_Variant6_PhotoRelay.PrjPcb`,projectContent)
 await Bun.write(`${outDir}/PhotoRelay_V6.circuit.json`,JSON.stringify(elements,null,2))
 await Bun.write(`${outDir}/7330744_Stage8_Validation.json`,JSON.stringify(validation,null,2))
-await Bun.write(`${outDir}/7330744_Этап8_Корпуса.csv`,footprintCsv)
-await Bun.write(`${outDir}/7330744_Этап8_Корпуса.md`,footprintMd)
+await Bun.write(`${outDir}/7330744_Этап9_Корпуса.csv`,footprintCsv)
+await Bun.write(`${outDir}/7330744_Этап9_Корпуса.md`,footprintMd)
 
 const readme=[
-  "7330744 Variant 6 - Photo Relay - Stage 8 real footprints",
+  "7330744 Variant 6 - Photo Relay - Stage 9 real footprints",
   "",
   "Native Altium files:",
   "- 7330744_Variant6_PhotoRelay.PrjPcb",
   "- PhotoRelay_V6.SchDoc",
   "- PhotoRelay_V6.PcbDoc",
   "",
-  "Stage 8 assigns realistic footprint names and pad geometry to all 28 PCB components.",
+  "Stage 9 assigns realistic footprint names and pad geometry to all 28 PCB components.",
   "SMD is preferred for suitable low-power resistors. Legacy/high-voltage/power parts remain THT or external.",
   "T123-250 devices are chassis-mounted and represented by external A/K/G interfaces.",
   "XP1 uses a real 5.08 mm Phoenix board connector as a CAD substitute because a reliable MRN-5Sh mechanical drawing was not available.",
-  "Routing is not part of Stage 8.",
+  "Routing is not part of Stage 9.",
 ].join("\r\n")
 await Bun.write(`${outDir}/README_STAGE8.txt`,readme)
 
@@ -449,10 +487,10 @@ zip.file("PhotoRelay_V6.SchDoc",schematic.content)
 zip.file("PhotoRelay_V6.PcbDoc",pcbContent)
 zip.file("PhotoRelay_V6.circuit.json",JSON.stringify(elements,null,2))
 zip.file("7330744_Stage8_Validation.json",JSON.stringify(validation,null,2))
-zip.file("7330744_Этап8_Корпуса.csv",footprintCsv)
-zip.file("7330744_Этап8_Корпуса.md",footprintMd)
+zip.file("7330744_Этап9_Корпуса.csv",footprintCsv)
+zip.file("7330744_Этап9_Корпуса.md",footprintMd)
 zip.file("README_STAGE8.txt",readme)
 zip.file("SHA256SUMS.json",JSON.stringify(manifest,null,2))
-await Bun.write(`${outDir}/7330744_Этап8_Реальные_корпуса_Altium.zip`,await zip.generateAsync({type:"uint8array",compression:"DEFLATE"}))
+await Bun.write(`${outDir}/7330744_Этап9_Реальные_корпуса_Altium.zip`,await zip.generateAsync({type:"uint8array",compression:"DEFLATE"}))
 
 console.log(JSON.stringify(validation,null,2))
