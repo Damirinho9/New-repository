@@ -38,7 +38,7 @@ public static class NativeWin {
   public struct RECT { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);\n  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);\n  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);\n  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);\n  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);\n  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 }
 "@
 
@@ -46,23 +46,77 @@ public static class NativeWin {
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 
+function Find-UIButtonExact([string]$name){
+  $root=[System.Windows.Automation.AutomationElement]::RootElement
+  $condName=New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::NameProperty,$name)
+  $condType=New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Button)
+  $and=New-Object System.Windows.Automation.AndCondition($condName,$condType)
+  return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$and)
+}
+
 function Invoke-UIButtonExact([string]$name){
   try{
-    $root=[System.Windows.Automation.AutomationElement]::RootElement
-    $condName=New-Object System.Windows.Automation.PropertyCondition(
-      [System.Windows.Automation.AutomationElement]::NameProperty,$name)
-    $condType=New-Object System.Windows.Automation.PropertyCondition(
-      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-      [System.Windows.Automation.ControlType]::Button)
-    $and=New-Object System.Windows.Automation.AndCondition($condName,$condType)
-    $el=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$and)
-    if($el){
-      L ("UI Automation found button: " + $name)
-      $p=$el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-      $p.Invoke()
-      return $true
+    $el=Find-UIButtonExact $name
+    if(-not $el){
+      L ("UI Automation button not found: " + $name)
+      return $false
     }
-    L ("UI Automation button not found: " + $name)
+
+    $rect=$el.Current.BoundingRectangle
+    L ("UI button found: " + $name +
+      " focusable=" + $el.Current.IsKeyboardFocusable +
+      " hwnd=" + $el.Current.NativeWindowHandle +
+      " rect=" + $rect.Left + "," + $rect.Top + "," + $rect.Width + "," + $rect.Height)
+
+    # 1. Most reliable in headless hosted Windows: focus the accessible element and press Enter.
+    try{
+      $el.SetFocus()
+      Start-Sleep -Milliseconds 500
+      $kbd=New-Object -ComObject WScript.Shell
+      $kbd.SendKeys("{ENTER}")
+      L ("Sent Enter to focused UI button: " + $name)
+      Start-Sleep -Seconds 3
+      if(-not (Find-UIButtonExact $name)){return $true}
+    }catch{L ("SetFocus/Enter failed: " + $_.Exception.Message)}
+
+    # 2. Try the MSAA default action exposed through UI Automation.
+    try{
+      $legacy=$null
+      if($el.TryGetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern,[ref]$legacy)){
+        $legacy.DoDefaultAction()
+        L ("LegacyIAccessible default action invoked: " + $name)
+        Start-Sleep -Seconds 3
+        if(-not (Find-UIButtonExact $name)){return $true}
+      }
+    }catch{L ("Legacy default action failed: " + $_.Exception.Message)}
+
+    # 3. Native Win32 button click when the element exposes its own HWND.
+    try{
+      $hwnd=[IntPtr]$el.Current.NativeWindowHandle
+      if($hwnd -ne [IntPtr]::Zero){
+        [void][NativeWin]::SendMessage($hwnd,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+        L ("BM_CLICK sent to HWND for: " + $name)
+        Start-Sleep -Seconds 3
+        if(-not (Find-UIButtonExact $name)){return $true}
+      }
+    }catch{L ("BM_CLICK failed: " + $_.Exception.Message)}
+
+    # 4. Last fallback: click the actual accessibility bounding rectangle.
+    try{
+      $x=[int]($rect.Left + $rect.Width/2)
+      $y=[int]($rect.Top + $rect.Height/2)
+      [NativeWin]::SetCursorPos($x,$y)|Out-Null
+      Start-Sleep -Milliseconds 300
+      [NativeWin]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+      [NativeWin]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+      L ("Mouse click sent at accessibility center " + $x + "," + $y + " for " + $name)
+      Start-Sleep -Seconds 3
+      if(-not (Find-UIButtonExact $name)){return $true}
+    }catch{L ("Bounding-rect click failed: " + $_.Exception.Message)}
+
   }catch{
     L ("UI Automation error for " + $name + ": " + $_.Exception.Message)
   }
@@ -210,40 +264,34 @@ GrabWindow $mp.MainWindowHandle "01_blank_multisim.png"
 GrabDesktop "01_license_dialog.png"
 Dump-UIButtons "01_ui_buttons_before_trial.txt"
 
-# Education edition opens a first-run activation dialog. NI exposes the visual
-# "Begin 7 Day Trial" button through UI Automation as "Log in to Extend Trial"
-# on this build, so try both names before falling back to a coordinate click.
+# Education edition opens a first-run activation dialog. On Multisim 14.3.3
+# the visible "Begin 7 Day Trial" control is exposed to UI Automation as
+# "Log in to Extend Trial".
 $trialInvoked=$false
-foreach($trialName in @("Begin 7 Day Trial","Log in to Extend Trial")){
+foreach($trialName in @("Log in to Extend Trial","Begin 7 Day Trial")){
   if(Wait-ForUIButton $trialName 3){
     if(Invoke-UIButtonExact $trialName){
-      L ("Trial action invoked through UI Automation name: " + $trialName)
+      L ("Trial action succeeded through: " + $trialName)
       $trialInvoked=$true
       break
     }
   }
 }
 
-if(-not $trialInvoked){
-  L "Trial button not exposed with expected names; using visible-button coordinate fallback"
-  # The NI licensing dialog is centered on the 1024x768 GitHub runner desktop.
-  # Visible Begin 7 Day Trial button center is approximately x=656, y=520.
-  [NativeWin]::SetCursorPos(656,520)|Out-Null
-  Start-Sleep -Milliseconds 300
-  [NativeWin]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
-  [NativeWin]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
-  $trialInvoked=$true
-}
-
-Start-Sleep -Seconds 10
-GrabDesktop "01b_after_trial_click.png"
+Start-Sleep -Seconds 8
+GrabDesktop "01b_after_trial_action.png"
 Dump-UIButtons "01b_ui_buttons_after_trial.txt"
 
-# Handle a possible confirmation/continuation dialog.
-foreach($bn in @("Continue","OK","Start Trial","Begin Trial","Close")){
+if(-not $trialInvoked){
+  L "Trial activation control could not be triggered. Stopping before File/Open."
+  exit 14
+}
+
+# Do not click generic Close buttons. Only accept explicit NI continuation buttons.
+foreach($bn in @("Continue","OK","Start Trial","Begin Trial")){
   if(Wait-ForUIButton $bn 2){
     if(Invoke-UIButtonExact $bn){
-      L ("Invoked post-trial button: " + $bn)
+      L ("Invoked explicit post-trial button: " + $bn)
       Start-Sleep -Seconds 5
       break
     }
@@ -252,8 +300,9 @@ foreach($bn in @("Continue","OK","Start Trial","Begin Trial","Close")){
 
 # Wait until the blocking activation button is gone and bring Multisim back to foreground.
 for($i=0;$i -lt 20;$i++){
-  $still=Wait-ForUIButton "Begin 7 Day Trial" 1
-  if(-not $still){break}
+  $stillA=Wait-ForUIButton "Begin 7 Day Trial" 1
+  $stillB=Wait-ForUIButton "Log in to Extend Trial" 1
+  if((-not $stillA) -and (-not $stillB)){break}
   Start-Sleep -Seconds 1
 }
 $mp=(Get-Process -Name "Multisim" -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1)
