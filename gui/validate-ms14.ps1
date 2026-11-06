@@ -50,6 +50,29 @@ try{
     }
   }
 
+  # Functional check of the embedded Arbitrary SPICE Block.
+  $cmd=Join-Path $A "ms14-transient-commands.txt"
+  $simlog=Join-Path $A "ms14-transient-simulation.log"
+  $raw=Join-Path $A "ms14-transient-validation.raw"
+  $rawSlash=$raw.Replace("\","/")
+  $dq=[char]34
+  @(
+    "tran 0.0002 12",
+    ("write " + $dq + $rawSlash + $dq + " all")
+  ) | Set-Content -Path $cmd -Encoding ASCII
+  try{
+    $c.DoCommandLine($cmd,$simlog)
+    L "Transient DoCommandLine submitted"
+    for($i=1;$i -le 10;$i++){
+      Start-Sleep -Seconds 2
+      if(Test-Path $raw){
+        L "Transient RAW generated size=$((Get-Item $raw).Length)"
+        break
+      }
+    }
+    if(-not (Test-Path $raw)){L "Transient RAW was not generated; see simulation log"}
+  }catch{L "Transient validation error: $($_.Exception.ToString())"}
+
   try{$app.Disconnect();L "Disconnected"}catch{}
 }catch{
   L "FATAL: $($_.Exception.ToString())"
