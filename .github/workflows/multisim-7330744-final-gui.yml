@@ -1,0 +1,41 @@
+name: Open verified native MS14 in Multisim - order 7330744
+
+on:
+  push:
+    branches:
+      - multisim-7330744-mcp
+    paths:
+      - ".github/workflows/multisim-7330744-final-gui.yml"
+      - "mcp/open_final_ms14.py"
+      - "mcp/open-final-ms14.ps1"
+  workflow_dispatch:
+
+concurrency:
+  group: multisim-7330744-final-gui
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  open:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open verified MS14 and capture real Multisim workspace
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\mcp\open-final-ms14.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+      - name: Upload final GUI package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-final-native-ms14-gui
+          path: final-gui-artifacts/
+          if-no-files-found: error
+          retention-days: 7
