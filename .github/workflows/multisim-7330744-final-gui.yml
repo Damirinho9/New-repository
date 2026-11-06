@@ -6,8 +6,8 @@ on:
       - multisim-7330744-mcp
     paths:
       - ".github/workflows/multisim-7330744-final-gui.yml"
-      - "mcp/open_final_ms14.py"
-      - "mcp/open-final-ms14.ps1"
+      - "finalgui/open_final_ms14.py"
+      - "finalgui/open-final-ms14.ps1"
   workflow_dispatch:
 
 concurrency:
