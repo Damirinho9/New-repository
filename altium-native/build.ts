@@ -1,4 +1,5 @@
 import { CircuitJsonToAltiumConverter } from "circuit-json-to-altium"
+import { serializeAltiumPcbDocWithKeepoutRules } from "circuit-json-to-altium/lib/serialize-altium-pcb-doc-with-keepout-rules"
 import {
   getDanglingPcbReferences,
   parseAltiumBinaryPcbDoc,
@@ -22,6 +23,18 @@ type ComponentSpec = {
   through: boolean
   pcbW?: number
   pcbH?: number
+}
+
+type FootprintSpec = {
+  name: string
+  mounting: "SMD" | "THT" | "EXTERNAL"
+  width: number
+  height: number
+  padOffsets: { x: number; y: number }[]
+  smdPad?: { width: number; height: number }
+  holeDiameter?: number
+  padDiameter?: number
+  note: string
 }
 
 const components: ComponentSpec[] = [
@@ -59,10 +72,66 @@ const components: ComponentSpec[] = [
   {ref:"XP1", value:"MRN-5Sh 5-pin", pins:[{name:"1 SW",net:"SW"},{name:"2 LOAD",net:"L"},{name:"3 MAINS_L",net:"L"},{name:"4 MAINS_N",net:"N"},{name:"5 CASE",net:"CASE"}], schX:6,schY:-12,pcbX:12,pcbY:-24,through:true,pcbW:10,pcbH:4},
 ]
 
-for (const c of components) c.schX = c.schX * 4 / 3
+const footprints: Record<string, FootprintSpec> = {
+  R1:  {name:"R_1206_3216Metric",mounting:"SMD",width:3.2,height:1.6,padOffsets:[{x:-1.4,y:0},{x:1.4,y:0}],smdPad:{width:1.4,height:1.8},note:"4.7 MOhm control resistor; 1206 gives more voltage margin than 0805."},
+  R2:  {name:"R_0805_2012Metric",mounting:"SMD",width:2.0,height:1.25,padOffsets:[{x:-1.0,y:0},{x:1.0,y:0}],smdPad:{width:1.2,height:1.4},note:"Low-power control resistor."},
+  R3:  {name:"R_0805_2012Metric",mounting:"SMD",width:2.0,height:1.25,padOffsets:[{x:-1.0,y:0},{x:1.0,y:0}],smdPad:{width:1.2,height:1.4},note:"Low-power gate/control resistor."},
+  R4:  {name:"R_0805_2012Metric",mounting:"SMD",width:2.0,height:1.25,padOffsets:[{x:-1.0,y:0},{x:1.0,y:0}],smdPad:{width:1.2,height:1.4},note:"Low-power control resistor."},
+  R5:  {name:"R_0805_2012Metric",mounting:"SMD",width:2.0,height:1.25,padOffsets:[{x:-1.0,y:0},{x:1.0,y:0}],smdPad:{width:1.2,height:1.4},note:"Low-power control resistor."},
+  R6:  {name:"R_1206_3216Metric",mounting:"SMD",width:3.2,height:1.6,padOffsets:[{x:-1.4,y:0},{x:1.4,y:0}],smdPad:{width:1.4,height:1.8},note:"Gate-drive resistor with extra pulse-power margin."},
+  R7:  {name:"R_2512_6332Metric_HV",mounting:"SMD",width:6.3,height:3.2,padOffsets:[{x:-3.0,y:0},{x:3.0,y:0}],smdPad:{width:1.8,height:3.3},note:"Line-side LED resistor; 2512 selected for power/voltage margin."},
+  R8:  {name:"R_1206_3216Metric",mounting:"SMD",width:3.2,height:1.6,padOffsets:[{x:-1.4,y:0},{x:1.4,y:0}],smdPad:{width:1.4,height:1.8},note:"Thyristor gate network."},
+  R9:  {name:"R_1206_3216Metric",mounting:"SMD",width:3.2,height:1.6,padOffsets:[{x:-1.4,y:0},{x:1.4,y:0}],smdPad:{width:1.4,height:1.8},note:"Thyristor gate network."},
+
+  C1:  {name:"CP_Radial_D5.0mm_P2.00mm",mounting:"THT",width:5.0,height:5.0,padOffsets:[{x:-1.0,y:0},{x:1.0,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"K50-35 electrolytic, radial through-hole."},
+  C2:  {name:"C_Rect_L7.2mm_W2.5mm_P5.00mm",mounting:"THT",width:7.2,height:2.5,padOffsets:[{x:-2.5,y:0},{x:2.5,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"K73 film capacitor; retained as THT rather than forcing SMD."},
+  C3:  {name:"C_Rect_L18.0mm_W5.0mm_P15.00mm_HV",mounting:"THT",width:18.0,height:5.0,padOffsets:[{x:-7.5,y:0},{x:7.5,y:0}],holeDiameter:1.0,padDiameter:2.2,note:"Mains/snubber K73 film capacitor with high-voltage spacing."},
+
+  VD1: {name:"FD320_THT_11x11mm_P1.50mm",mounting:"THT",width:11.0,height:11.0,padOffsets:[{x:-0.75,y:0},{x:0.75,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"FD320 body about 11 x 11 x 9.5 mm, lead spacing 1.5 mm."},
+  VD2: {name:"D_Axial_KD8_P10.16mm",mounting:"THT",width:8.0,height:3.5,padOffsets:[{x:-5.08,y:0},{x:5.08,y:0}],holeDiameter:0.9,padDiameter:1.9,note:"KS512A, through-hole KD-8 style."},
+  VD3: {name:"D_Axial_KD4B_L4.8mm_D3.0mm_P10.16mm",mounting:"THT",width:10.16,height:3.2,padOffsets:[{x:-5.08,y:0},{x:5.08,y:0}],holeDiameter:1.0,padDiameter:2.0,note:"KD243Zh axial KD-4B."},
+  VD4: {name:"D_Axial_KD4B_L4.8mm_D3.0mm_P10.16mm",mounting:"THT",width:10.16,height:3.2,padOffsets:[{x:-5.08,y:0},{x:5.08,y:0}],holeDiameter:1.0,padDiameter:2.0,note:"KD243Zh axial KD-4B."},
+  VD5: {name:"D_Axial_KD4B_L4.8mm_D3.0mm_P10.16mm",mounting:"THT",width:10.16,height:3.2,padOffsets:[{x:-5.08,y:0},{x:5.08,y:0}],holeDiameter:1.0,padDiameter:2.0,note:"KD243Zh axial KD-4B."},
+  HL1: {name:"LED_Rectangular_5.0x2.5mm_P2.54mm",mounting:"THT",width:5.0,height:2.5,padOffsets:[{x:-1.27,y:0},{x:1.27,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"Kingbright L383SRWT rectangular 2.5 x 5 mm THT LED."},
+  RU1: {name:"Varistor_FNR20_D24mm_P10.0mm",mounting:"THT",width:24.0,height:9.0,padOffsets:[{x:-5.0,y:0},{x:5.0,y:0}],holeDiameter:1.3,padDiameter:2.6,note:"FNR-20K391, 20 mm class disc; datasheet envelope approx. 24 x 28 x 9 mm, 10 mm lead spacing."},
+  VD6: {name:"Bridge_RB15_D9.1mm_4P_P5.08mm",mounting:"THT",width:9.1,height:9.1,padOffsets:[{x:-2.54,y:-2.54},{x:-2.54,y:2.54},{x:2.54,y:-2.54},{x:2.54,y:2.54}],holeDiameter:1.0,padDiameter:2.0,note:"RB154 bridge, RB-15 / 4-circular through-hole package."},
+
+  VT1: {name:"TO-92_Inline_P2.54mm",mounting:"THT",width:5.0,height:4.5,padOffsets:[{x:-2.54,y:0},{x:0,y:0},{x:2.54,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"KP501A uses KT-26, equivalent to TO-92."},
+  VT2: {name:"TO-92_Inline_P2.54mm",mounting:"THT",width:5.0,height:4.5,padOffsets:[{x:-2.54,y:0},{x:0,y:0},{x:2.54,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"KP501A uses KT-26, equivalent to TO-92."},
+  VT3: {name:"TO-220-3_Vertical_P2.54mm_KP707B1",mounting:"THT",width:10.0,height:4.8,padOffsets:[{x:-2.54,y:0},{x:0,y:0},{x:2.54,y:0}],holeDiameter:1.1,padDiameter:2.3,note:"Uses permitted KP707-series replacement in KT-28 / TO-220 plastic package."},
+
+  VS1: {name:"T123-250_EXTERNAL_IF_3P_P5.08mm",mounting:"EXTERNAL",width:18.0,height:10.0,padOffsets:[{x:-5.08,y:0},{x:0,y:0},{x:5.08,y:0}],holeDiameter:1.5,padDiameter:3.0,note:"T123-250 is chassis-mounted high-current hardware (body up to ~42 mm); PCB footprint is an external A/K/G interface, not a fake solder footprint."},
+  VS2: {name:"T123-250_EXTERNAL_IF_3P_P5.08mm",mounting:"EXTERNAL",width:18.0,height:10.0,padOffsets:[{x:-5.08,y:0},{x:0,y:0},{x:5.08,y:0}],holeDiameter:1.5,padDiameter:3.0,note:"T123-250 is chassis-mounted high-current hardware; PCB footprint is an external A/K/G interface."},
+
+  FU1: {name:"Fuse_10x38mm_THT_Clips_P45.0mm_32A",mounting:"THT",width:50.0,height:12.0,padOffsets:[{x:-22.5,y:0},{x:22.5,y:0}],holeDiameter:1.5,padDiameter:3.2,note:"32 A mains fuse represented by a 10 x 38 mm cartridge with PCB clips; not a 5 x 20 mm low-current holder."},
+  FU2: {name:"Fuse_10x38mm_THT_Clips_P45.0mm_32A",mounting:"THT",width:50.0,height:12.0,padOffsets:[{x:-22.5,y:0},{x:22.5,y:0}],holeDiameter:1.5,padDiameter:3.2,note:"32 A mains fuse represented by a 10 x 38 mm cartridge with PCB clips."},
+
+  XP1: {name:"Phoenix_MSTBA_2,5_5-G-5.08_1x05_P5.08mm",mounting:"THT",width:26.0,height:10.0,padOffsets:[{x:-10.16,y:0},{x:-5.08,y:0},{x:0,y:0},{x:5.08,y:0},{x:10.16,y:0}],holeDiameter:1.3,padDiameter:2.8,note:"Real 5-position 5.08 mm board connector used as CAD/layout substitute for legacy MRN-5Sh; exact MRN mechanical drawing must be substituted if original connector is mandatory."},
+}
+
+const pcbPlacement: Record<string,{x:number;y:number}> = {
+  R1:{x:-62,y:39}, R2:{x:-53,y:39}, VD1:{x:-42,y:39}, C1:{x:-28,y:39}, C2:{x:-17,y:39}, VD2:{x:-4,y:39},
+  VT1:{x:10,y:39}, R3:{x:20,y:39}, R4:{x:29,y:39}, VT2:{x:39,y:39}, R5:{x:49,y:39}, VT3:{x:61,y:39},
+  R6:{x:-62,y:24}, R7:{x:-51,y:24}, VD3:{x:-37,y:24}, HL1:{x:-23,y:24}, RU1:{x:-5,y:24}, VD6:{x:17,y:24},
+  R8:{x:31,y:24}, VD4:{x:43,y:24}, VS1:{x:58,y:24},
+  R9:{x:-62,y:8}, VD5:{x:-49,y:8}, VS2:{x:-33,y:8}, C3:{x:-10,y:8}, XP1:{x:20,y:8},
+  FU1:{x:-36,y:-30}, FU2:{x:27,y:-30},
+}
+
+for (const c of components) {
+  c.schX = c.schX * 4 / 3
+  const fp=footprints[c.ref]
+  const pos=pcbPlacement[c.ref]
+  if(!fp || !pos) throw new Error("Missing footprint or placement for " + c.ref)
+  c.pcbX=pos.x
+  c.pcbY=pos.y
+  c.through=fp.mounting !== "SMD"
+  c.pcbW=fp.width
+  c.pcbH=fp.height
+}
 
 const elements: any[] = [
-  {type:"pcb_board", pcb_board_id:"pcb_board_0", center:{x:0,y:0}, width:100, height:70},
+  {type:"pcb_board", pcb_board_id:"pcb_board_0", center:{x:0,y:0}, width:140, height:100},
   {type:"schematic_text", schematic_text_id:"title", position:{x:-28,y:15}, text:"7330744 Variant 6 - Photo Relay", font_size:0.65},
   {type:"schematic_text", schematic_text_id:"note1", position:{x:-28,y:14}, text:"Educational Altium reconstruction from the verified Multisim topology.", font_size:0.35},
   {type:"schematic_text", schematic_text_id:"note2", position:{x:-28,y:-15}, text:"Power stage is an educational equivalent. Not fabrication-ready for 220 V / tens of kW.", font_size:0.30},
@@ -94,10 +163,10 @@ function pinGeometry(count:number, index:number) {
 }
 
 function pcbPadPosition(c:ComponentSpec, index:number) {
-  const n=c.pins.length
-  const pitch=n >= 4 ? 1.8 : 2.2
-  const total=(n-1)*pitch
-  return {x:c.pcbX-total/2+index*pitch, y:c.pcbY}
+  const fp=footprints[c.ref]
+  const offset=fp.padOffsets[index]
+  if(!offset) throw new Error("Missing pad offset for " + c.ref + " pin " + (index+1))
+  return {x:c.pcbX+offset.x, y:c.pcbY+offset.y}
 }
 
 for (const c of components) {
@@ -174,17 +243,24 @@ for (const c of components) {
       type:"pcb_port",pcb_port_id:ppid,source_port_id:spid,pcb_component_id:pcid,
     })
     const pp=pcbPadPosition(c,pi)
-    if (c.through) {
+    const fp=footprints[c.ref]
+    if (fp.mounting !== "SMD") {
       elements.push({
         type:"pcb_plated_hole",pcb_plated_hole_id:`pth_${c.ref}_${pi+1}`,
         pcb_component_id:pcid,pcb_port_id:ppid,shape:"circle",
-        x:pp.x,y:pp.y,outer_diameter:1.8,hole_diameter:0.9,ccw_rotation:0,
+        x:pp.x,y:pp.y,
+        outer_diameter:fp.padDiameter ?? 2.0,
+        hole_diameter:fp.holeDiameter ?? 0.9,
+        ccw_rotation:0,
       })
     } else {
       elements.push({
         type:"pcb_smtpad",pcb_smtpad_id:`smd_${c.ref}_${pi+1}`,
         pcb_component_id:pcid,pcb_port_id:ppid,shape:"rect",
-        x:pp.x,y:pp.y,width:1.5,height:1.0,layer:"top",ccw_rotation:0,
+        x:pp.x,y:pp.y,
+        width:fp.smdPad?.width ?? 1.5,
+        height:fp.smdPad?.height ?? 1.0,
+        layer:"top",ccw_rotation:0,
       })
     }
     const arr=netPorts.get(pin.net) ?? []
@@ -203,7 +279,7 @@ for (const [net,ports] of netPorts.entries()) {
   })
 }
 
-for (const [i,point] of [[-46,-31],[46,-31],[-46,31],[46,31]].entries()) {
+for (const [i,point] of [[-66,-46],[66,-46],[-66,46],[66,46]].entries()) {
   const [x,y]=point as number[]
   elements.push({
     type:"pcb_hole",pcb_hole_id:`mh_${i+1}`,x,y,hole_diameter:3.2,
