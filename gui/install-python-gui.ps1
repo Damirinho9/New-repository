@@ -61,6 +61,49 @@ if(-not (Test-Path $expectedTpl) -and $tpls.Count -gt 0){
 }
 L "Expected SPICEEWB.TPL exists=$(Test-Path $expectedTpl)"
 
+# If the installed tree omitted the legacy SPICE import template, inspect cached
+# NI CDS package payloads. NIPM keeps installed package archives under ProgramData.
+if(-not (Test-Path $expectedTpl)){
+  $nipkg=@(
+    "C:\Program Files\National Instruments\NI Package Manager\nipkg.exe",
+    "C:\Program Files (x86)\National Instruments\NI Package Manager\nipkg.exe"
+  ) | Where-Object {Test-Path $_} | Select-Object -First 1
+  if($nipkg){
+    & $nipkg help unpack *> (Join-Path $A "nipkg-help-unpack.txt")
+    & $nipkg list-installed "ni-cds*" *> (Join-Path $A "nipkg-cds-installed.txt")
+    $cacheRoot="C:\ProgramData\National Instruments\NI Package Manager\Packages"
+    if(Test-Path $cacheRoot){
+      $pkgIndex=Get-ChildItem $cacheRoot -Filter "*.nipkg" -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object {$_.Name -match "ni-cds|multisim"}
+      $pkgIndex | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize |
+        Out-File (Join-Path $A "nipkg-cached-cds-files.txt")
+      $unpackRoot=Join-Path $env:RUNNER_TEMP "cds-unpacked"
+      New-Item -ItemType Directory -Force -Path $unpackRoot | Out-Null
+      foreach($pkg in $pkgIndex){
+        $dst=Join-Path $unpackRoot ([IO.Path]::GetFileNameWithoutExtension($pkg.Name))
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
+        try{
+          & $nipkg unpack "$($pkg.FullName)" "$dst" *> $null
+        }catch{}
+        $hit=Get-ChildItem $dst -Filter "SPICEEWB.TPL" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if($hit){
+          Copy-Item $hit.FullName $expectedTpl -Force
+          L "Recovered SPICEEWB.TPL from cached package $($pkg.Name): $($hit.FullName)"
+          break
+        }
+      }
+      if(-not (Test-Path $expectedTpl)){
+        $textHits=Get-ChildItem $unpackRoot -Recurse -File -ErrorAction SilentlyContinue |
+          Where-Object {$_.Length -lt 20MB} |
+          Select-String -Pattern "SPICEEWB" -SimpleMatch -List -ErrorAction SilentlyContinue |
+          Select-Object -First 30 Path,Line
+        $textHits | Format-Table -AutoSize | Out-File (Join-Path $A "spiceewb-text-hits.txt")
+      }
+    }
+  }
+}
+L "SPICEEWB.TPL after cache recovery exists=$(Test-Path $expectedTpl)"
+
 L "Installing Python UI automation packages"
 python -m pip install --disable-pip-version-check --quiet pywinauto pyautogui pillow
 L "pip exit=$LASTEXITCODE"
