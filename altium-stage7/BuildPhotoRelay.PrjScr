@@ -1,0 +1,11 @@
+[Design]
+Version=1.0
+HierarchyMode=0
+
+[Document1]
+DocumentPath=BuildPhotoRelay.pas
+AnnotationEnabled=1
+AnnotateStartValue=1
+
+[Generic_ScriptingSystem]
+StartProcName=BuildPhotoRelay>Run
