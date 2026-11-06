@@ -1,0 +1,45 @@
+name: Stage 8 real footprints - order 7330744
+
+on:
+  push:
+    branches: [altium-7330744-stage8-footprints]
+    paths:
+      - ".github/workflows/altium-stage8-footprints.yml"
+      - "altium-native/**"
+  workflow_dispatch:
+
+concurrency:
+  group: altium-7330744-stage8-footprints
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install pinned Altium serializer
+        working-directory: altium-native
+        run: |
+          bun init -y
+          bun add github:tscircuit/circuit-json-to-altium#a399f6a5341c13bc3846b166bda48894faf2fa5f altiumts@0.0.95 jszip@3.10.1 zod
+      - name: Generate Stage 8 project and validate assigned footprints
+        working-directory: altium-native
+        run: |
+          mkdir -p out
+          bun run build.ts out | tee out-build.log
+          cat out/7330744_Stage8_Validation.json
+          file out/PhotoRelay_V6.SchDoc out/PhotoRelay_V6.PcbDoc
+          ls -lah out
+      - name: Upload Stage 8
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-stage8-real-footprints
+          path: |
+            altium-native/out/**
+            altium-native/out-build.log
+          if-no-files-found: error
+          retention-days: 7
