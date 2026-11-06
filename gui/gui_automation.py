@@ -252,7 +252,35 @@ def main():
         log("main window missing");return 12
 
     # Create a genuine Multisim design using NI's supported Arbitrary SPICE Block.
+    # Multisim opens a modal "New Design" chooser; confirm the default Blank design
+    # before attempting Place -> Component.
     pyautogui.hotkey("ctrl","n");time.sleep(2)
+    try:
+        from pywinauto import Desktop
+        created=False
+        for backend in ("win32","uia"):
+            try:
+                nd=Desktop(backend=backend).window(title_re=".*New Design.*")
+                if nd.exists(timeout=1):
+                    try: nd.set_focus()
+                    except: pass
+                    for b in nd.descendants():
+                        try:
+                            if b.window_text().replace("&","").strip()=="Create" and b.rectangle().width()>5:
+                                b.click_input(); created=True; break
+                        except: pass
+                    if not created:
+                        import pyautogui
+                        r=nd.rectangle()
+                        pyautogui.click(r.right-210,r.bottom-30)
+                        created=True
+                    time.sleep(3)
+                    break
+            except: pass
+        log(f"blank design create action={created}")
+    except Exception as e:
+        log(f"New Design handling error: {e}")
+    shot("39_blank_design_ready.png")
     if not place_block(nettext):return 20
     if TARGET.exists():TARGET.unlink()
     if not save_as():
