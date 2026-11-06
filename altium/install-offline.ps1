@@ -31,8 +31,8 @@ L "Installer file version=$($vi.FileVersion)"
 L "Installer product=$($vi.ProductName)"
 if($sig.Status -ne "Valid"){L "Refuse unsigned installer";exit 13}
 
-$programs="C:\Program Files\Altium\AD26"
-$documents="C:\Users\Public\Documents\Altium\AD26"
+$programs="C:\AD26"
+$documents="C:\AD26Docs"
 L "Start offline silent install"
 $args=@(
   "-Programs:$programs",
@@ -45,7 +45,7 @@ $p=Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru -Redir
 L "Installer exit=$($p.ExitCode)"
 
 L "Inventory installed Altium executables"
-$roots=@("C:\Program Files\Altium","C:\Program Files (x86)\Altium")
+$roots=@("C:\AD26","C:\Program Files\Altium","C:\Program Files (x86)\Altium")
 $execs=@()
 foreach($r in $roots){
   if(Test-Path $r){
