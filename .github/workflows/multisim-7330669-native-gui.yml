@@ -1,0 +1,46 @@
+name: Multisim native GUI smoke - order 7330669
+
+on:
+  push:
+    branches:
+      - multisim-7330669-native-gui
+    paths:
+      - ".github/workflows/multisim-7330669-native-gui.yml"
+      - "lab7330669/**"
+  workflow_dispatch:
+
+concurrency:
+  group: multisim-7330669-native-gui
+  cancel-in-progress: true
+
+jobs:
+  native-gui:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Multisim 14.3 and create native MS14 through GUI
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\lab7330669\install-native-gui.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+
+      - name: Inventory outputs
+        if: always()
+        shell: powershell
+        run: |
+          if(Test-Path .\lab7330669-artifacts){
+            Get-ChildItem .\lab7330669-artifacts -Recurse |
+              Select-Object FullName,Length,LastWriteTime |
+              Format-Table -AutoSize
+          }
+
+      - name: Upload native GUI smoke outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330669-native-gui-smoke
+          path: lab7330669-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
