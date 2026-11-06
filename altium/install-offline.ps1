@@ -86,3 +86,5 @@ if($main){
   exit 20
 }
 exit 0
+
+# trigger install run
