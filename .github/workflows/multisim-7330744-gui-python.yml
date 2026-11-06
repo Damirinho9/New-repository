@@ -1,0 +1,43 @@
+name: Multisim Python GUI MS14 - order 7330744
+
+on:
+  push:
+    branches:
+      - multisim-7330744-gui
+    paths:
+      - ".github/workflows/multisim-7330744-gui-python.yml"
+      - "gui/gui_automation.py"
+      - "gui/install-python-gui.ps1"
+  workflow_dispatch:
+
+concurrency:
+  group: multisim-7330744-gui-python
+  cancel-in-progress: true
+
+jobs:
+  gui-python:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Multisim and automate real GUI with Python
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\gui\install-python-gui.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+      - name: Inventory
+        if: always()
+        shell: powershell
+        run: |
+          if(Test-Path .\gui-artifacts){
+            Get-ChildItem .\gui-artifacts -Recurse | Select FullName,Length,LastWriteTime | Format-Table -AutoSize
+          }
+      - name: Upload GUI outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330744-python-gui-ms14
+          path: gui-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
