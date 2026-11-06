@@ -30,7 +30,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           Set-ExecutionPolicy Bypass -Scope Process -Force
-          .\mcp\open-final-ms14.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+          .\finalgui\open-final-ms14.ps1 -Workspace "$env:GITHUB_WORKSPACE"
       - name: Upload final GUI package
         if: always()
         uses: actions/upload-artifact@v4
