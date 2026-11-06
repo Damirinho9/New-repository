@@ -393,7 +393,12 @@ const validation={
   all_patterns_match:badPatterns.length===0,
   schematic_strict_valid:schValidation.valid,
   pcb_strict_valid:pcbValidation.valid,
-  pcb_dangling_references:dangling,\n  functional_zones:["photo sensor / sensitive","control","220V input / protection","rectifier / drive","power stage / external SCR"],\n  keepout_barrier_mm:6,\n  keepout_control_crossing_mm:25,\n  manually_routed_tracks:[{net:"BR_A",width_mm:2.0},{net:"G1",width_mm:0.8},{net:"G2",width_mm:0.8}],\n  load_current_policy:"L/N/SW high-current path intentionally not routed as ordinary PCB copper; external bus/terminal path required for the educational 55 kW concept.",
+  pcb_dangling_references:dangling,
+  functional_zones:["photo sensor / sensitive","control","220V input / protection","rectifier / drive","power stage / external SCR"],
+  keepout_barrier_mm:6,
+  keepout_control_crossing_mm:25,
+  manually_routed_tracks:[{net:"BR_A",width_mm:2.0},{net:"G1",width_mm:0.8},{net:"G2",width_mm:0.8}],
+  load_current_policy:"L/N/SW high-current path intentionally not routed as ordinary PCB copper; external bus/terminal path required for the educational 55 kW concept.",
 }
 if(!schValidation.valid) throw new Error("Schematic strict validation failed: "+JSON.stringify(schValidation))
 if(!pcbValidation.valid) throw new Error("PCB strict validation failed: "+JSON.stringify(pcbValidation))
