@@ -25,7 +25,7 @@ jobs:
         working-directory: altium-native
         run: |
           bun init -y
-          bun add github:tscircuit/circuit-json-to-altium#a399f6a5341c13bc3846b166bda48894faf2fa5f altiumts@0.0.95 jszip@3.10.1
+          bun add github:tscircuit/circuit-json-to-altium#a399f6a5341c13bc3846b166bda48894faf2fa5f altiumts@0.0.95 jszip@3.10.1 zod
       - name: Generate and validate Altium project
         working-directory: altium-native
         run: |
