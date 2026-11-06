@@ -6,9 +6,9 @@ New-Item -ItemType Directory -Force -Path $A | Out-Null
 $Log=Join-Path $A "python-workflow.log"
 function L([string]$m){$s="[$(Get-Date -Format o)] $m";Write-Host $s;Add-Content $Log $s}
 
-$url="https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe"
-$installer=Join-Path $env:RUNNER_TEMP "ni-cds-educational_14.3_online.exe"
-L "Downloading signed NI Education 14.3 bootstrapper"
+$url="https://download.ni.com/support/nipkg/products/ni-c/ni-cds-professional/14.3/online/ni-cds-professional_14.3_online.exe"
+$installer=Join-Path $env:RUNNER_TEMP "ni-cds-professional_14.3_online.exe"
+L "Downloading signed NI Professional 14.3 bootstrapper"
 Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
 L "SHA256=$((Get-FileHash $installer -Algorithm SHA256).Hash)"
 $sig=Get-AuthenticodeSignature $installer
@@ -22,6 +22,44 @@ if($done){L "Installer exit=$($p.ExitCode)"}else{L "Installer wrapper timeout";t
 $ms=Get-ChildItem "C:\Program Files (x86)\National Instruments","C:\Program Files\National Instruments" -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 if(-not $ms){L "Multisim.exe not found";exit 11}
 L "Multisim=$($ms.FullName)"
+
+# The online NI bootstrapper may exit before all child package operations finish.
+# Wait for package/installer processes to settle so the SPICE importer templates are present.
+for($i=0;$i -lt 90;$i++){
+  $busy=Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    $_.ProcessName -match "nipkg|NIPackageManager|ni.*install|setup|msiexec"
+  }
+  if(-not $busy){break}
+  if(($i % 10) -eq 0){L ("Waiting for NI package operations: " + (($busy | Select-Object -ExpandProperty ProcessName -Unique) -join ","))}
+  Start-Sleep -Seconds 5
+}
+
+$niRoots=@(
+  "C:\Program Files (x86)\National Instruments",
+  "C:\Program Files\National Instruments",
+  "C:\ProgramData\National Instruments"
+)
+$tpls=@()
+foreach($root in $niRoots){
+  if(Test-Path $root){
+    $tpls += Get-ChildItem $root -Filter "SPICEEWB.TPL" -Recurse -ErrorAction SilentlyContinue
+  }
+}
+$tpls | Select-Object FullName,Length,LastWriteTime | Format-List | Out-File (Join-Path $A "spiceewb-template-search.txt")
+$allTpl=@()
+foreach($root in $niRoots){
+  if(Test-Path $root){
+    $allTpl += Get-ChildItem $root -Filter "*.TPL" -Recurse -ErrorAction SilentlyContinue
+  }
+}
+$allTpl | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-File (Join-Path $A "all-tpl-files.txt")
+
+$expectedTpl=Join-Path $ms.DirectoryName "SPICEEWB.TPL"
+if(-not (Test-Path $expectedTpl) -and $tpls.Count -gt 0){
+  Copy-Item $tpls[0].FullName $expectedTpl -Force
+  L "Copied SPICEEWB.TPL from $($tpls[0].FullName) to $expectedTpl"
+}
+L "Expected SPICEEWB.TPL exists=$(Test-Path $expectedTpl)"
 
 L "Installing Python UI automation packages"
 python -m pip install --disable-pip-version-check --quiet pywinauto pyautogui pillow
