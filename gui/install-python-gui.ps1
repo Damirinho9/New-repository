@@ -6,9 +6,9 @@ New-Item -ItemType Directory -Force -Path $A | Out-Null
 $Log=Join-Path $A "python-workflow.log"
 function L([string]$m){$s="[$(Get-Date -Format o)] $m";Write-Host $s;Add-Content $Log $s}
 
-$url="https://download.ni.com/support/nipkg/products/ni-c/ni-cds-professional/14.3/online/ni-cds-professional_14.3_online.exe"
-$installer=Join-Path $env:RUNNER_TEMP "ni-cds-professional_14.3_online.exe"
-L "Downloading signed NI Professional 14.3 bootstrapper"
+$url="https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe"
+$installer=Join-Path $env:RUNNER_TEMP "ni-cds-educational_14.3_online.exe"
+L "Downloading signed NI Education 14.3 bootstrapper"
 Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
 L "SHA256=$((Get-FileHash $installer -Algorithm SHA256).Hash)"
 $sig=Get-AuthenticodeSignature $installer
@@ -25,7 +25,7 @@ L "Multisim=$($ms.FullName)"
 
 # The online NI bootstrapper may exit before all child package operations finish.
 # Wait for package/installer processes to settle so the SPICE importer templates are present.
-for($i=0;$i -lt 90;$i++){
+for($i=0;$i -lt 4;$i++){
   $busy=Get-Process -ErrorAction SilentlyContinue | Where-Object {
     $_.ProcessName -match "nipkg|NIPackageManager|ni.*install|setup|msiexec"
   }
