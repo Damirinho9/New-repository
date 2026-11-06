@@ -210,23 +210,33 @@ def save_new_design():
 
 def close_reopen():
     import pyautogui
-    # Close Multisim completely, then reopen the saved native file directly in Multisim.
+    # Close only the current native design, keep Multisim running, then reopen via File/Open.
     focus_main()
-    pyautogui.hotkey("alt", "f4")
-    time.sleep(5)
+    pyautogui.hotkey("ctrl", "f4")
+    time.sleep(4)
+
+    focus_main()
+    pyautogui.hotkey("ctrl", "o")
+    time.sleep(2)
+    if not standard_file_dialog(r".*[Oo]pen.*", TARGET, "open"):
+        log("Open dialog was not found")
+        return False
+
+    time.sleep(12)
+    # If Windows left a second stale Open dialog visible, dismiss it without touching the loaded design.
     try:
-        subprocess.run(["taskkill", "/IM", "Multisim.exe", "/T", "/F"], capture_output=True, text=True, timeout=10)
+        from pywinauto import Desktop
+        dlg = Desktop(backend="win32").window(title_re=".*[Oo]pen.*")
+        if dlg.exists(timeout=.5):
+            pyautogui.press("esc")
+            time.sleep(2)
     except Exception:
         pass
-    time.sleep(2)
-
-    p = subprocess.Popen([str(MULTISIM), str(TARGET)])
-    log(f"relaunch pid={p.pid} file={TARGET}")
-    time.sleep(14)
 
     w = focus_main()
     title = w.window_text() if w else ""
     log(f"reopened window title={title!r}")
+    shot("40_reopened_native_ms14.png")
     return "native_gui_smoke" in title.lower()
 
 def run_test():
