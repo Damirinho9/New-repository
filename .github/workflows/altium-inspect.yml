@@ -1,0 +1,27 @@
+name: Inspect Altium 26.11.1 third-party archive
+
+on:
+  push:
+    branches: [altium-7330744-inspect]
+    paths:
+      - ".github/workflows/altium-inspect.yml"
+      - "altium/**"
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and inspect archive
+        shell: powershell
+        run: .\altium\inspect.ps1
+      - name: Upload inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: altium-26.11.1-inspection
+          path: altium-inspect/
+          if-no-files-found: warn
+          retention-days: 3
