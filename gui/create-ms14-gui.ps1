@@ -42,6 +42,63 @@ public static class NativeWin {
 }
 "@
 
+
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+
+function Invoke-UIButtonExact([string]$name){
+  try{
+    $root=[System.Windows.Automation.AutomationElement]::RootElement
+    $condName=New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::NameProperty,$name)
+    $condType=New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Button)
+    $and=New-Object System.Windows.Automation.AndCondition($condName,$condType)
+    $el=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$and)
+    if($el){
+      L ("UI Automation found button: " + $name)
+      $p=$el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+      $p.Invoke()
+      return $true
+    }
+    L ("UI Automation button not found: " + $name)
+  }catch{
+    L ("UI Automation error for " + $name + ": " + $_.Exception.Message)
+  }
+  return $false
+}
+
+function Wait-ForUIButton([string]$name,[int]$seconds){
+  for($i=0;$i -lt $seconds;$i++){
+    $root=[System.Windows.Automation.AutomationElement]::RootElement
+    $condName=New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::NameProperty,$name)
+    $condType=New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Button)
+    $and=New-Object System.Windows.Automation.AndCondition($condName,$condType)
+    $el=$root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$and)
+    if($el){return $true}
+    Start-Sleep -Seconds 1
+  }
+  return $false
+}
+
+function Dump-UIButtons([string]$name){
+  try{
+    $root=[System.Windows.Automation.AutomationElement]::RootElement
+    $cond=New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Button)
+    $els=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$cond)
+    $lines=@()
+    foreach($e in $els){ if($e.Current.Name){$lines += $e.Current.Name} }
+    $lines | Sort-Object -Unique | Set-Content (Join-Path $A $name)
+  }catch{}
+}
+
+
 function GrabDesktop([string]$name){
   try{
     $b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -150,6 +207,47 @@ $ws=New-Object -ComObject WScript.Shell
 $ws.AppActivate($mp.Id)|Out-Null
 Start-Sleep -Seconds 2
 GrabWindow $mp.MainWindowHandle "01_blank_multisim.png"
+GrabDesktop "01_license_dialog.png"
+Dump-UIButtons "01_ui_buttons_before_trial.txt"
+
+# Education edition opens a first-run activation dialog. Start the official 7-day trial.
+if(Wait-ForUIButton "Begin 7 Day Trial" 20){
+  if(Invoke-UIButtonExact "Begin 7 Day Trial"){
+    L "Begin 7 Day Trial invoked"
+    Start-Sleep -Seconds 8
+    GrabDesktop "01b_after_trial_click.png"
+    Dump-UIButtons "01b_ui_buttons_after_trial.txt"
+
+    # Some NI builds show one confirmation/continue dialog after starting the trial.
+    foreach($bn in @("Continue","OK","Start Trial","Begin Trial")){
+      if(Wait-ForUIButton $bn 2){
+        if(Invoke-UIButtonExact $bn){
+          L ("Invoked post-trial button: " + $bn)
+          Start-Sleep -Seconds 5
+          break
+        }
+      }
+    }
+  }
+}else{
+  L "Begin 7 Day Trial button did not appear"
+}
+
+# Wait until the blocking activation button is gone and bring Multisim back to foreground.
+for($i=0;$i -lt 20;$i++){
+  $still=Wait-ForUIButton "Begin 7 Day Trial" 1
+  if(-not $still){break}
+  Start-Sleep -Seconds 1
+}
+$mp=(Get-Process -Name "Multisim" -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1)
+if($mp){
+  [NativeWin]::ShowWindow($mp.MainWindowHandle,3)|Out-Null
+  [NativeWin]::SetForegroundWindow($mp.MainWindowHandle)|Out-Null
+  $ws.AppActivate($mp.Id)|Out-Null
+}
+Start-Sleep -Seconds 3
+GrabDesktop "01c_workspace_after_trial.png"
+Dump-UIButtons "01c_ui_buttons_workspace.txt"
 
 $ws.SendKeys("^o")
 Start-Sleep -Seconds 2
