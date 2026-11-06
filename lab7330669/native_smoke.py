@@ -210,23 +210,24 @@ def save_new_design():
 
 def close_reopen():
     import pyautogui
+    # Close Multisim completely, then reopen the saved native file directly in Multisim.
     focus_main()
-    pyautogui.hotkey("ctrl", "f4")
-    time.sleep(4)
-    # If a save prompt appears, the file should already be saved. Accept Save.
-    pyautogui.press("enter")
+    pyautogui.hotkey("alt", "f4")
+    time.sleep(5)
+    try:
+        subprocess.run(["taskkill", "/IM", "Multisim.exe", "/T", "/F"], capture_output=True, text=True, timeout=10)
+    except Exception:
+        pass
     time.sleep(2)
-    focus_main()
-    pyautogui.hotkey("ctrl", "o")
-    time.sleep(2)
-    if not standard_file_dialog(r".*[Oo]pen.*", TARGET, "open"):
-        log("Open dialog was not found")
-        return False
-    time.sleep(12)
+
+    p = subprocess.Popen([str(MULTISIM), str(TARGET)])
+    log(f"relaunch pid={p.pid} file={TARGET}")
+    time.sleep(14)
+
     w = focus_main()
     title = w.window_text() if w else ""
     log(f"reopened window title={title!r}")
-    return TARGET.name.lower().replace(".ms14","") in title.lower() or "native_gui_smoke" in title.lower()
+    return "native_gui_smoke" in title.lower()
 
 def run_test():
     import pyautogui
@@ -260,8 +261,7 @@ def main():
         return 12
 
     # Native design only. No CIR/SPICE import.
-    pyautogui.hotkey("ctrl", "n")
-    time.sleep(3)
+    # Multisim starts with Design1 already open, so do not invoke the New Design wizard.
 
     # Native smoke circuit content: real database components.
     if not place_component("RESISTOR", 500, 350):
