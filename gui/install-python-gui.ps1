@@ -110,7 +110,7 @@ L "pip exit=$LASTEXITCODE"
 if($LASTEXITCODE -ne 0){exit 12}
 
 $cir=Join-Path $Workspace "gui\7330744_V6_GUI_import.cir"
-$target=Join-Path $A "7330744_V6_PhotoRelay.ms14"
+$target=Join-Path $A "7330744_PhotoRelay_V6.ms14"
 $py=Join-Path $Workspace "gui\gui_automation.py"
 
 python $py "$($ms.FullName)" "$cir" "$target" "$A"
