@@ -296,26 +296,169 @@ function pad(ref:string,pinIndex:number){
   if(!component) throw new Error("Unknown component "+ref)
   return pcbPadPosition(component,pinIndex-1)
 }
-function addManualTrace(id:string,net:string,width:number,points:{x:number;y:number}[]){
+function addTraceLayer(id:string,net:string,width:number,layer:"top"|"bottom",points:{x:number;y:number}[]){
   elements.push({
     type:"pcb_trace",pcb_trace_id:id,source_trace_id:`trace_${net}`,
-    route:points.map((p)=>({route_type:"wire",x:p.x,y:p.y,width,layer:"top"}))
+    route:points.map((p)=>({route_type:"wire",x:p.x,y:p.y,width,layer}))
   })
 }
 
-// Manually routed short power/control links only - no autorouter.
+function addVia(id:string,net:string,x:number,y:number,traceId:string){
+  elements.push({
+    type:"pcb_via",pcb_via_id:id,pcb_trace_id:traceId,source_trace_id:`trace_${net}`,
+    x,y,outer_diameter:0.9,hole_diameter:0.4,layers:["top","bottom"],through_hole:true
+  })
+}
+
+function addTopToBottom(id:string,net:string,width:number,start:{x:number;y:number},via:{x:number;y:number},bottomPoints:{x:number;y:number}[]){
+  const traceId=`route_${id}`
+  elements.push({
+    type:"pcb_trace",pcb_trace_id:traceId,source_trace_id:`trace_${net}`,
+    route:[
+      {route_type:"wire",x:start.x,y:start.y,width,layer:"top"},
+      {route_type:"wire",x:via.x,y:via.y,width,layer:"top"},
+      {route_type:"via",x:via.x,y:via.y},
+      {route_type:"wire",x:via.x,y:via.y,width,layer:"bottom"},
+      ...bottomPoints.map((p)=>({route_type:"wire",x:p.x,y:p.y,width,layer:"bottom"}))
+    ]
+  })
+  addVia(`via_${id}`,net,via.x,via.y,traceId)
+}
+
+function addBottomToTop(id:string,net:string,width:number,bottomPoints:{x:number;y:number}[],via:{x:number;y:number},end:{x:number;y:number}){
+  const traceId=`route_${id}`
+  elements.push({
+    type:"pcb_trace",pcb_trace_id:traceId,source_trace_id:`trace_${net}`,
+    route:[
+      ...bottomPoints.map((p)=>({route_type:"wire",x:p.x,y:p.y,width,layer:"bottom"})),
+      {route_type:"wire",x:via.x,y:via.y,width,layer:"bottom"},
+      {route_type:"via",x:via.x,y:via.y},
+      {route_type:"wire",x:via.x,y:via.y,width,layer:"top"},
+      {route_type:"wire",x:end.x,y:end.y,width,layer:"top"}
+    ]
+  })
+  addVia(`via_${id}`,net,via.x,via.y,traceId)
+}
+
+function refText(ref:string){
+  const component=components.find((item)=>item.ref===ref)!
+  const fp=footprints[ref]
+  elements.push({
+    type:"pcb_silkscreen_text",pcb_silkscreen_text_id:`ref_${ref}`,layer:"top",
+    font:"tscircuit2024",font_size:0.8,text:ref,
+    anchor_position:{x:component.pcbX,y:component.pcbY+fp.height/2+1.2},anchor_alignment:"center"
+  })
+}
+for(const component of components) refText(component.ref)
+
+elements.push(
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"xp1_pinout",layer:"top",font:"tscircuit2024",font_size:0.65,text:"XP1: 1 SW | 2 LOAD | 3 MAINS-L | 4 N | 5 CASE",anchor_position:{x:-52,y:-52},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"vs1_pinout",layer:"top",font:"tscircuit2024",font_size:0.6,text:"VS1 A K G",anchor_position:{x:69,y:2},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"vs2_pinout",layer:"top",font:"tscircuit2024",font_size:0.6,text:"VS2 A K G",anchor_position:{x:69,y:-27},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"top_layer_note",layer:"top",font:"tscircuit2024",font_size:0.55,text:"TOP: local signals / gate drive",anchor_position:{x:40,y:52},anchor_alignment:"center"},
+  {type:"pcb_silkscreen_text",pcb_silkscreen_text_id:"bottom_layer_note",layer:"bottom",font:"tscircuit2024",font_size:0.55,text:"BOTTOM: buses / returns / COM",anchor_position:{x:35,y:-52},anchor_alignment:"center"}
+)
+
+// COM reference copper strips. They are intentionally limited to control/drive areas.
+elements.push(
+  {type:"pcb_copper_pour",pcb_copper_pour_id:"com_upper_plane",layer:"bottom",shape:"rect",source_net_id:"net_COM",center:{x:-32.5,y:21},width:85,height:4,covered_with_solder_mask:true},
+  {type:"pcb_copper_pour",pcb_copper_pour_id:"com_lower_plane",layer:"bottom",shape:"rect",source_net_id:"net_COM",center:{x:-30,y:0},width:90,height:4,covered_with_solder_mask:true}
+)
+
+// ----- Upper sensitive / control zone -----
+{
+  const a=pad("R1",2), b=pad("R2",1)
+  addTraceLayer("n_r1","N_R1",0.35,"top",[a,b])
+}
+{
+  const pts=[pad("VD1",2),pad("R2",2),pad("C1",2),pad("VT1",1)]
+  addTraceLayer("sens_bus","SENS",0.35,"top",[{x:pts[0].x,y:39},{x:pts[2].x,y:39}])
+  pts.forEach((p,i)=>addTraceLayer(`sens_${i}`,"SENS",0.35,"top",[p,{x:p.x,y:39}]))
+}
+{
+  const a=pad("VT1",3), b=pad("R3",1), d=pad("VT2",3)
+  addTraceLayer("g12_bus","G12",0.35,"top",[{x:a.x,y:34},{x:d.x,y:34}])
+  ;[a,b,d].forEach((p,i)=>addTraceLayer(`g12_${i}`,"G12",0.35,"top",[p,{x:p.x,y:34}]))
+}
+{
+  const a=pad("VT1",2), b=pad("R4",2), d=pad("VT2",1)
+  addTraceLayer("t1_bus","T1",0.35,"top",[{x:a.x,y:26},{x:d.x,y:26}])
+  ;[a,b,d].forEach((p,i)=>addTraceLayer(`t1_${i}`,"T1",0.35,"top",[p,{x:p.x,y:26}]))
+}
+{
+  const a=pad("VT2",2), b=pad("VT3",2)
+  addTraceLayer("t2_bottom_bus","T2",0.35,"bottom",[{x:a.x,y:24},{x:b.x,y:24}])
+  addTraceLayer("t2_vt2","T2",0.35,"bottom",[a,{x:a.x,y:24}])
+  addTraceLayer("t2_vt3","T2",0.35,"bottom",[b,{x:b.x,y:24}])
+  const r=pad("R5",2)
+  addTopToBottom("t2_r5","T2",0.35,r,{x:r.x,y:27.5},[{x:r.x,y:24}])
+}
+{
+  const a=pad("VT3",1), b=pad("R6",1)
+  addTraceLayer("vt3_r6","VT3_R6",0.5,"top",[a,b])
+}
+
+// U_CTRL bottom-layer bus with short local drops.
+{
+  addTraceLayer("uctrl_bus","U_CTRL",0.6,"bottom",[{x:-64,y:37},{x:55,y:37}])
+  const tht=[pad("C2",1),pad("VD2",2),pad("HL1",2)]
+  tht.forEach((p,i)=>addTraceLayer(`uctrl_tht_${i}`,"U_CTRL",0.6,"bottom",[p,{x:p.x,y:37}]))
+  const smd=[pad("R1",1),pad("R4",1),pad("R5",1)]
+  smd.forEach((p,i)=>addTopToBottom(`uctrl_smd_${i}`,"U_CTRL",0.6,p,{x:p.x,y:p.y+(p.y>37?-2.2:2.2)},[{x:p.x,y:37}]))
+}
+
+// COM upper-zone connections into bottom reference strip.
+{
+  const tht=[pad("VD1",1),pad("C1",1),pad("C2",2),pad("VD2",1),pad("VT3",3)]
+  tht.forEach((p,i)=>addTraceLayer(`com_upper_${i}`,"COM",0.6,"bottom",[p,{x:p.x,y:23}]))
+  const r3=pad("R3",2)
+  addTopToBottom("com_r3","COM",0.6,r3,{x:r3.x,y:27.5},[{x:r3.x,y:23}])
+}
+
+// Local LED chain.
+{
+  addTraceLayer("led_r","LED_R",0.45,"top",[pad("R7",2),pad("VD3",1)])
+  addTraceLayer("led_a","LED_A",0.45,"top",[pad("VD3",2),pad("HL1",1)])
+}
+
+// ----- Controlled inter-zone links through x = 8..12 mm opening -----
+{
+  const r6=pad("R6",2), ru=pad("RU1",1), fu=pad("FU1",1)
+  addTopToBottom("drv_cross","DRV",0.8,r6,{x:8,y:27},[{x:8,y:8},{x:ru.x,y:8},{x:ru.x,y:ru.y}])
+  addTraceLayer("drv_fu1","DRV",0.8,"bottom",[{x:fu.x,y:8},fu])
+  addTraceLayer("drv_trunk","DRV",0.8,"bottom",[{x:ru.x,y:8},{x:fu.x,y:8}])
+}
+{
+  const r7=pad("R7",1), c3=pad("C3",1), xp=pad("XP1",3)
+  addTopToBottom("line_aux_cross","L",1.5,r7,{x:12,y:40},[{x:12,y:8},{x:c3.x,y:8},c3])
+  addTraceLayer("line_aux_input","L",1.5,"bottom",[xp,{x:xp.x,y:-39},{x:c3.x,y:-39},c3])
+}
+
+// Bridge feed and thyristor gate drive. Explicitly hand-routed.
 {
   const a=pad("FU1",2), b=pad("VD6",1)
-  addManualTrace("power_BR_A","BR_A",2.0,[a,{x:b.x,y:a.y},b])
+  addTraceLayer("power_BR_A","BR_A",2.0,"top",[a,{x:b.x,y:a.y},b])
 }
 {
   const b=pad("VD6",3), r=pad("R8",1), d=pad("VD4",2), g=pad("VS1",3)
-  addManualTrace("gate_G1","G1",0.8,[b,{x:r.x,y:b.y},r,d,g])
+  addTraceLayer("gate_G1","G1",0.8,"top",[b,{x:r.x,y:b.y},r,d,g])
 }
 {
   const b=pad("VD6",4), r=pad("R9",1), d=pad("VD5",2), g=pad("VS2",3)
-  addManualTrace("gate_G2","G2",0.8,[b,{x:r.x,y:b.y},r,d,g])
+  addTraceLayer("gate_G2","G2",0.8,"top",[b,{x:r.x,y:b.y},r,d,g])
 }
+
+// Lower COM returns. Main A/K power terminals of VS1/VS2 are NOT routed as PCB load-current paths.
+{
+  const tht=[pad("RU1",2),pad("VD6",2),pad("C3",2),pad("FU2",1),pad("VD4",1)]
+  tht.forEach((p,i)=>addTraceLayer(`com_lower_${i}`,"COM",0.8,"bottom",[p,{x:Math.min(p.x,15),y:2}]))
+  const r8=pad("R8",2)
+  addTopToBottom("com_r8","COM",0.8,r8,{x:r8.x,y:-2.5},[{x:15,y:0}])
+  addTraceLayer("com_zone_bridge","COM",0.8,"bottom",[{x:8,y:19},{x:8,y:2}])
+}
+
+// Explicitly retained external high-current nets: XP1.2 LOAD, N main path, SW, VS1/VS2 A/K.
+// Their copper is intentionally absent; the board carries control/gate functions only.
 
 for (const [i,point] of [[-76,-51],[76,-51],[-76,51],[76,51]].entries()) {
   const [x,y]=point as number[]
