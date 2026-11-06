@@ -61,35 +61,88 @@ def focus_main():
         return w
     return None
 
+def trial_present():
+    try:
+        from pywinauto import Desktop
+        for w in Desktop(backend="uia").windows():
+            try:
+                for desc in w.descendants():
+                    try:
+                        txt=desc.window_text()
+                    except Exception:
+                        txt=""
+                    if txt in ("Log in to Extend Trial","Begin 7 Day Trial"):
+                        return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False
+
 def click_trial():
     import pyautogui
     from pywinauto import Desktop
     dump_windows("windows_before_trial.txt")
+
+    # First try any real clickable trial control that pywinauto can see.
     for backend in ("win32","uia"):
         try:
             for w in Desktop(backend=backend).windows():
                 try:
                     for desc in w.descendants():
-                        try: txt=desc.window_text()
-                        except Exception: txt=""
+                        try:
+                            txt=desc.window_text()
+                        except Exception:
+                            txt=""
                         if "Trial" in txt or "Extend Trial" in txt:
                             try:
                                 rect=desc.rectangle()
                                 log(f"trial candidate backend={backend} text={txt!r} rect={rect}")
-                                desc.click_input()
-                                time.sleep(8)
-                                return True
+                                # Ignore ghost UIA elements with an empty rectangle.
+                                if rect.width() > 5 and rect.height() > 5:
+                                    desc.click_input()
+                                    time.sleep(5)
+                                    if not trial_present():
+                                        log("trial dialog disappeared after pywinauto click_input")
+                                        return True
                             except Exception as e:
                                 log(f"click_input failed: {e}")
                 except Exception:
                     pass
         except Exception as e:
             log(f"backend {backend} trial scan failed: {e}")
-    log("using pyautogui fixed-coordinate trial click 656,520")
-    pyautogui.moveTo(656,520,duration=.3)
-    pyautogui.click()
+
+    # The GitHub Windows desktop is fixed at 1024x768 in these runs.
+    # NI's modal is consistently centered and the visible Begin 7 Day Trial
+    # button center is x=656,y=520.
+    log("trial still visible; using real pyautogui click at 656,520")
+    pyautogui.moveTo(656,520,duration=.5)
+    pyautogui.mouseDown()
+    time.sleep(.15)
+    pyautogui.mouseUp()
     time.sleep(8)
-    return True
+    shot("11a_after_physical_trial_click.png")
+    if not trial_present():
+        log("trial dialog disappeared after physical pyautogui click")
+        return True
+
+    # Keyboard fallback: activate Multisim and try common tab navigation.
+    log("trial still visible after physical click; trying keyboard navigation")
+    focus_main()
+    pyautogui.click(500,190)
+    time.sleep(.5)
+    # Tab sequence around the licensing dialog, with screenshots for diagnosis.
+    for n in range(1,9):
+        pyautogui.press("tab")
+        time.sleep(.25)
+        if n in (3,5,6,7):
+            pyautogui.press("enter")
+            time.sleep(3)
+            if not trial_present():
+                log(f"trial dialog disappeared after keyboard tab/enter n={n}")
+                return True
+    log("trial dialog remains after all real-input methods")
+    return False
 
 def handle_standard_dialog(title_re, file_path, action_names):
     from pywinauto import Desktop
@@ -133,8 +186,11 @@ def main():
     log(f"PID={p.pid}")
     time.sleep(10)
     shot("10_license_before_click.png")
-    click_trial()
+    trial_ok=click_trial()
     shot("11_after_trial_click.png")
+    if not trial_ok:
+        log("Trial could not be started with real GUI input; stopping before Open.")
+        return 14
     dump_windows("windows_after_trial.txt")
 
     w=focus_main()
