@@ -304,7 +304,22 @@ const output=converter.getOutput()
 if(output.schematics.length!==1) throw new Error(`Expected one schematic, got ${output.schematics.length}`)
 const schematic=output.schematics[0]!
 
-const pcbParsed=parseAltiumBinaryPcbDoc(output.pcb.content)
+const footprintNameByRef=new Map(Object.entries(footprints).map(([ref,fp])=>[ref,fp.name]))
+const pcbAsciiWithFootprints=output.pcb.asciiContent
+  .split(/\r?\n/)
+  .map((line)=>{
+    if(!line.startsWith("|RECORD=Component|")) return line
+    const match=/\|SOURCEDESIGNATOR=([^|]+)/.exec(line)
+    if(!match) return line
+    const ref=match[1]!
+    const footprint=footprintNameByRef.get(ref)
+    if(!footprint) throw new Error("No Stage 8 footprint for " + ref)
+    return line.replace(/\|PATTERN=[^|]*/,"|PATTERN="+footprint)
+  })
+  .join("\r\n")
+const pcbContent=serializeAltiumPcbDocWithKeepoutRules(pcbAsciiWithFootprints)
+
+const pcbParsed=parseAltiumBinaryPcbDoc(pcbContent)
 const schParsed=parseAltiumSchDoc(schematic.content)
 const pcbValidation=validateAltiumDocument(pcbParsed,{profile:"strict"})
 const schValidation=validateAltiumDocument(schParsed,{profile:"strict"})
@@ -314,22 +329,30 @@ let projectContent=output.project.content
   .replace("ProjectName=PhotoRelay_V6","ProjectName=7330744_Variant6_PhotoRelay")
 const projectParsed=parseAltiumPrjPcb(projectContent)
 
+const assignedPatterns=pcbParsed.components.map((component:any)=>({
+  reference:component.getDecoded("SOURCEDESIGNATOR") ?? component.get("SOURCEDESIGNATOR"),
+  pattern:component.getDecoded("PATTERN") ?? component.get("PATTERN"),
+}))
+const badPatterns=assignedPatterns.filter(({reference,pattern}:any)=>footprintNameByRef.get(reference)!==pattern)
+
 const validation={
-  generator:"circuit-json-to-altium 0.0.1 + altiumts 0.0.95",
+  stage:8,
+  generator:"circuit-json-to-altium pinned a399f6a + altiumts 0.0.95",
   project_filename:"7330744_Variant6_PhotoRelay.PrjPcb",
   schematic_filename:schematic.filename,
   pcb_filename:output.pcb.filename,
+  board_size_mm:{width:140,height:100},
   component_specs:components.length,
   source_nets:netNames.size,
   source_ports:components.reduce((n,c)=>n+c.pins.length,0),
   schematic_components:schParsed.components.length,
   schematic_pins:schParsed.pins.length,
-  schematic_wires:schParsed.wires.length,
-  schematic_net_labels:schParsed.netLabels.length,
   pcb_components:pcbParsed.components.length,
   pcb_pads:pcbParsed.getRecordsByKind("Pad").length,
   pcb_nets:pcbParsed.nets.length,
   project_documents:projectParsed.documents.map((d:any)=>d.path),
+  assigned_patterns:assignedPatterns,
+  all_patterns_match:badPatterns.length===0,
   schematic_strict_valid:schValidation.valid,
   pcb_strict_valid:pcbValidation.valid,
   pcb_dangling_references:dangling,
@@ -337,33 +360,78 @@ const validation={
 if(!schValidation.valid) throw new Error("Schematic strict validation failed: "+JSON.stringify(schValidation))
 if(!pcbValidation.valid) throw new Error("PCB strict validation failed: "+JSON.stringify(pcbValidation))
 if(dangling.length) throw new Error("Dangling PCB references: "+JSON.stringify(dangling))
+if(badPatterns.length) throw new Error("Footprint PATTERN mismatch: "+JSON.stringify(badPatterns))
 if(schParsed.components.length!==components.length) throw new Error("Schematic component count mismatch")
 if(pcbParsed.components.length!==components.length) throw new Error("PCB component count mismatch")
 
+const csvCell=(value:any)=>{
+  const s=String(value ?? "")
+  return `"${s.replaceAll('"','""')}"`
+}
+const footprintRows=components.map((component)=>{
+  const fp=footprints[component.ref]
+  return [component.ref,component.value,fp.mounting,fp.name,fp.width,fp.height,fp.note].map(csvCell).join(",")
+})
+const footprintCsv=[
+  ["Reference","Value","Mounting","Footprint","Width_mm","Height_mm","Engineering_note"].map(csvCell).join(","),
+  ...footprintRows,
+].join("\r\n")
+
+const footprintMd=[
+  "# Этап 8. Назначение реальных корпусов",
+  "",
+  "Проект: заказ 7330744, вариант 6, фотореле.",
+  "",
+  "Принцип выбора: SMD применяется там, где это не ухудшает электрическую правдоподобность. Силовые, оптические, высоковольтные и механические элементы оставлены THT или вынесены во внешний монтаж.",
+  "",
+  "## Ключевые решения",
+  "",
+  "- R1 - 1206; R2/R3/R4/R5 - 0805; R6/R8/R9 - 1206; R7 - 2512 HV.",
+  "- C1 К50-35 - радиальный электролит D5 P2; C2 К73 - пленочный THT P5; C3 К73 в сетевой цепи - пленочный HV P15.",
+  "- VD1 ФД320 - собственный THT-корпус около 11 x 11 мм с шагом выводов 1.5 мм.",
+  "- VD2 КС512А - THT KD-8; VD3/VD4/VD5 КД243Ж - осевой KD-4B, посадка P10.16.",
+  "- HL1 L383SRWT - прямоугольный THT LED 5.0 x 2.5 мм, P2.54.",
+  "- VD6 RB154 - RB-15, круглый 4-выводный THT около 9.1 x 9.1 мм.",
+  "- VT1/VT2 КП501А - КТ-26 / TO-92, P2.54.",
+  "- VT3 - разрешенная замена КП707Б1 в КТ-28 / TO-220-3.",
+  "- RU1 FNR-20K391 - дисковый варистор класса 20 мм, корпус около 24 x 28 x 9 мм, P10.",
+  "- FU1/FU2 - 32 A: корпус 10 x 38 мм с THT-клипсами, P45; малый 5 x 20 мм не используется.",
+  "- VS1/VS2 T123-250 - внешний силовой монтаж. На PCB оставлен 3-контактный интерфейс A/K/G; сам тиристор не изображается как ложный паяемый корпус.",
+  "- XP1 - реальный 5-позиционный THT-коннектор Phoenix MSTBA 2,5/5-G-5,08 как CAD/layout-замена старого МРН-5Ш. При обязательном применении именно МРН-5Ш его точный механический чертеж нужно подставить перед производством.",
+  "",
+  "## Проверка",
+  "",
+  `В PcbDoc назначено ${assignedPatterns.length} PATTERN-полей. Несовпадений: ${badPatterns.length}.`,
+  `Strict validation SchDoc: ${schValidation.valid ? "PASS" : "FAIL"}.`,
+  `Strict validation PcbDoc: ${pcbValidation.valid ? "PASS" : "FAIL"}.`,
+  `Dangling PCB references: ${dangling.length}.`,
+  "",
+  "Плата на этом этапе увеличена до 140 x 100 мм, чтобы крупные THT-компоненты и держатели предохранителей не пересекались. Трассировка остается следующим этапом.",
+].join("\r\n")
+
 await Bun.write(`${outDir}/PhotoRelay_V6.SchDoc`,schematic.content)
-await Bun.write(`${outDir}/PhotoRelay_V6.PcbDoc`,output.pcb.content)
+await Bun.write(`${outDir}/PhotoRelay_V6.PcbDoc`,pcbContent)
 await Bun.write(`${outDir}/7330744_Variant6_PhotoRelay.PrjPcb`,projectContent)
-await Bun.write(`${outDir}/7330744_Stage7_Validation.json`,JSON.stringify(validation,null,2))
+await Bun.write(`${outDir}/PhotoRelay_V6.circuit.json`,JSON.stringify(elements,null,2))
+await Bun.write(`${outDir}/7330744_Stage8_Validation.json`,JSON.stringify(validation,null,2))
+await Bun.write(`${outDir}/7330744_Этап8_Корпуса.csv`,footprintCsv)
+await Bun.write(`${outDir}/7330744_Этап8_Корпуса.md`,footprintMd)
 
 const readme=[
-  "7330744 Variant 6 - Photo Relay - Altium Designer project",
+  "7330744 Variant 6 - Photo Relay - Stage 8 real footprints",
   "",
-  "Files:",
+  "Native Altium files:",
   "- 7330744_Variant6_PhotoRelay.PrjPcb",
   "- PhotoRelay_V6.SchDoc",
   "- PhotoRelay_V6.PcbDoc",
-  "- PhotoRelay_V6.circuit.json",
-  "- 7330744_Stage7_Validation.json",
   "",
-  "The SchDoc and PcbDoc are native Altium binary compound documents.",
-  "They were generated from Circuit JSON and parsed back with altiumts.",
-  "Strict structural validation passed for both documents.",
-  "The PCB is a two-layer project foundation with component placement and net-assigned pads.",
-  "Routing is intentionally deferred to the next PCB-layout stage.",
-  "The power stage is educational only and is not certified for fabrication at 220 V / tens of kW.",
-  "XP1 pin 5 CASE/SERVICE remains a topology assumption requiring verification against the original assembly.",
+  "Stage 8 assigns realistic footprint names and pad geometry to all 28 PCB components.",
+  "SMD is preferred for suitable low-power resistors. Legacy/high-voltage/power parts remain THT or external.",
+  "T123-250 devices are chassis-mounted and represented by external A/K/G interfaces.",
+  "XP1 uses a real 5.08 mm Phoenix board connector as a CAD substitute because a reliable MRN-5Sh mechanical drawing was not available.",
+  "Routing is not part of Stage 8.",
 ].join("\r\n")
-await Bun.write(`${outDir}/README_STAGE7.txt`,readme)
+await Bun.write(`${outDir}/README_STAGE8.txt`,readme)
 
 function sha256(data:Uint8Array|string){
   return createHash("sha256").update(data).digest("hex")
@@ -371,18 +439,20 @@ function sha256(data:Uint8Array|string){
 const manifest={
   "7330744_Variant6_PhotoRelay.PrjPcb":sha256(projectContent),
   "PhotoRelay_V6.SchDoc":sha256(schematic.content),
-  "PhotoRelay_V6.PcbDoc":sha256(output.pcb.content),
+  "PhotoRelay_V6.PcbDoc":sha256(pcbContent),
 }
 await Bun.write(`${outDir}/SHA256SUMS.json`,JSON.stringify(manifest,null,2))
 
 const zip=new JSZip()
 zip.file("7330744_Variant6_PhotoRelay.PrjPcb",projectContent)
 zip.file("PhotoRelay_V6.SchDoc",schematic.content)
-zip.file("PhotoRelay_V6.PcbDoc",output.pcb.content)
+zip.file("PhotoRelay_V6.PcbDoc",pcbContent)
 zip.file("PhotoRelay_V6.circuit.json",JSON.stringify(elements,null,2))
-zip.file("7330744_Stage7_Validation.json",JSON.stringify(validation,null,2))
-zip.file("README_STAGE7.txt",readme)
+zip.file("7330744_Stage8_Validation.json",JSON.stringify(validation,null,2))
+zip.file("7330744_Этап8_Корпуса.csv",footprintCsv)
+zip.file("7330744_Этап8_Корпуса.md",footprintMd)
+zip.file("README_STAGE8.txt",readme)
 zip.file("SHA256SUMS.json",JSON.stringify(manifest,null,2))
-await Bun.write(`${outDir}/7330744_Этап7_Altium_Project.zip`,await zip.generateAsync({type:"uint8array",compression:"DEFLATE"}))
+await Bun.write(`${outDir}/7330744_Этап8_Реальные_корпуса_Altium.zip`,await zip.generateAsync({type:"uint8array",compression:"DEFLATE"}))
 
 console.log(JSON.stringify(validation,null,2))
