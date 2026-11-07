@@ -5,6 +5,35 @@ MULTISIM=Path(sys.argv[1]); OUT=Path(sys.argv[2])
 OUT.mkdir(parents=True,exist_ok=True)
 TARGET=OUT/"Lab2_DC_Circuit.ms14"
 LOG=OUT/"lab2-native.log"
+DY=0
+
+def P(x,y):
+    return (x,y+DY)
+
+def calibrate_viewport(tag):
+    global DY
+    import pyautogui
+    im=pyautogui.screenshot().convert("RGB")
+    best=(-1,-1)
+    for yy in range(185,285):
+        run=mx=0
+        for xx in range(370,451):
+            r,g,b=im.getpixel((xx,yy))
+            blue=(b>150 and r<100 and g<180)
+            if blue:
+                run+=1
+                if run>mx:mx=run
+            else:
+                run=0
+        if mx>best[0]:
+            best=(mx,yy)
+    if best[0] < 8:
+        log(f"viewport calibration failed tag={tag} best={best}")
+        return False
+    DY=best[1]-209
+    log(f"viewport tag={tag} switch_pin_y={best[1]} DY={DY} run={best[0]}")
+    return True
+
 
 def log(m):
     s=f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {m}"
@@ -222,7 +251,8 @@ def _clean_after_failed_wire():
 
 def try_wire_strategy(strategy,a,b,test=False):
     import pyautogui
-    a=find_hotspot(*a); b=find_hotspot(*b)
+    a=P(*a); b=P(*b)
+    a=find_hotspot(*a,radius=2); b=find_hotspot(*b,radius=2)
     focus();pyautogui.moveTo(900,575);time.sleep(.2)
     before=pyautogui.screenshot() if test else None
     log(f"wire strategy={strategy} a={a} b={b}")
@@ -276,6 +306,7 @@ def wire(a,b):
 
 def junction(x,y):
     import pyautogui
+    x,y=P(x,y)
     focus();pyautogui.hotkey("ctrl","j");time.sleep(.25);pyautogui.click(x,y);pyautogui.press("esc");time.sleep(.3)
     log(f"junction at {x},{y}")
 
@@ -373,14 +404,16 @@ def main():
         if not place(*it):
             log(f"FAILED placement {it}");return 20
     shot("20_all_components.png")
+    if not calibrate_viewport("after_place"):
+        return 23
 
     # Required values from the method sheet.
     okvals=[
-      set_value(725,209,"100"),
-      set_value(675,299,"200"),
-      set_value(725,398,"150"),
-      set_value(489,209,"10"),
-      set_value(463,398,"15")
+      set_value(*P(725,209),"100"),
+      set_value(*P(675,299),"200"),
+      set_value(*P(725,398),"150"),
+      set_value(*P(489,209),"10"),
+      set_value(*P(463,398),"15")
     ]
     shot("30_values_set.png")
     if not all(okvals):
@@ -424,6 +457,8 @@ def main():
 
     if not reopen_in_app():
         log("reopen verification failed");return 22
+    if not calibrate_viewport("after_reopen"):
+        return 27
 
     # State 1: original circuit, K1/K2 closed.
     warns=run_and_capture("70_run_initial.png")
