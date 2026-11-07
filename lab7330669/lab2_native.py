@@ -533,8 +533,8 @@ def main():
     # Common node a is the left bus, node c is the right bus.
     items=[
       ("SPST",380,255,0),("DC_POWER",470,255,1),("AMMETER",570,255,0),("RESISTOR",700,255,0),
-      ("AMMETER",500,350,0),("RESISTOR",650,350,0),
-      ("SPST",380,445,0),("DC_POWER",470,445,3),("AMMETER",570,445,2),("RESISTOR",700,445,0),
+      ("AMMETER",500,350,2),("RESISTOR",650,350,0),
+      ("SPST",380,445,0),("DC_POWER",470,445,1),("AMMETER",570,445,0),("RESISTOR",700,445,0),
       ("VOLTMETER",570,535,0),("GROUND",328,351,0)
     ]
     for it in items:
@@ -564,7 +564,7 @@ def main():
     for a,b in [
         ((505,209),(568,209)),((667,209),(703,209)),
         ((595,299),(649,299)),
-        ((442,398),(469,398)),((469,398),(568,398)),((667,398),(703,398))
+        ((442,398),(469,398)),((505,398),(568,398)),((667,398),(703,398))
     ]:
         wire(a,b)
 
@@ -580,6 +580,10 @@ def main():
     wire_path([(748,209),(790,209),(790,398),(748,398)])
     junction(790,299)
     wire_path([(694,299),(740,299),(790,299)])
+
+    # Voltmeter U4 permanently across nodes a-c for φc / Uxx measurement.
+    wire_path([(568,489),(430,489),(330,489),(330,299)])
+    wire_path([(667,489),(740,489),(790,489),(790,299)])
 
     shot("40_wired.png")
 
