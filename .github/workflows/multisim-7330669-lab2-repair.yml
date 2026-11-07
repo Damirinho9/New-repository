@@ -1,0 +1,41 @@
+name: Multisim surgical Lab 2 repair - order 7330669
+
+on:
+  push:
+    branches:
+      - multisim-7330669-native-gui
+    paths:
+      - ".github/workflows/multisim-7330669-lab2-repair.yml"
+      - "lab7330669/repair_lab2_existing.py"
+      - "lab7330669/run-repair-lab2.ps1"
+  workflow_dispatch:
+
+jobs:
+  repair:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repair existing native Lab 2 MS14
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\lab7330669\run-repair-lab2.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+      - name: Inventory
+        if: always()
+        shell: powershell
+        run: |
+          if(Test-Path .\lab7330669-repair-artifacts){
+            Get-ChildItem .\lab7330669-repair-artifacts -Recurse |
+              Select FullName,Length,LastWriteTime | Format-Table -AutoSize
+          }
+      - name: Upload repaired Lab 2
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330669-lab2-repaired
+          path: lab7330669-repair-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
