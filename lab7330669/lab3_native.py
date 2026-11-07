@@ -31,21 +31,40 @@ def focus():
         except:pass
     return w
 
+def trial_present():
+    from pywinauto import Desktop
+    for backend in ("uia","win32"):
+        try:
+            for w in Desktop(backend=backend).windows():
+                for d in w.descendants():
+                    try:t=d.window_text();r=d.rectangle()
+                    except:continue
+                    if ("Trial" in t or "Extend Trial" in t) and r.width()>5 and r.height()>5:
+                        return True
+        except:pass
+    return False
+
 def dismiss_trial():
     import pyautogui
     from pywinauto import Desktop
-    for _ in range(3):
-        for backend in ("uia","win32"):
-            try:
-                for w in Desktop(backend=backend).windows():
-                    for d in w.descendants():
-                        try:t=d.window_text();r=d.rectangle()
-                        except:continue
-                        if ("Trial" in t or "Extend Trial" in t) and r.width()>5 and r.height()>5:
-                            try:d.click_input();time.sleep(4)
-                            except:pass
-            except:pass
-    pyautogui.press("esc"); return True
+    for backend in ("uia","win32"):
+        try:
+            for w in Desktop(backend=backend).windows():
+                for d in w.descendants():
+                    try:t=d.window_text();r=d.rectangle()
+                    except:continue
+                    if ("Trial" in t or "Extend Trial" in t) and r.width()>5 and r.height()>5:
+                        try:
+                            log(f"trial candidate {t!r} rect={r}")
+                            d.click_input()
+                            time.sleep(5)
+                            if not trial_present():return True
+                        except Exception as e:
+                            log(f"trial click failed: {e}")
+        except:pass
+    pyautogui.click(656,520)
+    time.sleep(8)
+    return not trial_present()
 
 def comp_dialog():
     import pyautogui
@@ -218,7 +237,10 @@ def reopen():
 def main():
     import pyautogui
     pyautogui.FAILSAFE=False
-    subprocess.Popen([str(MULTISIM)]);time.sleep(10);dismiss_trial();focus();time.sleep(2)
+    subprocess.Popen([str(MULTISIM)]);time.sleep(10)
+    if trial_present() and not dismiss_trial(): return 11
+    if not focus(): return 12
+    time.sleep(2)
 
     # Layout: source at left, total-current ammeter on top rail, inductor and capacitor vertical branches.
     items=[
