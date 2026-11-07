@@ -260,30 +260,30 @@ def main():
     if not all(okvals):
         log("one or more values could not be set");return 24
 
-    # Wiring must start from a real component pin.
-    # Top branch: K1 - E1 - A1 - R1
-    wire([(428,209),(472,209)])
-    wire([(506,209),(574,209)])
-    wire([(657,209),(700,209)])
+    # Final pin calibration from the actual Multisim 14.3 symbols.
+    # Top branch K1 - E1 - A1 - R1
+    wire([(441,209),(469,209)])
+    wire([(505,209),(564,209)])
+    wire([(669,209),(698,209)])
 
-    # Middle branch: A3 - R3
-    wire([(589,299),(650,299)])
+    # Middle branch A3 - R3
+    wire([(600,299),(648,299)])
 
-    # Bottom branch: K2 - E2 - A2 - R2
-    wire([(428,398),(442,398)])
-    wire([(486,398),(574,398)])
-    wire([(657,398),(700,398)])
+    # Bottom branch K2 - E2 - A2 - R2
+    wire([(441,398),(441,398)])  # switch/source pins are adjacent
+    wire([(491,398),(564,398)])
+    wire([(669,398),(698,398)])
 
-    # Left common node a: join K1, A3, K2, voltmeter and ground.
-    wire([(393,209),(340,209),(340,299),(497,299)])
-    wire([(497,299),(340,299),(340,398),(393,398)])
-    wire([(574,489),(340,489),(340,398)])
-    wire([(341,480),(341,489),(340,489)])
+    # Left common node a
+    wire([(379,209),(330,209),(330,299),(490,299)])
+    wire([(490,299),(330,299),(330,398),(379,398)])
+    wire([(565,489),(330,489),(330,398)])
+    wire([(340,480),(340,489),(330,489)])
 
-    # Right common node c: join R1, R3, R2 and voltmeter.
-    wire([(750,209),(790,209),(790,299),(700,299)])
-    wire([(700,299),(790,299),(790,398),(750,398)])
-    wire([(657,489),(790,489),(790,398)])
+    # Right common node c
+    wire([(750,209),(790,209),(790,299),(706,299)])
+    wire([(706,299),(790,299),(790,398),(750,398)])
+    wire([(669,489),(790,489),(790,398)])
     shot("40_wired.png")
 
     # Close K1 and K2.
