@@ -572,7 +572,7 @@ def main():
     global DY, WIRE_STRATEGY
     pyautogui.FAILSAFE=False
     p=subprocess.Popen([str(MULTISIM)]);log(f"launch pid={p.pid}");time.sleep(10)
-    if trial_present() and not dismiss_trial():return 11
+    if trial_present():\n        dismiss_trial();time.sleep(3)
     if not focus():return 12
     DY=24;WIRE_STRATEGY="click"
 
