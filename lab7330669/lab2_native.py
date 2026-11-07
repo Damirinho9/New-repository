@@ -174,7 +174,7 @@ def modal_dialog():
         except:pass
     return None
 
-def set_value(x,y,value):
+def set_value(x,y,value,unit_hint=None):
     import pyautogui
     focus();pyautogui.doubleClick(x,y,interval=.15);time.sleep(1.5)
     d=modal_dialog()
@@ -200,20 +200,51 @@ def set_value(x,y,value):
                     e.click_input();time.sleep(.5);break
             except:pass
 
-        edits=[]
+        # Work only inside the visible Value pane, not hidden Fault/Label controls.
+        value_pane=None
         for e in d.descendants():
             try:
-                ct=getattr(e.element_info,"control_type","")
-                if ct=="Edit" or "Edit" in e.class_name():
-                    r=e.rectangle();cur=e.window_text()
-                    if r.width()>25 and r.height()>10:edits.append((r.width()*r.height(),e,cur,r))
+                if e.window_text().strip()=="Value" and e.class_name()=="#32770":
+                    value_pane=e;break
             except:pass
-        edits.sort(key=lambda z:z[3].top)
-        title=d.window_text().upper()
-        if "RESISTOR" in title and len(edits)>=2:
-            chosen=edits[1][1]
-        else:
-            chosen=edits[0][1] if edits else None
+        scope=value_pane.descendants() if value_pane else d.descendants()
+
+        edits=[];statics=[]
+        for e in scope:
+            try:
+                ct=getattr(e.element_info,"control_type","")
+                r=e.rectangle();cur=e.window_text()
+                if (ct=="Edit" or "Edit" in e.class_name()) and r.width()>25 and r.height()>10:
+                    edits.append((e,cur,r))
+                if ct=="Text" or e.class_name()=="Static":
+                    statics.append((e,cur,r))
+            except:pass
+
+        chosen=None
+        # Select the Edit field on the same row as the requested unit label.
+        if unit_hint:
+            unit_rows=[]
+            for _,cur,r in statics:
+                if cur.strip()==unit_hint:
+                    unit_rows.append((r.top+r.bottom)//2)
+            unit_rows.sort()
+            if unit_rows:
+                target_y=unit_rows[0]
+                candidates=[]
+                for e,cur,r in edits:
+                    cy=(r.top+r.bottom)//2
+                    if abs(cy-target_y)<=4:
+                        candidates.append((abs(cy-target_y),-r.width(),e,cur,r))
+                if candidates:
+                    candidates.sort(key=lambda z:(z[0],z[1]))
+                    chosen=candidates[0][2]
+                    log(f"value field by unit {unit_hint}: current={candidates[0][3]!r} rect={candidates[0][4]}")
+
+        if chosen is None and edits:
+            edits.sort(key=lambda z:z[2].top)
+            chosen=edits[0][0]
+            log(f"value field fallback current={edits[0][1]!r} rect={edits[0][2]}")
+
         if chosen is None:
             pyautogui.press("esc");return False
         try:chosen.set_edit_text(value)
@@ -483,11 +514,11 @@ def main():
 
     # Required values from the method sheet.
     okvals=[
-      set_value(*P(725,209),"100"),
-      set_value(*P(675,299),"200"),
-      set_value(*P(725,398),"150"),
-      set_value(*P(489,209),"10"),
-      set_value(*P(463,398),"15")
+      set_value(*P(725,209),"100","Ω"),
+      set_value(*P(675,299),"200","Ω"),
+      set_value(*P(725,398),"150","Ω"),
+      set_value(*P(489,209),"10","V"),
+      set_value(*P(463,398),"15","V")
     ]
     shot("30_values_set.png")
     if not all(okvals):
