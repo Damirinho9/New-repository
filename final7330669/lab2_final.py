@@ -550,7 +550,7 @@ def main():
       set_value(*P(675,299),"200","OHM"),
       set_value(*P(725,398),"150","OHM"),
       set_value(*P(489,209),"10","V"),
-      set_value(*P(463,398),"15","V")
+      set_value(*P(489,398),"15","V")
     ]
     shot("30_values_set.png")
     if not all(okvals):
