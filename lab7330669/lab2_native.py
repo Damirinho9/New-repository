@@ -431,17 +431,17 @@ def main():
     ]:
         wire(a,b)
 
-    # Explicit node junctions eliminate dependence on clicking an existing wire.
-    A=(330,330); C=(790,330)
-    junction(*A); junction(*C)
+    # Common node a: connect the three left branch terminals directly.
+    # This is more reliable in Multisim than wiring several components to a free junction.
+    wire((379,209),(496,299))
+    wire((496,299),(379,398))
 
-    # Node a: switch inputs, central ammeter input, voltmeter left terminal and ground.
-    for p in [(379,209),(496,299),(379,398),(568,489),(342,479)]:
-        wire(p,A)
+    # Common node c: connect all three resistor outputs directly.
+    wire((748,209),(694,299))
+    wire((694,299),(748,398))
 
-    # Node c: resistor outputs and voltmeter right terminal.
-    for p in [(748,209),(694,299),(748,398),(667,489)]:
-        wire(p,C)
+    # Ground is placed next to the middle left node. Connect it directly to node a.
+    wire((342,299),(496,299))
 
     shot("40_wired.png")
 
@@ -466,14 +466,13 @@ def main():
         log("initial simulation still has a real electrical error: "+str(warns))
         return 26
 
-    # State 2: open branch c-a (remove the short wire between U2 and R3), measure Uxx.
-    # Selecting the midpoint of that wire and Delete is reversible with Ctrl+Z.
+    # State 2: open the middle c-a branch by deleting the U2-R(200 Ohm) link.
     pyautogui.click(*P(622,299));pyautogui.press("delete");time.sleep(1)
     run_and_capture("80_state_Uxx_open_R3.png")
     pyautogui.hotkey("ctrl","z");time.sleep(1)
 
-    # State 3: short R3 by bypassing it from U2 output directly to node c.
-    wire((595,299),(790,330))
+    # State 3: bypass the 200 Ohm middle resistor, leaving U2 as the short-circuit ammeter.
+    wire((595,299),(694,299))
     run_and_capture("90_state_Ikz_R3_short.png")
     pyautogui.hotkey("ctrl","z");time.sleep(1)
 
