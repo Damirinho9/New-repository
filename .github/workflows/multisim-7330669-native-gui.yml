@@ -6,7 +6,8 @@ on:
       - multisim-7330669-native-gui
     paths:
       - ".github/workflows/multisim-7330669-native-gui.yml"
-      - "lab7330669/**"
+      - "lab7330669/native_smoke.py"
+      - "lab7330669/install-native-gui.ps1"
   workflow_dispatch:
 
 concurrency:
