@@ -1,0 +1,44 @@
+name: Multisim native Lab 2 - order 7330669
+
+on:
+  push:
+    branches:
+      - multisim-7330669-native-gui
+    paths:
+      - ".github/workflows/multisim-7330669-lab2.yml"
+      - "lab7330669/lab2_native.py"
+      - "lab7330669/run-lab2-native.ps1"
+  workflow_dispatch:
+
+concurrency:
+  group: multisim-7330669-lab2
+  cancel-in-progress: true
+
+jobs:
+  lab2:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native Multisim Lab 2
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\lab7330669\run-lab2-native.ps1 -Workspace "$env:GITHUB_WORKSPACE"
+      - name: Inventory outputs
+        if: always()
+        shell: powershell
+        run: |
+          if(Test-Path .\lab7330669-lab2-artifacts){
+            Get-ChildItem .\lab7330669-lab2-artifacts -Recurse |
+              Select-Object FullName,Length,LastWriteTime |
+              Format-Table -AutoSize
+          }
+      - name: Upload Lab 2 outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330669-lab2-native
+          path: lab7330669-lab2-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
