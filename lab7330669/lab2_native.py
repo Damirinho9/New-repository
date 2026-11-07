@@ -228,8 +228,8 @@ def main():
     # Place resistors rotated vertical.
     items=[
       ("RESISTOR",420,265,1),("AMMETER",420,330,1),("DC_POWER",420,395,0),("SPST",420,455,1),
-      ("RESISTOR",610,300,1),("AMMETER",610,385,1),
-      ("RESISTOR",800,265,1),("AMMETER",800,330,1),("DC_POWER",800,395,0),("SPST",800,455,1),
+      ("RESISTOR",610,300,1),("AMMETER",610,385,3),
+      ("RESISTOR",800,265,1),("AMMETER",800,330,3),("DC_POWER",800,395,2),("SPST",800,455,1),
       ("VOLTMETER",900,350,1),("GROUND",610,505,0)
     ]
     for it in items:
