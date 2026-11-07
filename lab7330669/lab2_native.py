@@ -99,30 +99,21 @@ def place(name,x,y,rotate=0):
     return True
 
 def modal_dialog():
-    from pywinauto import Desktop, Application
-    mw=focus()
-    if not mw:return None
-    pid=mw.process_id()
-    # Prefer visible secondary windows belonging to the Multisim process.
-    for backend in ("uia","win32"):
-        try:
-            app=Application(backend=backend).connect(process=pid)
-            for w in app.windows():
-                try:
-                    if w.handle != mw.handle and w.is_visible():
-                        r=w.rectangle()
-                        if r.width()>250 and r.height()>120:
-                            log(f"property window backend={backend} title={w.window_text()!r} class={w.class_name()} rect={r}")
-                            return w
-                except:pass
-        except:pass
-    # Fallback to process-scoped #32770 dialogs.
+    import win32gui
+    from pywinauto import Desktop
+    time.sleep(.8)
+    hwnd=win32gui.GetForegroundWindow()
     try:
-        for w in Desktop(backend="win32").windows(process=pid):
-            try:
-                if w.handle != mw.handle and w.class_name()=="#32770":
-                    return w
-            except:pass
+        d=Desktop(backend="uia").window(handle=hwnd)
+        r=d.rectangle()
+        log(f"foreground dialog title={d.window_text()!r} class={d.class_name()} rect={r}")
+        if r.width()>200 and r.height()>100:return d
+    except Exception as e:
+        log(f"foreground UIA failed {e}")
+    try:
+        d=Desktop(backend="win32").window(handle=hwnd)
+        r=d.rectangle()
+        if r.width()>200 and r.height()>100:return d
     except:pass
     return None
 
@@ -218,7 +209,7 @@ def save_as():
 def reopen_in_app():
     import pyautogui
     from pywinauto import Desktop
-    focus();pyautogui.hotkey("ctrl","f4");time.sleep(4);pyautogui.press("enter");time.sleep(1)
+    focus();pyautogui.hotkey("ctrl","f4");time.sleep(4);pyautogui.press("esc");time.sleep(2)
     focus();pyautogui.hotkey("ctrl","o");time.sleep(2)
     d=None
     for backend in ("win32","uia"):
@@ -256,7 +247,7 @@ def main():
       ("SPST",380,255,0),("DC_POWER",470,255,1),("AMMETER",570,255,0),("RESISTOR",700,255,0),
       ("AMMETER",500,350,0),("RESISTOR",650,350,0),
       ("SPST",380,445,0),("DC_POWER",470,445,3),("AMMETER",570,445,2),("RESISTOR",700,445,0),
-      ("VOLTMETER",570,535,0),("GROUND",320,570,0)
+      ("VOLTMETER",570,535,0),("GROUND",340,500,0)
     ]
     for it in items:
         if not place(*it):
@@ -265,46 +256,49 @@ def main():
 
     # Required values from the method sheet.
     okvals=[
-      set_value(700,255,"100 Ohm"),
-      set_value(650,350,"200 Ohm"),
-      set_value(700,445,"150 Ohm"),
-      set_value(470,255,"10 V"),
-      set_value(470,445,"15 V")
+      set_value(725,209,"100 Ohm"),
+      set_value(675,299,"200 Ohm"),
+      set_value(725,398,"150 Ohm"),
+      set_value(489,209,"10 V"),
+      set_value(463,398,"15 V")
     ]
     shot("30_values_set.png")
     if not all(okvals):
         log("one or more values could not be set");return 24
 
-    # Exact horizontal wiring using the terminal geometry of native Multisim 14.3 components.
-    # left/right common buses
-    wire([(320,230),(320,535)])
-    wire([(830,230),(830,535)])
+    # Wiring coordinates calibrated from the native Multisim 14.3 component geometry.
+    # common buses a (left) and c (right)
+    wire([(340,209),(340,489)])
+    wire([(790,209),(790,489)])
+
     # branch 1: K1 - E1 - A1 - R1
-    wire([(320,255),(348,255)])
-    wire([(412,255),(450,255)])
-    wire([(490,255),(528,255)])
-    wire([(612,255),(677,255)])
-    wire([(723,255),(830,255)])
+    wire([(340,209),(393,209)])
+    wire([(428,209),(472,209)])
+    wire([(506,209),(573,209)])
+    wire([(658,209),(700,209)])
+    wire([(750,209),(790,209)])
+
     # branch 3: A3 - R3
-    wire([(320,350),(458,350)])
-    wire([(542,350),(627,350)])
-    wire([(673,350),(830,350)])
+    wire([(340,299),(502,299)])
+    wire([(590,299),(650,299)])
+    wire([(700,299),(790,299)])
+
     # branch 2: K2 - E2 - A2 - R2
-    wire([(320,445),(348,445)])
-    wire([(412,445),(450,445)])
-    wire([(490,445),(528,445)])
-    wire([(612,445),(677,445)])
-    wire([(723,445),(830,445)])
-    # voltmeter across a-c
-    wire([(320,535),(528,535)])
-    wire([(612,535),(830,535)])
-    # ground on node a
-    wire([(320,535),(320,560)])
+    wire([(340,398),(393,398)])
+    wire([(428,398),(442,398)])
+    wire([(486,398),(573,398)])
+    wire([(658,398),(700,398)])
+    wire([(750,398),(790,398)])
+
+    # voltmeter across a-c and ground at node a
+    wire([(340,489),(573,489)])
+    wire([(658,489),(790,489)])
+    wire([(340,489),(340,486)])
     shot("40_wired.png")
 
     # Close K1 and K2.
-    pyautogui.click(380,255);time.sleep(.5)
-    pyautogui.click(380,445);time.sleep(.5)
+    pyautogui.click(410,209);time.sleep(.5)
+    pyautogui.click(410,398);time.sleep(.5)
     shot("45_switches_closed.png")
 
     if not save_as():
