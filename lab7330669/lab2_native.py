@@ -175,6 +175,8 @@ def set_value(x,y,value):
 def wire(points):
     import pyautogui
     focus()
+    pyautogui.hotkey("ctrl","q")
+    time.sleep(.25)
     pyautogui.click(*points[0]);time.sleep(.2)
     for p in points[1:]:
         pyautogui.click(*p);time.sleep(.2)
@@ -260,30 +262,32 @@ def main():
     if not all(okvals):
         log("one or more values could not be set");return 24
 
-    # Final pin calibration from the actual Multisim 14.3 symbols.
-    # Top branch K1 - E1 - A1 - R1
-    wire([(441,209),(469,209)])
-    wire([(505,209),(564,209)])
-    wire([(669,209),(698,209)])
+    # Final pin calibration from pixel bounds of the actual Multisim symbols.
+    # Use the native Place Wire command (Ctrl+Q) for every connection.
 
-    # Middle branch A3 - R3
-    wire([(600,299),(648,299)])
+    # Top branch
+    wire([(442,209),(469,209)])
+    wire([(505,209),(568,209)])
+    wire([(667,209),(703,209)])
 
-    # Bottom branch K2 - E2 - A2 - R2
-    wire([(441,398),(441,398)])  # switch/source pins are adjacent
-    wire([(491,398),(564,398)])
-    wire([(669,398),(698,398)])
+    # Middle branch
+    wire([(595,299),(649,299)])
+
+    # Bottom branch
+    wire([(442,398),(430,398)])
+    wire([(469,398),(568,398)])
+    wire([(667,398),(703,398)])
 
     # Left common node a
-    wire([(379,209),(330,209),(330,299),(490,299)])
-    wire([(490,299),(330,299),(330,398),(379,398)])
-    wire([(565,489),(330,489),(330,398)])
-    wire([(340,480),(340,489),(330,489)])
+    wire([(379,209),(330,209),(330,299),(496,299)])
+    wire([(496,299),(330,299),(330,398),(379,398)])
+    wire([(568,489),(330,489),(330,398)])
+    wire([(342,479),(342,489),(330,489)])
 
     # Right common node c
-    wire([(750,209),(790,209),(790,299),(706,299)])
-    wire([(706,299),(790,299),(790,398),(750,398)])
-    wire([(669,489),(790,489),(790,398)])
+    wire([(748,209),(790,209),(790,299),(694,299)])
+    wire([(694,299),(790,299),(790,398),(748,398)])
+    wire([(667,489),(790,489),(790,398)])
     shot("40_wired.png")
 
     # Close K1 and K2.
