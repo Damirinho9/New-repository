@@ -572,7 +572,7 @@ def main():
     global DY, WIRE_STRATEGY
     pyautogui.FAILSAFE=False
     p=subprocess.Popen([str(MULTISIM)]);log(f"launch pid={p.pid}");time.sleep(10)
-    if trial_present() and not dismiss_trial():return 11
+    if trial_present():\n        dismiss_trial();time.sleep(3)
     if not focus():return 12
     DY=24
     WIRE_STRATEGY="click"
@@ -592,7 +592,7 @@ def main():
 
     # Exact method inputs: 220 V, 50 Hz; active coil resistance 450 Ohm.
     ok=[]
-    ok.append(set_value(*P(489,209),"220","V"))
+    ok.append(set_value(*P(489,209),"220","Vrms"))
     ok.append(set_value(*P(489,209),"50","Hz"))
     ok.append(set_value(*P(575,304),"450","OHM"))
     # Use 1 H for L and 4 uF as the saved representative C state.
