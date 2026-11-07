@@ -131,19 +131,47 @@ def modal_dialog():
     import win32gui
     from pywinauto import Desktop
     time.sleep(.8)
+
+    # Prefer real Multisim property dialogs. Never accept Terminal or the main Multisim frame.
+    for backend in ("uia","win32"):
+        try:
+            wins=Desktop(backend=backend).windows()
+            for d in wins:
+                try:
+                    title=d.window_text().strip()
+                    cls=d.class_name()
+                    r=d.rectangle()
+                    if r.width()<200 or r.height()<100:continue
+                    if "Multisim" in title or "GitHub" in title or "HostedComputeAgent" in title:continue
+                    # Component property dialogs expose Value/Label/Fault tabs or have the native #32770 class.
+                    texts=[]
+                    try:
+                        for e in d.descendants():
+                            try:
+                                t=e.window_text().strip()
+                                if t:texts.append(t)
+                            except:pass
+                    except:pass
+                    tabset=set(texts)
+                    looks_prop=("Value" in tabset and ("Label" in tabset or "Fault" in tabset)) or (cls=="#32770" and any(x in title.upper() for x in ("RESISTOR","POWER","AMMETER","VOLTMETER","SPST")))
+                    if looks_prop:
+                        log(f"property dialog title={title!r} class={cls} rect={r}")
+                        try:d.set_focus()
+                        except:pass
+                        return d
+                except:pass
+        except:pass
+
+    # Last fallback: foreground only if it is a native dialog and not a terminal/main window.
     hwnd=win32gui.GetForegroundWindow()
-    try:
-        d=Desktop(backend="uia").window(handle=hwnd)
-        r=d.rectangle()
-        log(f"foreground dialog title={d.window_text()!r} class={d.class_name()} rect={r}")
-        if r.width()>200 and r.height()>100:return d
-    except Exception as e:
-        log(f"foreground UIA failed {e}")
-    try:
-        d=Desktop(backend="win32").window(handle=hwnd)
-        r=d.rectangle()
-        if r.width()>200 and r.height()>100:return d
-    except:pass
+    for backend in ("uia","win32"):
+        try:
+            d=Desktop(backend=backend).window(handle=hwnd)
+            title=d.window_text().strip();cls=d.class_name();r=d.rectangle()
+            log(f"foreground fallback title={title!r} class={cls} rect={r}")
+            if cls=="#32770" and "Multisim" not in title and "GitHub" not in title and r.width()>200 and r.height()>100:
+                return d
+        except:pass
     return None
 
 def set_value(x,y,value):
@@ -151,7 +179,12 @@ def set_value(x,y,value):
     focus();pyautogui.doubleClick(x,y,interval=.15);time.sleep(1.5)
     d=modal_dialog()
     if not d:
-        log(f"value dialog missing at {x},{y}");pyautogui.press("esc");return False
+        log(f"value dialog missing first try at {x},{y}; retrying")
+        pyautogui.press("esc");focus();time.sleep(.5)
+        pyautogui.doubleClick(x,y,interval=.15);time.sleep(1.5)
+        d=modal_dialog()
+    if not d:
+        log(f"value dialog missing after retry at {x},{y}");pyautogui.press("esc");return False
     try:
         # Dump controls for diagnostics.
         vals=[]
