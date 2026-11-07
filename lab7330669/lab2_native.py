@@ -446,26 +446,72 @@ def run_and_capture(name):
 def save_as():
     import pyautogui
     from pywinauto import Desktop
-    focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
+    w=focus()
+    if TARGET.exists():
+        try:TARGET.unlink()
+        except:pass
+
+    # Prefer Multisim's real menu command, not Ctrl+S, because Design1 may consume the shortcut inconsistently.
+    opened=False
+    try:
+        w.menu_select("File->Save As...")
+        opened=True
+    except Exception as e:
+        log(f"menu Save As failed: {e}")
+        pyautogui.hotkey("ctrl","shift","s")
+    time.sleep(2)
+
     d=None
     for backend in ("win32","uia"):
         try:
             q=Desktop(backend=backend).window(title_re=".*[Ss]ave.*")
-            if q.exists(timeout=1):d=q;break
+            if q.exists(timeout=1):
+                d=q;break
         except:pass
+
     if not d:
-        log("save dialog missing");return False
+        # Final fallback via Alt+F menu accelerator.
+        focus();pyautogui.hotkey("alt","f");time.sleep(.5);pyautogui.press("a");time.sleep(2)
+        for backend in ("win32","uia"):
+            try:
+                q=Desktop(backend=backend).window(title_re=".*[Ss]ave.*")
+                if q.exists(timeout=1):
+                    d=q;break
+            except:pass
+
+    if not d:
+        log("save dialog missing after menu/CtrlShiftS/AltF-A")
+        shot("49_save_dialog_missing.png")
+        return False
+
     try:d.set_focus()
     except:pass
-    edits=d.descendants(class_name="Edit")
-    if edits:
-        e=edits[-1]
-        try:e.set_edit_text(str(TARGET))
-        except:
-            e.click_input();pyautogui.hotkey("ctrl","a");pyautogui.write(str(TARGET),interval=.002)
-    else:pyautogui.write(str(TARGET),interval=.002)
-    pyautogui.press("enter");time.sleep(7);pyautogui.press("enter");time.sleep(2)
-    return TARGET.exists()
+
+    # Native Windows Save As: Alt+N focuses File name.
+    try:
+        pyautogui.hotkey("alt","n");time.sleep(.3)
+        pyautogui.hotkey("ctrl","a")
+        pyautogui.write(str(TARGET),interval=.002)
+    except:pass
+    pyautogui.press("enter");time.sleep(7)
+
+    # Confirm overwrite/type prompts if any.
+    pyautogui.press("enter");time.sleep(2)
+
+    if not TARGET.exists():
+        # Search for a saved MS14 with our base name and normalize it.
+        found=list(OUT.glob("*.ms14"))
+        found.sort(key=lambda p:p.stat().st_mtime,reverse=True)
+        for p in found:
+            if "Lab2_DC_Circuit" in p.name and p.exists():
+                if p!=TARGET:
+                    try:p.replace(TARGET)
+                    except:pass
+                break
+
+    ok=TARGET.exists() and TARGET.stat().st_size>10000
+    log(f"save_as ok={ok} target={TARGET} size={(TARGET.stat().st_size if TARGET.exists() else 0)}")
+    return ok
 
 def reopen_in_app():
     import pyautogui
