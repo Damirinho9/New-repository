@@ -172,43 +172,139 @@ def set_value(x,y,value):
     except Exception as e:
         log(f"set_value error {e}");pyautogui.press("esc");return False
 
-def cursor_at(x,y):
+def find_hotspot(x,y,radius=5):
     import pyautogui, win32gui
-    pyautogui.moveTo(x,y,duration=.02)
-    time.sleep(.04)
-    try:return win32gui.GetCursorInfo()[1]
-    except:return None
-
-def find_pin(x,y):
-    import pyautogui
-    # Baseline arrow cursor in blank schematic space.
-    base=cursor_at(880,470)
+    # Cursor over blank grid is the baseline. A component terminal changes it.
+    pyautogui.moveTo(900,575,duration=.02);time.sleep(.08)
+    try:base=win32gui.GetCursorInfo()[1]
+    except:return (x,y)
     cand=[]
-    for yy in range(y-7,y+8):
-        for xx in range(x-9,x+10):
-            h=cursor_at(xx,yy)
-            if h is not None and h!=base:
-                cand.append((abs(xx-x)+abs(yy-y),xx,yy,h))
+    for rr in range(radius+1):
+        for dx in range(-rr,rr+1):
+            for dy in (-rr,rr):
+                xx,yy=x+dx,y+dy
+                pyautogui.moveTo(xx,yy,duration=.005);time.sleep(.01)
+                try:h=win32gui.GetCursorInfo()[1]
+                except:h=base
+                if h!=base:cand.append((abs(dx)+abs(dy),xx,yy,h))
+        for dy in range(-rr+1,rr):
+            for dx in (-rr,rr):
+                xx,yy=x+dx,y+dy
+                pyautogui.moveTo(xx,yy,duration=.005);time.sleep(.01)
+                try:h=win32gui.GetCursorInfo()[1]
+                except:h=base
+                if h!=base:cand.append((abs(dx)+abs(dy),xx,yy,h))
+        if cand:break
     if cand:
         cand.sort()
         _,px,py,h=cand[0]
-        log(f"pin hotspot approx=({x},{y}) -> ({px},{py}) cursor={h} base={base}")
+        log(f"hotspot ({x},{y})->({px},{py}) cursor={h} baseline={base}")
         return (px,py)
-    log(f"pin hotspot not found around ({x},{y}); fallback")
+    log(f"hotspot fallback ({x},{y})")
     return (x,y)
 
-def wire(points):
+def _wire_diff(before,after,a,b):
+    from PIL import ImageChops,ImageStat
+    x1=min(a[0],b[0])-4; x2=max(a[0],b[0])+5
+    y1=min(a[1],b[1])-4; y2=max(a[1],b[1])+5
+    box=(max(0,x1),max(0,y1),min(before.width,x2),min(before.height,y2))
+    d=ImageChops.difference(before.crop(box),after.crop(box))
+    st=ImageStat.Stat(d)
+    score=sum(st.sum)
+    log(f"wire diff box={box} score={score:.0f}")
+    return score
+
+def _clean_after_failed_wire():
     import pyautogui
-    focus()
-    pts=list(points)
-    pts[0]=find_pin(*pts[0])
-    pts[-1]=find_pin(*pts[-1])
-    pyautogui.hotkey("ctrl","q")
-    time.sleep(.25)
-    pyautogui.click(*pts[0]);time.sleep(.25)
-    for p in pts[1:]:
-        pyautogui.click(*p);time.sleep(.25)
-    pyautogui.press("esc");time.sleep(.3)
+    pyautogui.press("esc", presses=2, interval=.1)
+    pyautogui.hotkey("ctrl","z")
+    time.sleep(.5)
+
+def try_wire_strategy(strategy,a,b,test=False):
+    import pyautogui
+    a=find_hotspot(*a); b=find_hotspot(*b)
+    focus();pyautogui.moveTo(900,575);time.sleep(.2)
+    before=pyautogui.screenshot() if test else None
+    log(f"wire strategy={strategy} a={a} b={b}")
+    try:
+        if strategy=="click":
+            pyautogui.moveTo(*a,duration=.1);pyautogui.click();time.sleep(.4)
+            pyautogui.moveTo(*b,duration=.2);pyautogui.click();time.sleep(.4)
+            pyautogui.press("esc")
+        elif strategy=="drag":
+            pyautogui.moveTo(*a,duration=.1);pyautogui.dragTo(*b,duration=.7,button="left");time.sleep(.4)
+            pyautogui.press("esc")
+        elif strategy=="menu":
+            w=focus()
+            try:w.menu_select("Place->Wire")
+            except:
+                pyautogui.hotkey("alt","p");time.sleep(.3);pyautogui.press("w")
+            time.sleep(.4);pyautogui.click(*a);time.sleep(.3);pyautogui.click(*b);pyautogui.press("esc")
+        elif strategy=="ctrlq":
+            pyautogui.hotkey("ctrl","q");time.sleep(.3);pyautogui.click(*a);time.sleep(.3);pyautogui.click(*b);pyautogui.press("esc")
+        else:return False
+        time.sleep(.7);pyautogui.moveTo(900,575);time.sleep(.2)
+        if not test:return True
+        after=pyautogui.screenshot()
+        score=_wire_diff(before,after,a,b)
+        # A real wire changes a substantial number of pixels even for a short 25 px gap.
+        return score>4500
+    except Exception as e:
+        log(f"wire strategy {strategy} exception {e}")
+        return False
+
+WIRE_STRATEGY=None
+
+def calibrate_wire_strategy():
+    global WIRE_STRATEGY
+    # Short isolated gap between S1 right pin and V1 left pin is ideal for visual validation.
+    a=(442,209);b=(469,209)
+    for st in ("click","drag","menu","ctrlq"):
+        ok=try_wire_strategy(st,a,b,test=True)
+        shot(f"35_wiretest_{st}.png")
+        if ok:
+            WIRE_STRATEGY=st
+            log(f"WIRE_STRATEGY_SELECTED={st}")
+            return True
+        _clean_after_failed_wire()
+    log("NO_WIRE_STRATEGY_WORKED")
+    return False
+
+def wire(a,b):
+    if not WIRE_STRATEGY:return False
+    return try_wire_strategy(WIRE_STRATEGY,a,b,test=False)
+
+def junction(x,y):
+    import pyautogui
+    focus();pyautogui.hotkey("ctrl","j");time.sleep(.25);pyautogui.click(x,y);pyautogui.press("esc");time.sleep(.3)
+    log(f"junction at {x},{y}")
+
+def warning_windows():
+    from pywinauto import Desktop
+    vals=[]
+    for backend in ("win32","uia"):
+        try:
+            for w in Desktop(backend=backend).windows():
+                try:
+                    t=w.window_text().strip()
+                    if t and ("warning" in t.lower() or "error" in t.lower()):
+                        vals.append(t)
+                except:pass
+        except:pass
+    return sorted(set(vals))
+
+def run_and_capture(name):
+    import pyautogui
+    focus();pyautogui.press("f5");time.sleep(6)
+    shot(name)
+    warns=warning_windows()
+    log(f"run warnings={warns}")
+    # close modal warning if one exists
+    if warns:
+        pyautogui.press("enter");time.sleep(1)
+    else:
+        pyautogui.press("f5");time.sleep(1)
+    return warns
 
 def save_as():
     import pyautogui
@@ -290,32 +386,30 @@ def main():
     if not all(okvals):
         log("one or more values could not be set");return 24
 
-    # Final pin calibration from pixel bounds of the actual Multisim symbols.
-    # Use the native Place Wire command (Ctrl+Q) for every connection.
+    # Find one native wiring method once, then reuse it for the whole circuit.
+    if not calibrate_wire_strategy():
+        return 25
 
-    # Top branch
-    wire([(442,209),(469,209)])
-    wire([(505,209),(568,209)])
-    wire([(667,209),(703,209)])
+    # Short serial gaps in the three branches. The S1-V1 wire was already created by calibration.
+    for a,b in [
+        ((505,209),(568,209)),((667,209),(703,209)),
+        ((595,299),(649,299)),
+        ((442,398),(469,398)),((505,398),(568,398)),((667,398),(703,398))
+    ]:
+        wire(a,b)
 
-    # Middle branch
-    wire([(595,299),(649,299)])
+    # Explicit node junctions eliminate dependence on clicking an existing wire.
+    A=(330,330); C=(790,330)
+    junction(*A); junction(*C)
 
-    # Bottom branch
-    wire([(442,398),(430,398)])
-    wire([(469,398),(568,398)])
-    wire([(667,398),(703,398)])
+    # Node a: switch inputs, central ammeter input, voltmeter left terminal and ground.
+    for p in [(379,209),(496,299),(379,398),(568,489),(342,479)]:
+        wire(p,A)
 
-    # Left common node a
-    wire([(379,209),(330,209),(330,299),(496,299)])
-    wire([(496,299),(330,299),(330,398),(379,398)])
-    wire([(568,489),(330,489),(330,398)])
-    wire([(342,479),(342,489),(330,489)])
+    # Node c: resistor outputs and voltmeter right terminal.
+    for p in [(748,209),(694,299),(748,398),(667,489)]:
+        wire(p,C)
 
-    # Right common node c
-    wire([(748,209),(790,209),(790,299),(694,299)])
-    wire([(694,299),(790,299),(790,398),(748,398)])
-    wire([(667,489),(790,489),(790,398)])
     shot("40_wired.png")
 
     # Close K1 and K2.
@@ -331,8 +425,29 @@ def main():
     if not reopen_in_app():
         log("reopen verification failed");return 22
 
-    focus();pyautogui.press("f5");time.sleep(7);shot("70_run.png")
-    pyautogui.press("f5");time.sleep(1)
+    # State 1: original circuit, K1/K2 closed.
+    warns=run_and_capture("70_run_initial.png")
+    if warns:
+        # One last in-run repair: connect ground directly to node-a junction and retry.
+        log("initial run produced warning; reinforcing ground connection without reinstall")
+        wire((342,479),(330,330))
+        warns=run_and_capture("71_run_ground_retry.png")
+        if warns:return 26
+
+    # State 2: open branch c-a (remove the short wire between U2 and R3), measure Uxx.
+    # Selecting the midpoint of that wire and Delete is reversible with Ctrl+Z.
+    pyautogui.click(622,299);pyautogui.press("delete");time.sleep(1)
+    run_and_capture("80_state_Uxx_open_R3.png")
+    pyautogui.hotkey("ctrl","z");time.sleep(1)
+
+    # State 3: short R3 by bypassing it from U2 output directly to node c.
+    wire((595,299),(790,330))
+    run_and_capture("90_state_Ikz_R3_short.png")
+    pyautogui.hotkey("ctrl","z");time.sleep(1)
+
+    # Return to original state and save it as the submitted MS14.
+    focus();pyautogui.hotkey("ctrl","s");time.sleep(3)
+    shot("95_final_original_state.png")
     log("LAB2_NATIVE_DONE")
     return 0
 
