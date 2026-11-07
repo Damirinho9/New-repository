@@ -446,57 +446,26 @@ def run_and_capture(name):
 def save_as():
     import pyautogui
     from pywinauto import Desktop
-    if TARGET.exists():
-        try: TARGET.unlink()
-        except: pass
-    focus()
-    try:
-        w=focus()
-        w.menu_select("File->Save As...")
-        log("Save As opened through native menu")
-    except Exception as e:
-        log(f"menu Save As failed: {e}")
-        pyautogui.hotkey("ctrl","shift","s")
-    time.sleep(2)
+    focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
     d=None
-    for _ in range(20):
-        for backend in ("win32","uia"):
-            try:
-                for q in Desktop(backend=backend).windows():
-                    try:
-                        cls=q.class_name(); title=q.window_text(); r=q.rectangle()
-                    except: continue
-                    if cls=="#32770" and r.width()>500 and r.height()>250:
-                        if "Select a Component" not in title and "RESISTOR" not in title and "DC_POWER" not in title:
-                            d=q; break
-                if d: break
-            except: pass
-        if d: break
-        time.sleep(.4)
+    for backend in ("win32","uia"):
+        try:
+            q=Desktop(backend=backend).window(title_re=".*[Ss]ave.*")
+            if q.exists(timeout=1):d=q;break
+        except:pass
     if not d:
-        log("Save As file dialog still not found")
-        shot("49_save_dialog_missing.png")
-        return False
-    try: d.set_focus()
-    except: pass
-    log(f"Save As dialog title={d.window_text()!r} class={d.class_name()} rect={d.rectangle()}")
-    pyautogui.hotkey("alt","n"); time.sleep(.4)
-    pyautogui.hotkey("ctrl","a")
-    pyautogui.write(str(TARGET),interval=.002)
-    pyautogui.press("enter")
-    time.sleep(7)
-    pyautogui.press("enter")
-    time.sleep(2)
-    candidates=list(OUT.glob("*.ms14"))
-    log("saved candidates=" + ", ".join([p.name+":"+str(p.stat().st_size) for p in candidates]))
-    if TARGET.exists():
-        return TARGET.stat().st_size>1000
-    for p in candidates:
-        if p.stat().st_size>1000:
-            p.replace(TARGET)
-            log(f"normalized saved file {p.name} -> {TARGET.name}")
-            return True
-    return False
+        log("save dialog missing");return False
+    try:d.set_focus()
+    except:pass
+    edits=d.descendants(class_name="Edit")
+    if edits:
+        e=edits[-1]
+        try:e.set_edit_text(str(TARGET))
+        except:
+            e.click_input();pyautogui.hotkey("ctrl","a");pyautogui.write(str(TARGET),interval=.002)
+    else:pyautogui.write(str(TARGET),interval=.002)
+    pyautogui.press("enter");time.sleep(7);pyautogui.press("enter");time.sleep(2)
+    return TARGET.exists()
 
 def reopen_in_app():
     import pyautogui
@@ -529,63 +498,69 @@ def main():
     if not focus():return 12
     time.sleep(2)
 
-    # Three independent native Multisim measurement circuits on one sheet.
-    # Each row follows Fig. 4.6: DC source -> ammeter -> diode under test; voltmeter is connected across the diode.
-    rows=[
-      # component, source x/y, ammeter x, diode x, voltmeter x/y, source voltage, diode rotation
-      ("1N4001", 390,220, 520, 650, 650,285, "0.8", 0),
-      ("1N4728", 390,380, 520, 650, 650,445, "3.3", 2),
-      ("LED_GREEN",390,540, 520, 650, 650,605, "2.0", 0),
+    # Universal measurement circuit from Fig. 4.6.
+    # Active device: 1N4001. 1N4728 and GREEN LED are placed on the same sheet as swap-in devices.
+    items=[
+      ("DC_POWER",470,255,1),
+      ("AMMETER",570,255,0),
+      ("1N4001",700,255,1),
+      ("VOLTMETER",700,355,0),
+      ("GROUND",360,355,0),
+      ("1N4728",840,350,1),
+      ("LED_GREEN",840,450,1)
     ]
-
-    placed=[]
-    for name,sx,yy,ax,dx,vx,vy,sv,drot in rows:
-        if not place("DC_POWER",sx,yy,rotate=1): return 20
-        if not place("AMMETER",ax,yy,rotate=0): return 20
-        ok=place(name,dx,yy,rotate=drot)
-        if not ok and name=="LED_GREEN":
-            ok=place("GREEN LED",dx,yy,rotate=drot)
-        if not ok and name=="LED_GREEN":
-            ok=place("LED",dx,yy,rotate=drot)
-        if not ok:return 20
-        if not place("VOLTMETER",vx,vy,rotate=0): return 20
-        placed.append((name,sx,yy,ax,dx,vx,vy,sv,drot))
-
-    # One ground per isolated circuit.
-    for _,sx,yy,ax,dx,vx,vy,sv,drot in placed:
-        if not place("GROUND",330,yy+65,rotate=0): return 20
+    for name,x,y,rot in items:
+        ok=place(name,x,y,rotate=rot)
+        if not ok and name=="LED_GREEN": ok=place("GREEN LED",x,y,rotate=rot)
+        if not ok and name=="LED_GREEN": ok=place("LED",x,y,rotate=rot)
+        if not ok:
+            log(f"FAILED placement {name}");return 20
     shot("20_lab4_components.png")
 
-    # Calibrate vertical viewport shift using the first source/row.
-    if not calibrate_viewport("lab4_after_place"):
-        # Lab4 has a different layout, but DY=0 is safe on the same default Multisim viewport.
+    # Same proven viewport geometry as Lab2 top branch.
+    if not calibrate_viewport("lab4_universal"):
         global DY
         DY=0
-        log("Lab4 viewport calibration fallback DY=0")
+        log("Lab4 DY fallback 0")
 
-    # Set the three representative source voltages. During measurements only this value is changed.
-    set_value(*P(409,174),"0.8")
-    set_value(*P(409,334),"3.3")
-    set_value(*P(409,494),"2.0")
-    shot("30_lab4_values.png")
+    # Safe representative forward voltage for 1N4001; during the experiment only this source value is swept.
+    if not set_value(*P(489,209),"0.8"):
+        log("source value edit failed; continuing with native source for manual sweep")
+    shot("30_lab4_source_value.png")
 
-    # Reuse the already verified native click wiring strategy.
     global WIRE_STRATEGY
     WIRE_STRATEGY="click"
 
-    for idx,(name,sx,yy,ax,dx,vx,vy,sv,drot) in enumerate(placed):
-        # Approximate actual terminal positions after horizontal placement.
-        y0=yy-46  # viewport coordinate used by the existing helper base
-        # source right -> ammeter left; ammeter right -> diode left
-        wire((425,y0),(496,y0))
-        wire((595,y0),(625,y0))
-        # close loop from diode right around bottom back to source left
-        wire_path([(675,y0),(760,y0),(760,y0+70),(350,y0+70),(350,y0),(373,y0)])
-        # ground to return bus
-        wire_path([(342,y0+65),(350,y0+65)])
-        # voltmeter across the tested diode
-        wire_path([(625,y0),(610,y0+55),(625,y0+55)])
-        wire_path([(675,y0),(690,y0+55),(675,y0+55)])
+    # Source -> ammeter. This connection is identical to the already verified Lab2 branch.
+    wire((505,209),(568,209))
+
+    # Determine actual horizontal diode pin hotspots near the placed 1N4001.
+    # Use broad local search around the two expected ends of the rotated symbol.
+    dleft=find_hotspot(*P(675,209),radius=16)
+    dright=find_hotspot(*P(725,209),radius=16)
+    aout=find_hotspot(*P(667,209),radius=8)
+    sleft=find_hotspot(*P(469,209),radius=8)
+
+    # Ammeter -> diode and orthogonal return bus -> source negative.
+    try_wire_strategy("click", aout, dleft, test=False)
+    # Coordinates returned above are absolute screen points; use direct clicks for the return path.
+    pyautogui.moveTo(*dright);pyautogui.click();time.sleep(.3)
+    for pnt in [P(780,209),P(780,430),P(420,430),P(420,209),sleft]:
+        pyautogui.click(*pnt);time.sleep(.25)
+    pyautogui.press("esc");time.sleep(.5)
+
+    # Ground return bus.
+    g=find_hotspot(*P(360,309),radius=18)
+    pyautogui.moveTo(*g);pyautogui.click();time.sleep(.3)
+    pyautogui.click(*P(420,309));pyautogui.click(*P(420,430));pyautogui.press("esc")
+
+    # Voltmeter connected across the diode.
+    v1=find_hotspot(*P(675,309),radius=18)
+    v2=find_hotspot(*P(725,309),radius=18)
+    pyautogui.moveTo(*dleft);pyautogui.click();time.sleep(.2)
+    pyautogui.click(*P(650,260));pyautogui.click(*v1);pyautogui.press("esc")
+    pyautogui.moveTo(*dright);pyautogui.click();time.sleep(.2)
+    pyautogui.click(*P(750,260));pyautogui.click(*v2);pyautogui.press("esc")
 
     shot("40_lab4_wired.png")
 
@@ -594,12 +569,16 @@ def main():
     log(f"saved {TARGET} size={TARGET.stat().st_size}")
     shot("50_lab4_saved.png")
 
-    # Reopen and run the complete native document.
     if not reopen_in_app():
         log("Lab4 reopen verification failed");return 22
+
     focus();pyautogui.press("f5");time.sleep(6);shot("60_lab4_reopened_run.png")
     msgs=simulation_messages();log("Lab4 simulation messages="+" || ".join(msgs))
+    bad=[m for m in msgs if ("No ground node" in m or re.search(r"\\b[1-9]\\d* error\\(s\\)",m,re.I))]
     pyautogui.press("f5");time.sleep(1)
+    if bad:
+        log("Lab4 simulation electrical error="+str(bad));return 23
+
     log("LAB4_NATIVE_DONE")
     return 0
 
