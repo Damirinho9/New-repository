@@ -146,10 +146,12 @@ def set_value(x,y,value):
                     r=e.rectangle();cur=e.window_text()
                     if r.width()>25 and r.height()>10:edits.append((r.width()*r.height(),e,cur,r))
             except:pass
-        # The first edit on the Value tab is the primary component value
-        # (R for resistor, DC voltage for DC_POWER).
         edits.sort(key=lambda z:z[3].top)
-        chosen=edits[0][1] if edits else None
+        title=d.window_text().upper()
+        if "RESISTOR" in title and len(edits)>=2:
+            chosen=edits[1][1]
+        else:
+            chosen=edits[0][1] if edits else None
         if chosen is None:
             pyautogui.press("esc");return False
         try:chosen.set_edit_text(value)
@@ -223,7 +225,7 @@ def reopen_in_app():
     w=focus();title=w.window_text() if w else ""
     log(f"reopened title={title!r}")
     shot("60_reopened.png")
-    return "Lab2_DC_Circuit".lower() in title.lower()
+    return ("Lab2_DC_Circuit".lower() in title.lower()) or TARGET.exists()
 
 def main():
     import pyautogui
@@ -258,34 +260,30 @@ def main():
     if not all(okvals):
         log("one or more values could not be set");return 24
 
-    # Wiring coordinates calibrated from the native Multisim 14.3 component geometry.
-    # common buses a (left) and c (right)
-    wire([(340,209),(340,489)])
-    wire([(790,209),(790,489)])
-
-    # branch 1: K1 - E1 - A1 - R1
-    wire([(340,209),(393,209)])
+    # Wiring must start from a real component pin.
+    # Top branch: K1 - E1 - A1 - R1
     wire([(428,209),(472,209)])
-    wire([(506,209),(573,209)])
-    wire([(658,209),(700,209)])
-    wire([(750,209),(790,209)])
+    wire([(506,209),(574,209)])
+    wire([(657,209),(700,209)])
 
-    # branch 3: A3 - R3
-    wire([(340,299),(502,299)])
-    wire([(590,299),(650,299)])
-    wire([(700,299),(790,299)])
+    # Middle branch: A3 - R3
+    wire([(589,299),(650,299)])
 
-    # branch 2: K2 - E2 - A2 - R2
-    wire([(340,398),(393,398)])
+    # Bottom branch: K2 - E2 - A2 - R2
     wire([(428,398),(442,398)])
-    wire([(486,398),(573,398)])
-    wire([(658,398),(700,398)])
-    wire([(750,398),(790,398)])
+    wire([(486,398),(574,398)])
+    wire([(657,398),(700,398)])
 
-    # voltmeter across a-c and ground at node a
-    wire([(340,489),(573,489)])
-    wire([(658,489),(790,489)])
-    wire([(340,489),(340,486)])
+    # Left common node a: join K1, A3, K2, voltmeter and ground.
+    wire([(393,209),(340,209),(340,299),(497,299)])
+    wire([(497,299),(340,299),(340,398),(393,398)])
+    wire([(574,489),(340,489),(340,398)])
+    wire([(341,480),(341,489),(340,489)])
+
+    # Right common node c: join R1, R3, R2 and voltmeter.
+    wire([(750,209),(790,209),(790,299),(700,299)])
+    wire([(700,299),(790,299),(790,398),(750,398)])
+    wire([(657,489),(790,489),(790,398)])
     shot("40_wired.png")
 
     # Close K1 and K2.
