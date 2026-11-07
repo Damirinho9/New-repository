@@ -225,7 +225,8 @@ def set_value(x,y,value,unit_hint=None):
         if unit_hint:
             unit_rows=[]
             for _,cur,r in statics:
-                if cur.strip()==unit_hint:
+                norm=cur.strip().replace("Ω","OHM")
+                if norm==unit_hint:
                     unit_rows.append((r.top+r.bottom)//2)
             unit_rows.sort()
             if unit_rows:
@@ -514,9 +515,9 @@ def main():
 
     # Required values from the method sheet.
     okvals=[
-      set_value(*P(725,209),"100","Ω"),
-      set_value(*P(675,299),"200","Ω"),
-      set_value(*P(725,398),"150","Ω"),
+      set_value(*P(725,209),"100","OHM"),
+      set_value(*P(675,299),"200","OHM"),
+      set_value(*P(725,398),"150","OHM"),
       set_value(*P(489,209),"10","V"),
       set_value(*P(463,398),"15","V")
     ]
