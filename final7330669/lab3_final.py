@@ -446,56 +446,27 @@ def run_and_capture(name):
 def save_as():
     import pyautogui
     from pywinauto import Desktop
-    if TARGET.exists():
-        try: TARGET.unlink()
-        except: pass
-    focus()
-    try:
-        w=focus()
-        w.menu_select("File->Save As...")
-        log("Save As opened through native menu")
-    except Exception as e:
-        log(f"menu Save As failed: {e}")
-        pyautogui.hotkey("ctrl","shift","s")
-    time.sleep(2)
+    focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
     d=None
-    for _ in range(20):
-        for backend in ("win32","uia"):
-            try:
-                for q in Desktop(backend=backend).windows():
-                    try:
-                        cls=q.class_name(); title=q.window_text(); r=q.rectangle()
-                    except: continue
-                    if cls=="#32770" and r.width()>500 and r.height()>250:
-                        if "Select a Component" not in title and "RESISTOR" not in title and "DC_POWER" not in title:
-                            d=q; break
-                if d: break
-            except: pass
-        if d: break
-        time.sleep(.4)
+    for backend in ("win32","uia"):
+        try:
+            q=Desktop(backend=backend).window(title_re=".*[Ss]ave.*")
+            if q.exists(timeout=1):d=q;break
+        except:pass
     if not d:
-        log("Save As file dialog still not found")
-        shot("49_save_dialog_missing.png")
-        return False
-    try: d.set_focus()
-    except: pass
-    log(f"Save As dialog title={d.window_text()!r} class={d.class_name()} rect={d.rectangle()}")
-    pyautogui.hotkey("alt","n"); time.sleep(.4)
-    pyautogui.hotkey("ctrl","a")
-    pyautogui.write(str(TARGET),interval=.002)
-    pyautogui.press("enter")
-    time.sleep(7)
-    pyautogui.press("enter")
-    time.sleep(2)
+        log("save dialog missing");shot("49_save_dialog_missing.png");return False
+    try:d.set_focus()
+    except:pass
+    pyautogui.hotkey("alt","n");time.sleep(.3)
+    pyautogui.hotkey("ctrl","a");pyautogui.write(str(TARGET),interval=.002)
+    pyautogui.press("enter");time.sleep(7)
+    pyautogui.press("enter");time.sleep(2)
     candidates=list(OUT.glob("*.ms14"))
-    log("saved candidates=" + ", ".join([p.name+":"+str(p.stat().st_size) for p in candidates]))
-    if TARGET.exists():
-        return TARGET.stat().st_size>1000
+    log("saved candidates="+", ".join([p.name+":"+str(p.stat().st_size) for p in candidates]))
+    if TARGET.exists():return TARGET.stat().st_size>1000
     for p in candidates:
         if p.stat().st_size>1000:
-            p.replace(TARGET)
-            log(f"normalized saved file {p.name} -> {TARGET.name}")
-            return True
+            p.replace(TARGET);return True
     return False
 
 def reopen_in_app():
