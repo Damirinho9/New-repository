@@ -431,17 +431,16 @@ def main():
     ]:
         wire(a,b)
 
-    # Common node a: connect the three left branch terminals directly.
-    # This is more reliable in Multisim than wiring several components to a free junction.
-    wire((379,209),(496,299))
-    wire((496,299),(379,398))
+    # Build the two buses first using endpoints that are already known-good pins.
+    wire((379,209),(379,398))   # left bus a: S1 left to S2 left
+    wire((748,209),(748,398))   # right bus c: top resistor to bottom resistor
 
-    # Common node c: connect all three resistor outputs directly.
-    wire((748,209),(694,299))
-    wire((694,299),(748,398))
+    # Then tap the middle branch into the existing buses.
+    wire((496,299),(379,299))   # U2 left -> bus a
+    wire((694,299),(748,299))   # R(200 Ohm) right -> bus c
 
-    # Ground is placed next to the middle left node. Connect it directly to node a.
-    wire((342,299),(496,299))
+    # Ground symbol was placed at absolute y about 351 px, which corresponds to base y=327 after DY calibration.
+    wire((325,327),(379,327))
 
     shot("40_wired.png")
 
@@ -472,7 +471,7 @@ def main():
     pyautogui.hotkey("ctrl","z");time.sleep(1)
 
     # State 3: bypass the 200 Ohm middle resistor, leaving U2 as the short-circuit ammeter.
-    wire((595,299),(694,299))
+    wire((595,299),(748,299))
     run_and_capture("90_state_Ikz_R3_short.png")
     pyautogui.hotkey("ctrl","z");time.sleep(1)
 
