@@ -433,7 +433,7 @@ def main():
 
     # State 2: open branch c-a (remove the short wire between U2 and R3), measure Uxx.
     # Selecting the midpoint of that wire and Delete is reversible with Ctrl+Z.
-    pyautogui.click(622,299);pyautogui.press("delete");time.sleep(1)
+    pyautogui.click(*P(622,299));pyautogui.press("delete");time.sleep(1)
     run_and_capture("80_state_Uxx_open_R3.png")
     pyautogui.hotkey("ctrl","z");time.sleep(1)
 
