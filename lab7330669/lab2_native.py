@@ -172,15 +172,43 @@ def set_value(x,y,value):
     except Exception as e:
         log(f"set_value error {e}");pyautogui.press("esc");return False
 
+def cursor_at(x,y):
+    import pyautogui, win32gui
+    pyautogui.moveTo(x,y,duration=.02)
+    time.sleep(.04)
+    try:return win32gui.GetCursorInfo()[1]
+    except:return None
+
+def find_pin(x,y):
+    import pyautogui
+    # Baseline arrow cursor in blank schematic space.
+    base=cursor_at(880,470)
+    cand=[]
+    for yy in range(y-7,y+8):
+        for xx in range(x-9,x+10):
+            h=cursor_at(xx,yy)
+            if h is not None and h!=base:
+                cand.append((abs(xx-x)+abs(yy-y),xx,yy,h))
+    if cand:
+        cand.sort()
+        _,px,py,h=cand[0]
+        log(f"pin hotspot approx=({x},{y}) -> ({px},{py}) cursor={h} base={base}")
+        return (px,py)
+    log(f"pin hotspot not found around ({x},{y}); fallback")
+    return (x,y)
+
 def wire(points):
     import pyautogui
     focus()
+    pts=list(points)
+    pts[0]=find_pin(*pts[0])
+    pts[-1]=find_pin(*pts[-1])
     pyautogui.hotkey("ctrl","q")
     time.sleep(.25)
-    pyautogui.click(*points[0]);time.sleep(.2)
-    for p in points[1:]:
-        pyautogui.click(*p);time.sleep(.2)
-    pyautogui.press("esc");time.sleep(.25)
+    pyautogui.click(*pts[0]);time.sleep(.25)
+    for p in pts[1:]:
+        pyautogui.click(*p);time.sleep(.25)
+    pyautogui.press("esc");time.sleep(.3)
 
 def save_as():
     import pyautogui
