@@ -304,6 +304,47 @@ def wire(a,b):
     if not WIRE_STRATEGY:return False
     return try_wire_strategy(WIRE_STRATEGY,a,b,test=False)
 
+def wire_path(points):
+    import pyautogui
+    if not WIRE_STRATEGY or len(points)<2:return False
+    pts=[P(*p) for p in points]
+    pts[0]=find_hotspot(*pts[0],radius=2)
+    pts[-1]=find_hotspot(*pts[-1],radius=2)
+    focus()
+    log(f"wire_path strategy={WIRE_STRATEGY} pts={pts}")
+    try:
+        if WIRE_STRATEGY=="click":
+            pyautogui.moveTo(*pts[0],duration=.1);pyautogui.click();time.sleep(.3)
+            for p in pts[1:]:
+                pyautogui.moveTo(*p,duration=.15);pyautogui.click();time.sleep(.25)
+            pyautogui.press("esc")
+        elif WIRE_STRATEGY=="menu":
+            w=focus()
+            try:w.menu_select("Place->Wire")
+            except:
+                pyautogui.hotkey("alt","p");time.sleep(.3);pyautogui.press("w")
+            time.sleep(.3)
+            for p in pts:
+                pyautogui.click(*p);time.sleep(.25)
+            pyautogui.press("esc")
+        elif WIRE_STRATEGY=="ctrlq":
+            pyautogui.hotkey("ctrl","q");time.sleep(.3)
+            for p in pts:
+                pyautogui.click(*p);time.sleep(.25)
+            pyautogui.press("esc")
+        else:
+            # drag is unsuitable for bent buses; use plain clicks which match Multisim manual wiring.
+            pyautogui.moveTo(*pts[0],duration=.1);pyautogui.click();time.sleep(.3)
+            for p in pts[1:]:
+                pyautogui.moveTo(*p,duration=.15);pyautogui.click();time.sleep(.25)
+            pyautogui.press("esc")
+        time.sleep(.6)
+        return True
+    except Exception as e:
+        log(f"wire_path exception {e}")
+        pyautogui.press("esc")
+        return False
+
 def junction(x,y):
     import pyautogui
     x,y=P(x,y)
@@ -431,16 +472,18 @@ def main():
     ]:
         wire(a,b)
 
-    # Build the two buses first using endpoints that are already known-good pins.
-    wire((379,209),(379,398))   # left bus a: S1 left to S2 left
-    wire((748,209),(748,398))   # right bus c: top resistor to bottom resistor
+    # Build orthogonal common buses exactly as a human would: endpoint -> blank corner -> endpoint.
+    # Left common node a.
+    wire_path([(379,209),(330,209),(330,398),(379,398)])
+    junction(330,299)
+    junction(330,327)
+    wire_path([(496,299),(430,299),(330,299)])
+    wire_path([(325,327),(330,327)])
 
-    # Then tap the middle branch into the existing buses.
-    wire((496,299),(379,299))   # U2 left -> bus a
-    wire((694,299),(748,299))   # R(200 Ohm) right -> bus c
-
-    # Ground symbol was placed at absolute y about 351 px, which corresponds to base y=327 after DY calibration.
-    wire((325,327),(379,327))
+    # Right common node c.
+    wire_path([(748,209),(790,209),(790,398),(748,398)])
+    junction(790,299)
+    wire_path([(694,299),(740,299),(790,299)])
 
     shot("40_wired.png")
 
@@ -471,7 +514,7 @@ def main():
     pyautogui.hotkey("ctrl","z");time.sleep(1)
 
     # State 3: bypass the 200 Ohm middle resistor, leaving U2 as the short-circuit ammeter.
-    wire((595,299),(748,299))
+    wire_path([(595,299),(740,299),(790,299)])
     run_and_capture("90_state_Ikz_R3_short.png")
     pyautogui.hotkey("ctrl","z");time.sleep(1)
 
