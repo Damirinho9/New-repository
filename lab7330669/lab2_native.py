@@ -146,14 +146,10 @@ def set_value(x,y,value):
                     r=e.rectangle();cur=e.window_text()
                     if r.width()>25 and r.height()>10:edits.append((r.width()*r.height(),e,cur,r))
             except:pass
-        edits.sort(reverse=True,key=lambda z:z[0])
-        log("property edits: "+" | ".join([f"{q[2]!r}@{q[3]}" for q in edits[:10]]))
-        chosen=None
-        for _,e,cur,r in edits:
-            u=cur.strip()
-            if re.search(r"\d",u) and not re.fullmatch(r"[A-Za-z]+\d+",u):
-                chosen=e;break
-        if chosen is None and edits:chosen=edits[-1][1]
+        # The first edit on the Value tab is the primary component value
+        # (R for resistor, DC voltage for DC_POWER).
+        edits.sort(key=lambda z:z[3].top)
+        chosen=edits[0][1] if edits else None
         if chosen is None:
             pyautogui.press("esc");return False
         try:chosen.set_edit_text(value)
@@ -220,14 +216,10 @@ def reopen_in_app():
     if not d:return False
     try:d.set_focus()
     except:pass
-    edits=d.descendants(class_name="Edit")
-    if edits:
-        e=edits[-1]
-        try:e.set_edit_text(str(TARGET))
-        except:
-            e.click_input();pyautogui.hotkey("ctrl","a");pyautogui.write(str(TARGET),interval=.002)
-    else:pyautogui.write(str(TARGET),interval=.002)
-    pyautogui.press("enter");time.sleep(10)
+    # Native Windows file dialog: Alt+N focuses "File name".
+    pyautogui.hotkey("alt","n");time.sleep(.4)
+    pyautogui.hotkey("ctrl","a");pyautogui.write(str(TARGET),interval=.002)
+    pyautogui.press("enter");time.sleep(12)
     w=focus();title=w.window_text() if w else ""
     log(f"reopened title={title!r}")
     shot("60_reopened.png")
@@ -256,11 +248,11 @@ def main():
 
     # Required values from the method sheet.
     okvals=[
-      set_value(725,209,"100 Ohm"),
-      set_value(675,299,"200 Ohm"),
-      set_value(725,398,"150 Ohm"),
-      set_value(489,209,"10 V"),
-      set_value(463,398,"15 V")
+      set_value(725,209,"100"),
+      set_value(675,299,"200"),
+      set_value(725,398,"150"),
+      set_value(489,209,"10"),
+      set_value(463,398,"15")
     ]
     shot("30_values_set.png")
     if not all(okvals):
