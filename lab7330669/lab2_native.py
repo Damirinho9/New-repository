@@ -279,15 +279,18 @@ def junction(x,y):
     focus();pyautogui.hotkey("ctrl","j");time.sleep(.25);pyautogui.click(x,y);pyautogui.press("esc");time.sleep(.3)
     log(f"junction at {x},{y}")
 
-def warning_windows():
-    from pywinauto import Desktop
+def simulation_messages():
     vals=[]
-    for backend in ("win32","uia"):
+    w=mainwin()
+    if not w:return vals
+    for backend in ("uia","win32"):
         try:
-            for w in Desktop(backend=backend).windows():
+            from pywinauto import Desktop
+            q=Desktop(backend=backend).window(handle=w.handle)
+            for e in q.descendants():
                 try:
-                    t=w.window_text().strip()
-                    if t and ("warning" in t.lower() or "error" in t.lower()):
+                    t=e.window_text().strip()
+                    if t and ("Warning:" in t or "error(s)" in t or "warning(s)" in t or "SPICE Netlist" in t):
                         vals.append(t)
                 except:pass
         except:pass
@@ -297,14 +300,11 @@ def run_and_capture(name):
     import pyautogui
     focus();pyautogui.press("f5");time.sleep(6)
     shot(name)
-    warns=warning_windows()
-    log(f"run warnings={warns}")
-    # close modal warning if one exists
-    if warns:
-        pyautogui.press("enter");time.sleep(1)
-    else:
-        pyautogui.press("f5");time.sleep(1)
-    return warns
+    msgs=simulation_messages()
+    log("simulation messages="+" || ".join(msgs))
+    bad=[m for m in msgs if ("No ground node" in m or re.search(r"\\b[1-9]\\d* error\\(s\\)",m,re.I))]
+    pyautogui.press("f5");time.sleep(1)
+    return bad
 
 def save_as():
     import pyautogui
@@ -367,7 +367,7 @@ def main():
       ("SPST",380,255,0),("DC_POWER",470,255,1),("AMMETER",570,255,0),("RESISTOR",700,255,0),
       ("AMMETER",500,350,0),("RESISTOR",650,350,0),
       ("SPST",380,445,0),("DC_POWER",470,445,3),("AMMETER",570,445,2),("RESISTOR",700,445,0),
-      ("VOLTMETER",570,535,0),("GROUND",340,500,0)
+      ("VOLTMETER",570,535,0),("GROUND",328,351,0)
     ]
     for it in items:
         if not place(*it):
@@ -412,9 +412,9 @@ def main():
 
     shot("40_wired.png")
 
-    # Close K1 and K2.
-    pyautogui.click(410,209);time.sleep(.5)
-    pyautogui.click(410,398);time.sleep(.5)
+    # Both interactive SPSTs use the default "Key = Space" shown by Multisim.
+    # One Space keystroke toggles both from their initial open state to closed.
+    focus();pyautogui.press("space");time.sleep(1)
     shot("45_switches_closed.png")
 
     if not save_as():
@@ -428,11 +428,8 @@ def main():
     # State 1: original circuit, K1/K2 closed.
     warns=run_and_capture("70_run_initial.png")
     if warns:
-        # One last in-run repair: connect ground directly to node-a junction and retry.
-        log("initial run produced warning; reinforcing ground connection without reinstall")
-        wire((342,479),(330,330))
-        warns=run_and_capture("71_run_ground_retry.png")
-        if warns:return 26
+        log("initial simulation still has a real electrical error: "+str(warns))
+        return 26
 
     # State 2: open branch c-a (remove the short wire between U2 and R3), measure Uxx.
     # Selecting the midpoint of that wire and Delete is reversible with Ctrl+Z.
