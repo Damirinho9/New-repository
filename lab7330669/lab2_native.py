@@ -99,58 +99,85 @@ def place(name,x,y,rotate=0):
     return True
 
 def modal_dialog():
-    from pywinauto import Desktop
+    from pywinauto import Desktop, Application
+    mw=focus()
+    if not mw:return None
+    pid=mw.process_id()
+    # Prefer visible secondary windows belonging to the Multisim process.
     for backend in ("uia","win32"):
         try:
-            wins=Desktop(backend=backend).windows()
-            for w in wins:
+            app=Application(backend=backend).connect(process=pid)
+            for w in app.windows():
                 try:
-                    t=w.window_text()
-                    if t and "Multisim" not in t and "Select a Component" not in t:
+                    if w.handle != mw.handle and w.is_visible():
                         r=w.rectangle()
-                        if r.width()>250 and r.height()>150:return w
+                        if r.width()>250 and r.height()>120:
+                            log(f"property window backend={backend} title={w.window_text()!r} class={w.class_name()} rect={r}")
+                            return w
                 except:pass
         except:pass
+    # Fallback to process-scoped #32770 dialogs.
+    try:
+        for w in Desktop(backend="win32").windows(process=pid):
+            try:
+                if w.handle != mw.handle and w.class_name()=="#32770":
+                    return w
+            except:pass
+    except:pass
     return None
 
 def set_value(x,y,value):
     import pyautogui
-    focus();pyautogui.doubleClick(x,y,interval=.15);time.sleep(2)
+    focus();pyautogui.doubleClick(x,y,interval=.15);time.sleep(1.5)
     d=modal_dialog()
     if not d:
         log(f"value dialog missing at {x},{y}");pyautogui.press("esc");return False
     try:
-        # click Value tab if exposed
+        # Dump controls for diagnostics.
+        vals=[]
+        for e in d.descendants():
+            try:
+                vals.append(f"{e.window_text()!r}\t{e.class_name()}\t{getattr(e.element_info,'control_type','')}\t{e.rectangle()}")
+            except:pass
+        with (OUT/f"prop_{x}_{y}.txt").open("w",encoding="utf-8") as fh:fh.write("\n".join(vals))
+
         for e in d.descendants():
             try:
                 if e.window_text().strip()=="Value" and e.rectangle().width()>5:
-                    e.click_input();time.sleep(.7);break
+                    e.click_input();time.sleep(.5);break
             except:pass
+
         edits=[]
         for e in d.descendants():
             try:
                 ct=getattr(e.element_info,"control_type","")
                 if ct=="Edit" or "Edit" in e.class_name():
                     r=e.rectangle();cur=e.window_text()
-                    if r.width()>30 and r.height()>10:
-                        edits.append((r.width()*r.height(),e,cur,r))
+                    if r.width()>25 and r.height()>10:edits.append((r.width()*r.height(),e,cur,r))
             except:pass
         edits.sort(reverse=True,key=lambda z:z[0])
-        log("edits: "+" | ".join([f"{q[2]!r}@{q[3]}" for q in edits[:8]]))
+        log("property edits: "+" | ".join([f"{q[2]!r}@{q[3]}" for q in edits[:10]]))
         chosen=None
-        # Prefer an existing numeric/unit value field over reference designator.
         for _,e,cur,r in edits:
             u=cur.strip()
             if re.search(r"\d",u) and not re.fullmatch(r"[A-Za-z]+\d+",u):
                 chosen=e;break
-        if chosen is None and edits:chosen=edits[0][1]
+        if chosen is None and edits:chosen=edits[-1][1]
         if chosen is None:
             pyautogui.press("esc");return False
         try:chosen.set_edit_text(value)
         except:
-            chosen.click_input();pyautogui.hotkey("ctrl","a");pyautogui.write(value,interval=.05)
+            chosen.click_input();pyautogui.hotkey("ctrl","a");pyautogui.write(value,interval=.04)
         time.sleep(.5)
-        pyautogui.press("enter");time.sleep(1.2)
+        # Click OK if available.
+        clicked=False
+        for b in d.descendants():
+            try:
+                if b.window_text().replace("&","").strip()=="OK" and b.rectangle().width()>5:
+                    b.click_input();clicked=True;break
+            except:pass
+        if not clicked:pyautogui.press("enter")
+        time.sleep(1)
         log(f"set value {value} at {x},{y}")
         return True
     except Exception as e:
@@ -167,7 +194,7 @@ def wire(points):
 def save_as():
     import pyautogui
     from pywinauto import Desktop
-    focus();pyautogui.hotkey("ctrl","shift","s");time.sleep(2)
+    focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
     d=None
     for backend in ("win32","uia"):
         try:
@@ -223,57 +250,61 @@ def main():
     if not focus():return 12
     time.sleep(2)
 
-    # Figure 2.6 layout: three vertical branches between common c and a.
-    # x positions: left 420, middle 610, right 800. top y=220, bottom y=500.
-    # Place resistors rotated vertical.
+    # Figure 2.6 topology, laid out as three horizontal branches for reliable native GUI wiring.
+    # Common node a is the left bus, node c is the right bus.
     items=[
-      ("RESISTOR",420,265,1),("AMMETER",420,330,1),("DC_POWER",420,395,0),("SPST",420,455,1),
-      ("RESISTOR",610,300,1),("AMMETER",610,385,3),
-      ("RESISTOR",800,265,1),("AMMETER",800,330,3),("DC_POWER",800,395,2),("SPST",800,455,1),
-      ("VOLTMETER",900,350,1),("GROUND",610,505,0)
+      ("SPST",380,255,0),("DC_POWER",470,255,1),("AMMETER",570,255,0),("RESISTOR",700,255,0),
+      ("AMMETER",500,350,0),("RESISTOR",650,350,0),
+      ("SPST",380,445,0),("DC_POWER",470,445,3),("AMMETER",570,445,2),("RESISTOR",700,445,0),
+      ("VOLTMETER",570,535,0),("GROUND",320,570,0)
     ]
     for it in items:
         if not place(*it):
             log(f"FAILED placement {it}");return 20
     shot("20_all_components.png")
 
-    # Set required values. We accept unit-bearing strings in Multisim property dialog.
-    set_value(420,265,"100 Ohm")
-    set_value(610,300,"200 Ohm")
-    set_value(800,265,"150 Ohm")
-    set_value(420,395,"10 V")
-    set_value(800,395,"15 V")
+    # Required values from the method sheet.
+    okvals=[
+      set_value(700,255,"100 Ohm"),
+      set_value(650,350,"200 Ohm"),
+      set_value(700,445,"150 Ohm"),
+      set_value(470,255,"10 V"),
+      set_value(470,445,"15 V")
+    ]
     shot("30_values_set.png")
+    if not all(okvals):
+        log("one or more values could not be set");return 24
 
-    # Wiring, using centers and vertical terminal offsets after rotation.
-    # common top bus c and bottom bus a
-    wire([(360,220),(860,220)])
-    wire([(360,500),(860,500)])
-    # left branch segments
-    wire([(420,220),(420,245)])
-    wire([(420,285),(420,310)])
-    wire([(420,350),(420,375)])
-    wire([(420,415),(420,435)])
-    wire([(420,475),(420,500)])
-    # middle branch
-    wire([(610,220),(610,280)])
-    wire([(610,320),(610,365)])
-    wire([(610,405),(610,500)])
-    # right branch
-    wire([(800,220),(800,245)])
-    wire([(800,285),(800,310)])
-    wire([(800,350),(800,375)])
-    wire([(800,415),(800,435)])
-    wire([(800,475),(800,500)])
-    # voltmeter across nodes
-    wire([(860,220),(900,220),(900,330)])
-    wire([(900,370),(900,500),(860,500)])
-    # ground lead
-    wire([(610,500),(610,495)])
+    # Exact horizontal wiring using the terminal geometry of native Multisim 14.3 components.
+    # left/right common buses
+    wire([(320,230),(320,535)])
+    wire([(830,230),(830,535)])
+    # branch 1: K1 - E1 - A1 - R1
+    wire([(320,255),(348,255)])
+    wire([(412,255),(450,255)])
+    wire([(490,255),(528,255)])
+    wire([(612,255),(677,255)])
+    wire([(723,255),(830,255)])
+    # branch 3: A3 - R3
+    wire([(320,350),(458,350)])
+    wire([(542,350),(627,350)])
+    wire([(673,350),(830,350)])
+    # branch 2: K2 - E2 - A2 - R2
+    wire([(320,445),(348,445)])
+    wire([(412,445),(450,445)])
+    wire([(490,445),(528,445)])
+    wire([(612,445),(677,445)])
+    wire([(723,445),(830,445)])
+    # voltmeter across a-c
+    wire([(320,535),(528,535)])
+    wire([(612,535),(830,535)])
+    # ground on node a
+    wire([(320,535),(320,560)])
     shot("40_wired.png")
 
-    # Close both switches by clicking their levers.
-    pyautogui.click(420,455);time.sleep(.5);pyautogui.click(800,455);time.sleep(.5)
+    # Close K1 and K2.
+    pyautogui.click(380,255);time.sleep(.5)
+    pyautogui.click(380,445);time.sleep(.5)
     shot("45_switches_closed.png")
 
     if not save_as():
