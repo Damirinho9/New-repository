@@ -593,50 +593,35 @@ def main():
     if not focus(): return 12
     DY=24
 
-    rows=[
-      ("1N4001",245,0,"0.7"),
-      ("1N4728",365,1,"3.2"),
-      ("LED_GREEN",485,1,"2.0")
+    # Universal measurement circuit from Fig. 4.6. The tested device is 1N4001;
+    # 1N4728 and green LED use the same circuit by replacing only the DUT.
+    items=[
+      ("DC_POWER",430,245,1),
+      ("AMMETER",530,245,0),
+      ("1N4001",690,245,0),
+      ("VOLTMETER",690,305,0),
+      ("GROUND",350,320,0)
     ]
-    for name,y,rot,voltage in rows:
-        if not place("DC_POWER",430,y,1): return 20
-        if not place("AMMETER",530,y,0): return 20
-        ok=place(name,690,y,rot)
-        if not ok and name=="LED_GREEN": ok=place("GREEN LED",690,y,rot)
-        if not ok and name=="LED_GREEN": ok=place("LED",690,y,rot)
-        if not ok: return 20
-        if not place("VOLTMETER",690,y+60,0): return 20
-    if not place("GROUND",300,535,0): return 20
+    for it in items:
+        if not place(*it): return 20
     shot("10_components.png")
 
-    ok=[
-      set_value(*P(449,199),"0.7","V"),
-      set_value(*P(449,319),"3.2","V"),
-      set_value(*P(449,439),"2.0","V")
-    ]
+    if not set_value(*P(449,199),"0.7","V"): return 21
     shot("20_values.png")
-    if not all(ok): return 21
 
-    data=[
-      (200,355,486,625,646,255),
-      (320,355,486,625,646,375),
-      (440,355,486,625,646,495)
-    ]
-    returns=[]
-    for y,sc,ac,dc,vc,vy in data:
-        sL=cursor_pin(sc,y,"left",55,28); sR=cursor_pin(sc,y,"right",55,28)
-        aL=cursor_pin(ac,y,"left",60,28); aR=cursor_pin(ac,y,"right",60,28)
-        dL=cursor_pin(dc,y,"left",75,35); dR=cursor_pin(dc,y,"right",75,35)
-        vL=cursor_pin(vc,vy,"left",65,28); vR=cursor_pin(vc,vy,"right",65,28)
+    # Pin locations are stable on the default Multisim sheet; refine each by cursor hotspot.
+    srcL=find_hotspot(435,200,8); srcR=find_hotspot(468,200,8)
+    amL=find_hotspot(541,200,8); amR=find_hotspot(623,200,8)
+    dL=find_hotspot(700,200,10); dR=find_hotspot(748,200,10)
+    vL=find_hotspot(702,255,10); vR=find_hotspot(782,255,10)
+    gT=find_hotspot(350,320,14)
 
-        direct_path2([sR,aL]); direct_path2([aR,dL])
-        direct_path2([dR,(790,y),(790,y+45),(300,y+45),(300,y),sL])
-        direct_path2([dL,(600,vy),vL])
-        direct_path2([dR,(760,vy),vR])
-        returns.append((300,y+45))
-
-    gT=cursor_pin(300,515,"top",35,60)
-    direct_path2([gT,(300,485)])
+    direct_path2([srcR,amL])
+    direct_path2([amR,dL])
+    direct_path2([dR,(800,200),(800,300),(330,300),(330,200),srcL])
+    direct_path2([gT,(350,300),(330,300)])
+    direct_path2([dL,(660,255),vL])
+    direct_path2([dR,(790,255),vR])
     shot("30_wired.png")
 
     if not save_as(): return 22
@@ -644,7 +629,7 @@ def main():
     if not reopen_in_app(): return 23
 
     focus(); pyautogui.press("f5"); time.sleep(6)
-    shot("60_reopened_run.png")
+    shot("60_reopened_run_1N4001.png")
     msgs=simulation_messages(); log("Lab4 messages="+" || ".join(msgs))
     bad=[m for m in msgs if ("No ground node" in m or re.search(r"\\b[1-9]\\d* error\\(s\\)",m,re.I))]
     pyautogui.press("f5"); time.sleep(1)
