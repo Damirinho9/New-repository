@@ -492,62 +492,30 @@ def reopen_in_app():
     shot("60_reopened.png")
     return ("Lab2_DC_Circuit".lower() in title.lower()) or TARGET.exists()
 
-
-def cursor_pin(cx,cy,side,rx=70,ry=30):
-    import win32api, win32gui, time
-    focus()
-    win32api.SetCursorPos((900,575)); time.sleep(.05)
-    base=win32gui.GetCursorInfo()[1]
-    candidates=[]
-    x0=max(260,int(cx-rx)); x1=min(950,int(cx+rx))
-    y0=max(165,int(cy-ry)); y1=min(540,int(cy+ry))
-    for yy in range(y0,y1+1,2):
-        for xx in range(x0,x1+1,2):
-            win32api.SetCursorPos((xx,yy))
-            h=win32gui.GetCursorInfo()[1]
-            if h!=base:
-                candidates.append((xx,yy,h))
-    if not candidates:
-        log(f"cursor_pin fallback {side} around {cx},{cy}")
-        return (int(cx),int(cy))
-    if side=="left": q=min(candidates,key=lambda p:p[0])
-    elif side=="right": q=max(candidates,key=lambda p:p[0])
-    elif side=="top": q=min(candidates,key=lambda p:p[1])
-    else: q=max(candidates,key=lambda p:p[1])
-    p=(q[0],q[1])
-    log(f"cursor_pin {side} around {cx},{cy} -> {p} handle={q[2]} base={base}")
-    return p
-
-def direct_path(points):
-    import pyautogui
-    focus()
-    pyautogui.moveTo(*points[0],duration=.1); pyautogui.click(); time.sleep(.25)
-    for p in points[1:]:
-        pyautogui.moveTo(*p,duration=.12); pyautogui.click(); time.sleep(.2)
-    pyautogui.press("esc"); time.sleep(.35)
-    return True
-
 def main():
     import pyautogui
-    global DY
     pyautogui.FAILSAFE=False
-    p=subprocess.Popen([str(MULTISIM)]); log(f"launch pid={p.pid}"); time.sleep(10)
-    if trial_present() and not dismiss_trial(): return 11
-    if not focus(): return 12
+    p=subprocess.Popen([str(MULTISIM)]);log(f"launch pid={p.pid}");time.sleep(10)
+    if trial_present() and not dismiss_trial():return 11
+    if not focus():return 12
     time.sleep(2)
 
+    # Figure 2.6 topology, laid out as three horizontal branches for reliable native GUI wiring.
+    # Common node a is the left bus, node c is the right bus.
     items=[
       ("SPST",380,255,0),("DC_POWER",470,255,3),("AMMETER",570,255,0),("RESISTOR",700,255,0),
       ("AMMETER",500,350,2),("RESISTOR",650,350,0),
       ("SPST",380,445,0),("DC_POWER",470,445,3),("AMMETER",570,445,0),("RESISTOR",700,445,0),
-      ("VOLTMETER",570,500,0),("GROUND",328,351,0)
+      ("VOLTMETER",570,535,0),("GROUND",328,351,0)
     ]
     for it in items:
         if not place(*it):
-            log(f"FAILED placement {it}"); return 20
+            log(f"FAILED placement {it}");return 20
     shot("20_all_components.png")
-    if not calibrate_viewport("after_place"): return 23
+    if not calibrate_viewport("after_place"):
+        return 23
 
+    # Required values from the method sheet.
     okvals=[
       set_value(*P(725,209),"100","OHM"),
       set_value(*P(675,299),"200","OHM"),
@@ -557,52 +525,71 @@ def main():
     ]
     shot("30_values_set.png")
     if not all(okvals):
-        log("one or more values could not be set"); return 24
+        log("one or more values could not be set");return 24
 
-    y1=233; y2=323; y3=422; yv=478
-    s1L=cursor_pin(407,y1,"left",45,22); s1R=cursor_pin(407,y1,"right",45,22)
-    v1L=cursor_pin(451,y1,"left",45,25); v1R=cursor_pin(451,y1,"right",45,25)
-    u1L=cursor_pin(618,y1,"left",55,25); u1R=cursor_pin(618,y1,"right",55,25)
-    r1L=cursor_pin(725,y1,"left",50,25); r1R=cursor_pin(725,y1,"right",50,25)
+    # Find one native wiring method once, then reuse it for the whole circuit.
+    if not calibrate_wire_strategy():
+        return 25
 
-    u2L=cursor_pin(545,y2,"left",55,25); u2R=cursor_pin(545,y2,"right",55,25)
-    r2L=cursor_pin(675,y2,"left",50,25); r2R=cursor_pin(675,y2,"right",50,25)
+    # Short serial gaps in the three branches. The S1-V1 wire was already created by calibration.
+    for a,b in [
+        ((505,209),(568,209)),((667,209),(703,209)),
+        ((595,299),(649,299)),
+        ((442,398),(469,398)),((505,398),(568,398)),((667,398),(703,398))
+    ]:
+        wire(a,b)
 
-    s2L=cursor_pin(407,y3,"left",45,22); s2R=cursor_pin(407,y3,"right",45,22)
-    v2L=cursor_pin(451,y3,"left",45,25); v2R=cursor_pin(451,y3,"right",45,25)
-    u3L=cursor_pin(618,y3,"left",55,25); u3R=cursor_pin(618,y3,"right",55,25)
-    r3L=cursor_pin(725,y3,"left",50,25); r3R=cursor_pin(725,y3,"right",50,25)
-    vmL=cursor_pin(618,yv,"left",60,28); vmR=cursor_pin(618,yv,"right",60,28)
-    gT=cursor_pin(325,351,"top",30,45)
+    # Build orthogonal common buses exactly as a human would: endpoint -> blank corner -> endpoint.
+    # Left common node a.
+    wire_path([(379,209),(330,209),(330,398),(379,398)])
+    junction(330,299)
+    junction(330,327)
+    wire_path([(496,299),(430,299),(330,299)])
+    wire_path([(325,327),(330,327)])
 
-    # serial parts
-    direct_path([s1R,v1L]); direct_path([v1R,u1L]); direct_path([u1R,r1L])
-    direct_path([u2R,r2L])
-    direct_path([s2R,v2L]); direct_path([v2R,u3L]); direct_path([u3R,r3L])
+    # Right common node c.
+    wire_path([(748,209),(790,209),(790,398),(748,398)])
+    junction(790,299)
+    wire_path([(694,299),(740,299),(790,299)])
 
-    # node a (left bus) and node c (right bus)
-    direct_path([s1L,(300,y1),(300,y3),s2L])
-    direct_path([u2L,(350,y2),(300,y2)])
-    direct_path([gT,(325,y2),(300,y2)])
-    direct_path([vmL,(420,yv),(300,yv),(300,y2)])
+    # Voltmeter U4 permanently across nodes a-c for φc / Uxx measurement.
+    wire_path([(568,489),(430,489),(330,489),(330,299)])
+    wire_path([(667,489),(740,489),(790,489),(790,299)])
 
-    direct_path([r1R,(810,y1),(810,y3),r3R])
-    direct_path([r2R,(760,y2),(810,y2)])
-    direct_path([vmR,(760,yv),(810,yv),(810,y2)])
     shot("40_wired.png")
 
-    focus(); pyautogui.press("space"); time.sleep(1)
+    # Both interactive SPSTs use the default "Key = Space" shown by Multisim.
+    # One Space keystroke toggles both from their initial open state to closed.
+    focus();pyautogui.press("space");time.sleep(1)
     shot("45_switches_closed.png")
 
-    if not save_as(): return 21
+    if not save_as():
+        log("save failed");return 21
+    log(f"saved {TARGET} size={TARGET.stat().st_size}")
     shot("50_saved.png")
-    if not reopen_in_app(): return 22
 
-    bad=run_and_capture("70_run_initial.png")
-    if bad:
-        log("Lab2 electrical error: "+str(bad)); return 26
+    if not reopen_in_app():
+        log("reopen verification failed");return 22
+    # Reopen keeps the saved sheet geometry; reuse the known DY from construction.
 
-    focus(); pyautogui.hotkey("ctrl","s"); time.sleep(2)
+    # State 1: original circuit, K1/K2 closed.
+    warns=run_and_capture("70_run_initial.png")
+    if warns:
+        log("initial simulation still has a real electrical error: "+str(warns))
+        return 26
+
+    # State 2: open the middle c-a branch by deleting the U2-R(200 Ohm) link.
+    pyautogui.click(*P(622,299));pyautogui.press("delete");time.sleep(1)
+    run_and_capture("80_state_Uxx_open_R3.png")
+    pyautogui.hotkey("ctrl","z");time.sleep(1)
+
+    # State 3: bypass the 200 Ohm middle resistor, leaving U2 as the short-circuit ammeter.
+    wire_path([(595,299),(740,299),(790,299)])
+    run_and_capture("90_state_Ikz_R3_short.png")
+    pyautogui.hotkey("ctrl","z");time.sleep(1)
+
+    # Return to original state and save it as the submitted MS14.
+    focus();pyautogui.hotkey("ctrl","s");time.sleep(3)
     shot("95_final_original_state.png")
     log("LAB2_NATIVE_DONE")
     return 0
