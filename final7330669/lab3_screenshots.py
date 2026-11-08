@@ -342,6 +342,61 @@ def place_wattmeter(x,y):
     log(f"placed Wattmeter instrument at {x},{y}")
     return True
 
+
+def set_meter_ac(x,y):
+    import pyautogui
+    focus();pyautogui.doubleClick(x,y,interval=.15);time.sleep(1.2)
+    d=modal_dialog()
+    if not d:
+        log(f"meter property dialog missing at {x},{y}")
+        pyautogui.press("esc");return False
+    try:
+        # Ensure Value tab is active.
+        for e in d.descendants():
+            try:
+                if e.window_text().strip()=="Value" and e.rectangle().width()>5:
+                    e.click_input();time.sleep(.4);break
+            except:pass
+
+        # First choice: explicit AC radio/button.
+        for e in d.descendants():
+            try:
+                if e.window_text().strip().upper()=="AC" and e.rectangle().width()>5:
+                    e.click_input();time.sleep(.3)
+                    for b in d.descendants():
+                        try:
+                            if b.window_text().replace("&","").strip()=="OK" and b.rectangle().width()>5:
+                                b.click_input();time.sleep(.8);log(f"meter AC set at {x},{y} by AC control");return True
+                        except:pass
+                    pyautogui.press("enter");time.sleep(.8);return True
+            except:pass
+
+        # Second choice: Mode combobox containing AC/DC.
+        for e in d.descendants():
+            try:
+                if "ComboBox" in e.class_name():
+                    items=[]
+                    try:items=e.item_texts()
+                    except:pass
+                    if any(str(i).strip().upper()=="AC" for i in items):
+                        try:e.select("AC")
+                        except:
+                            e.click_input();pyautogui.write("AC");pyautogui.press("enter")
+                        time.sleep(.3)
+                        for b in d.descendants():
+                            try:
+                                if b.window_text().replace("&","").strip()=="OK" and b.rectangle().width()>5:
+                                    b.click_input();time.sleep(.8);log(f"meter AC set at {x},{y} by combobox");return True
+                            except:pass
+                        pyautogui.press("enter");time.sleep(.8);return True
+            except:pass
+
+        log(f"AC mode control not found at {x},{y}")
+        pyautogui.press("esc");return False
+    except Exception as e:
+        log(f"set_meter_ac error {e}")
+        pyautogui.press("esc");return False
+
 def find_hotspot(x,y,radius=5):
     import pyautogui, win32gui
     # Cursor over blank grid is the baseline. A component terminal changes it.
@@ -680,6 +735,16 @@ def main():
     if not set_value(625,327,"1.27","H"): return 21
     if not set_value(625,327,"450","OHM"): return 21
     if not set_value(625,423,"8u","F"): return 21
+
+    # Multisim indicators default to DC; use AC RMS mode for this laboratory.
+    modes=[
+      set_meter_ac(616,233),
+      set_meter_ac(481,327),
+      set_meter_ac(481,423),
+      set_meter_ac(616,477)
+    ]
+    log("meter AC modes="+str(modes))
+    if not all(modes): return 25
     shot("20_values_220V_C8.png")
 
     # Exact terminal coordinates from the real screenshot.
