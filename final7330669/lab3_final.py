@@ -538,90 +538,112 @@ def direct_path(points):
     pyautogui.press("esc");time.sleep(.35)
     return True
 
+
+def cursor_pin(cx,cy,side,rx=70,ry=30):
+    import win32api, win32gui, time
+    focus()
+    win32api.SetCursorPos((900,575)); time.sleep(.05)
+    base=win32gui.GetCursorInfo()[1]
+    candidates=[]
+    x0=max(260,int(cx-rx)); x1=min(950,int(cx+rx))
+    y0=max(165,int(cy-ry)); y1=min(540,int(cy+ry))
+    for yy in range(y0,y1+1,2):
+        for xx in range(x0,x1+1,2):
+            win32api.SetCursorPos((xx,yy))
+            h=win32gui.GetCursorInfo()[1]
+            if h!=base:
+                candidates.append((xx,yy,h))
+    if not candidates:
+        log(f"cursor_pin fallback {side} around {cx},{cy}")
+        return (int(cx),int(cy))
+    if side=="left": q=min(candidates,key=lambda p:p[0])
+    elif side=="right": q=max(candidates,key=lambda p:p[0])
+    elif side=="top": q=min(candidates,key=lambda p:p[1])
+    else: q=max(candidates,key=lambda p:p[1])
+    p=(q[0],q[1])
+    log(f"cursor_pin {side} around {cx},{cy} -> {p} handle={q[2]} base={base}")
+    return p
+
+def direct_path2(points):
+    import pyautogui
+    focus()
+    pyautogui.moveTo(*points[0],duration=.1); pyautogui.click(); time.sleep(.25)
+    for p in points[1:]:
+        pyautogui.moveTo(*p,duration=.12); pyautogui.click(); time.sleep(.2)
+    pyautogui.press("esc"); time.sleep(.35)
+    return True
+
 def main():
     import pyautogui
-    global DY, WIRE_STRATEGY
+    global DY
     pyautogui.FAILSAFE=False
-    p=subprocess.Popen([str(MULTISIM)]);log(f"launch pid={p.pid}");time.sleep(10)
-    if trial_present():
-        dismiss_trial();time.sleep(3)
-    if not focus():return 12
+    p=subprocess.Popen([str(MULTISIM)]); log(f"launch pid={p.pid}"); time.sleep(10)
+    if trial_present() and not dismiss_trial(): return 11
+    if not focus(): return 12
+    time.sleep(2)
     DY=24
-    WIRE_STRATEGY="click"
 
-    # One native scheme for all 9 capacitance values.
-    # Source branch, R-L coil branch, capacitor branch and voltage measurement.
     items=[
       ("AC_POWER",470,255,1),("AMMETER",570,255,0),
       ("AMMETER",430,350,0),("RESISTOR",550,350,0),("INDUCTOR",680,350,0),
       ("AMMETER",500,445,0),("CAPACITOR",650,445,0),
-      ("VOLTMETER",570,535,0),("GROUND",328,351,0)
+      ("VOLTMETER",570,500,0),("GROUND",328,351,0)
     ]
     for it in items:
         if not place(*it):
-            log(f"FAILED placement {it}");return 20
+            log(f"FAILED placement {it}"); return 20
     shot("10_components.png")
 
-    # Exact method inputs: 220 V, 50 Hz; active coil resistance 450 Ohm.
-    ok=[]
-    ok.append(set_value(*P(489,209),"220","Vrms"))
-    ok.append(set_value(*P(489,209),"50","Hz"))
-    ok.append(set_value(*P(575,304),"450","OHM"))
-    # Use 1 H for L and 4 uF as the saved representative C state.
-    ok.append(set_value(*P(675,399),"4","uF"))
+    ok=[
+      set_value(*P(489,209),"220","Vrms"),
+      set_value(*P(489,209),"50","Hz"),
+      set_value(*P(575,304),"450","OHM"),
+      set_value(*P(675,399),"4","uF")
+    ]
     shot("20_values.png")
-    log("value edits="+str(ok))
+    if not all(ok):
+        log("Lab3 value edit failed"); return 21
 
-    # Capture terminal locations from native blue pin circles before wiring.
-    y1=233; y2=328; y3=423; yv=513
-    srcL=blue_pin(490,y1,"left",80,35); srcR=blue_pin(490,y1,"right",80,35)
-    a1L=blue_pin(615,y1,"left",90,35); a1R=blue_pin(615,y1,"right",90,35)
-    a2L=blue_pin(475,y2,"left",90,35); a2R=blue_pin(475,y2,"right",90,35)
-    rL=blue_pin(575,y2,"left",70,35); rR=blue_pin(575,y2,"right",70,35)
-    lL=blue_pin(705,y2,"left",70,35); lR=blue_pin(705,y2,"right",70,35)
-    a3L=blue_pin(545,y3,"left",90,35); a3R=blue_pin(545,y3,"right",90,35)
-    cL=blue_pin(675,y3,"left",70,35); cR=blue_pin(675,y3,"right",70,35)
-    vL=blue_pin(615,yv,"left",90,35); vR=blue_pin(615,yv,"right",90,35)
-    gT=blue_pin(328,375,"top",35,65)
+    y1=233; y2=328; y3=423; yv=478
+    srcL=cursor_pin(497,y1,"left",55,28); srcR=cursor_pin(497,y1,"right",55,28)
+    a1L=cursor_pin(618,y1,"left",60,28); a1R=cursor_pin(618,y1,"right",60,28)
+    a2L=cursor_pin(483,y2,"left",60,28); a2R=cursor_pin(483,y2,"right",60,28)
+    rL=cursor_pin(575,y2,"left",55,28); rR=cursor_pin(575,y2,"right",55,28)
+    lL=cursor_pin(680,y2,"left",70,35); lR=cursor_pin(680,y2,"right",70,35)
+    a3L=cursor_pin(545,y3,"left",60,28); a3R=cursor_pin(545,y3,"right",60,28)
+    cL=cursor_pin(675,y3,"left",55,28); cR=cursor_pin(675,y3,"right",55,28)
+    vmL=cursor_pin(618,yv,"left",60,28); vmR=cursor_pin(618,yv,"right",60,28)
+    gT=cursor_pin(325,351,"top",30,45)
 
-    # Source branch and common buses.
-    direct_path([srcR,a1L])
-    direct_path([a1R,(800,y1),(820,y1),(820,y3)])
-    direct_path([srcL,(330,y1),(330,y3)])
-    # R-L branch.
-    direct_path([(330,y2),a2L]); direct_path([a2R,rL]); direct_path([rR,lL]); direct_path([lR,(820,y2)])
-    # C branch.
-    direct_path([(330,y3),a3L]); direct_path([a3R,cL]); direct_path([cR,(820,y3)])
-    # Ground and voltmeter across supply.
-    direct_path([gT,(330,375),(330,y3)])
-    direct_path([vL,(330,yv),(330,y3)])
-    direct_path([vR,(820,yv),(820,y3)])
+    # source branch
+    direct_path2([srcR,a1L])
+    direct_path2([a1R,(810,y1),(810,y3)])
+    direct_path2([srcL,(300,y1),(300,y3)])
+
+    # R-L coil branch
+    direct_path2([(300,y2),a2L]); direct_path2([a2R,rL]); direct_path2([rR,lL]); direct_path2([lR,(810,y2)])
+
+    # capacitor branch
+    direct_path2([(300,y3),a3L]); direct_path2([a3R,cL]); direct_path2([cR,(810,y3)])
+
+    # voltage and ground
+    direct_path2([gT,(325,y2),(300,y2)])
+    direct_path2([vmL,(420,yv),(300,yv),(300,y2)])
+    direct_path2([vmR,(760,yv),(810,yv),(810,y2)])
     shot("30_wired.png")
 
-    if not save_as():
-        log("Lab3 save failed");return 21
+    if not save_as(): return 22
     shot("40_saved.png")
-    if not reopen_in_app():
-        log("Lab3 reopen failed");return 22
-    shot("50_reopened.png")
+    if not reopen_in_app(): return 23
 
-    # Verify simulation and capture the 9 experimental C states.
-    # Same document is used; only C changes.
-    cap_xy=P(675,399)
-    values=[("00","0.001"),("02","2"),("04","4"),("06","6"),("08","8"),("10","10"),("12","12"),("14","14"),("16","16")]
-    for tag,val in values:
-        if not set_value(*cap_xy,val,"uF"):
-            log(f"C edit failed tag={tag} value={val}");return 23
-        focus();pyautogui.press("f5");time.sleep(4)
-        shot(f"C_{tag}uF_run.png")
-        msgs=simulation_messages();log(f"C={tag} messages="+" || ".join(msgs))
-        bad=[m for m in msgs if ("No ground node" in m or re.search(r"\\b[1-9]\\d* error\\(s\\)",m,re.I))]
-        pyautogui.press("f5");time.sleep(.5)
-        if bad:return 24
+    focus(); pyautogui.press("f5"); time.sleep(6)
+    shot("70_run_C04uF.png")
+    msgs=simulation_messages(); log("Lab3 messages="+" || ".join(msgs))
+    bad=[m for m in msgs if ("No ground node" in m or re.search(r"\\b[1-9]\\d* error\\(s\\)",m,re.I))]
+    pyautogui.press("f5"); time.sleep(1)
+    if bad: return 24
 
-    set_value(*cap_xy,"4","uF")
-    focus();pyautogui.hotkey("ctrl","s");time.sleep(3)
-    shot("99_final.png")
+    focus(); pyautogui.hotkey("ctrl","s"); time.sleep(2)
     log("LAB3_NATIVE_DONE")
     return 0
 
