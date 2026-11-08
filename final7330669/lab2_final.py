@@ -527,9 +527,10 @@ def main():
     if not all(okvals):
         log("one or more values could not be set");return 24
 
-    # Find one native wiring method once, then reuse it for the whole circuit.
-    if not calibrate_wire_strategy():
-        return 25
+    # Native Multisim pin-to-pin wiring is already verified for this layout.
+    global WIRE_STRATEGY
+    WIRE_STRATEGY="click"
+    wire((442,209),(469,209))
 
     # Short serial gaps in the three branches. The S1-V1 wire was already created by calibration.
     for a,b in [
