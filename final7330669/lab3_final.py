@@ -575,17 +575,17 @@ def direct_path2(points):
 
 def main():
     import pyautogui
-    global DY
+    global DY, WIRE_STRATEGY
     pyautogui.FAILSAFE=False
     p=subprocess.Popen([str(MULTISIM)]); log(f"launch pid={p.pid}"); time.sleep(10)
     if trial_present() and not dismiss_trial(): return 11
     if not focus(): return 12
-    time.sleep(2)
     DY=24
+    WIRE_STRATEGY="click"
 
     items=[
       ("AC_POWER",470,255,1),("AMMETER",570,255,0),
-      ("AMMETER",430,350,0),("RESISTOR",550,350,0),("INDUCTOR",680,350,0),
+      ("AMMETER",430,350,0),("RESISTOR",550,350,0),("INDUCTOR_VIRTUAL",680,350,0),
       ("AMMETER",500,445,0),("CAPACITOR",650,445,0),
       ("VOLTMETER",570,500,0),("GROUND",328,351,0)
     ]
@@ -598,38 +598,47 @@ def main():
       set_value(*P(489,209),"220","Vrms"),
       set_value(*P(489,209),"50","Hz"),
       set_value(*P(575,304),"450","OHM"),
+      set_value(*P(700,304),"1","H"),
       set_value(*P(675,399),"4","uF")
     ]
     shot("20_values.png")
     if not all(ok):
         log("Lab3 value edit failed"); return 21
 
-    y1=233; y2=328; y3=423; yv=478
-    srcL=cursor_pin(497,y1,"left",55,28); srcR=cursor_pin(497,y1,"right",55,28)
-    a1L=cursor_pin(618,y1,"left",60,28); a1R=cursor_pin(618,y1,"right",60,28)
-    a2L=cursor_pin(483,y2,"left",60,28); a2R=cursor_pin(483,y2,"right",60,28)
-    rL=cursor_pin(575,y2,"left",55,28); rR=cursor_pin(575,y2,"right",55,28)
-    lL=cursor_pin(680,y2,"left",70,35); lR=cursor_pin(680,y2,"right",70,35)
-    a3L=cursor_pin(545,y3,"left",60,28); a3R=cursor_pin(545,y3,"right",60,28)
-    cL=cursor_pin(675,y3,"left",55,28); cR=cursor_pin(675,y3,"right",55,28)
-    vmL=cursor_pin(618,yv,"left",60,28); vmR=cursor_pin(618,yv,"right",60,28)
-    gT=cursor_pin(325,351,"top",30,45)
+    # Exact pin neighborhoods measured from the native Multisim sheet.
+    srcL=find_hotspot(*P(478,209),8); srcR=find_hotspot(*P(515,209),8)
+    a1L=find_hotspot(*P(577,209),8); a1R=find_hotspot(*P(658,209),8)
 
-    # source branch
-    direct_path2([srcR,a1L])
-    direct_path2([a1R,(810,y1),(810,y3)])
-    direct_path2([srcL,(300,y1),(300,y3)])
+    a2L=find_hotspot(*P(442,299),8); a2R=find_hotspot(*P(524,299),8)
+    rL=find_hotspot(*P(551,299),8); rR=find_hotspot(*P(589,299),8)
+    lL=find_hotspot(*P(659,299),12); lR=find_hotspot(*P(704,299),12)
 
-    # R-L coil branch
-    direct_path2([(300,y2),a2L]); direct_path2([a2R,rL]); direct_path2([rR,lL]); direct_path2([lR,(810,y2)])
+    a3L=find_hotspot(*P(505,399),8); a3R=find_hotspot(*P(586,399),8)
+    cL=find_hotspot(*P(659,399),8); cR=find_hotspot(*P(683,399),8)
 
-    # capacitor branch
-    direct_path2([(300,y3),a3L]); direct_path2([a3R,cL]); direct_path2([cR,(810,y3)])
+    vmL=find_hotspot(*P(577,454),10); vmR=find_hotspot(*P(658,454),10)
+    gT=find_hotspot(*P(325,327),16)
 
-    # voltage and ground
-    direct_path2([gT,(325,y2),(300,y2)])
-    direct_path2([vmL,(420,yv),(300,yv),(300,y2)])
-    direct_path2([vmR,(760,yv),(810,yv),(810,y2)])
+    # Source and total-current branch.
+    wire_path([(srcR[0],srcR[1]-DY),(a1L[0],a1L[1]-DY)])
+    wire_path([(a1R[0],a1R[1]-DY),(810,209),(810,399)])
+    wire_path([(srcL[0],srcL[1]-DY),(300,209),(300,399)])
+
+    # Coil R-L branch.
+    wire_path([(300,299),(a2L[0],a2L[1]-DY)])
+    wire_path([(a2R[0],a2R[1]-DY),(rL[0],rL[1]-DY)])
+    wire_path([(rR[0],rR[1]-DY),(lL[0],lL[1]-DY)])
+    wire_path([(lR[0],lR[1]-DY),(810,299)])
+
+    # Capacitor branch.
+    wire_path([(300,399),(a3L[0],a3L[1]-DY)])
+    wire_path([(a3R[0],a3R[1]-DY),(cL[0],cL[1]-DY)])
+    wire_path([(cR[0],cR[1]-DY),(810,399)])
+
+    # Ground and voltage measurement.
+    wire_path([(gT[0],gT[1]-DY),(300,327),(300,299)])
+    wire_path([(vmL[0],vmL[1]-DY),(420,454),(300,454),(300,299)])
+    wire_path([(vmR[0],vmR[1]-DY),(760,454),(810,454),(810,299)])
     shot("30_wired.png")
 
     if not save_as(): return 22
