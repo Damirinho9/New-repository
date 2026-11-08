@@ -266,6 +266,76 @@ def set_value(x,y,value,unit_hint=None):
     except Exception as e:
         log(f"set_value error {e}");pyautogui.press("esc");return False
 
+
+def set_property_by_label(x,y,label_text,value):
+    import pyautogui
+    focus();pyautogui.doubleClick(x,y,interval=.15);time.sleep(1.3)
+    d=modal_dialog()
+    if not d:
+        log(f"property dialog missing for {label_text} at {x},{y}")
+        pyautogui.press("esc");return False
+    try:
+        for e in d.descendants():
+            try:
+                if e.window_text().strip()=="Value" and e.rectangle().width()>5:
+                    e.click_input();time.sleep(.5);break
+            except:pass
+        statics=[];edits=[]
+        for e in d.descendants():
+            try:
+                r=e.rectangle();t=e.window_text().strip();ct=getattr(e.element_info,"control_type","")
+                if t:statics.append((e,t,r))
+                if (ct=="Edit" or "Edit" in e.class_name()) and r.width()>25 and r.height()>10:
+                    edits.append((e,t,r))
+            except:pass
+        labels=[(e,t,r) for e,t,r in statics if label_text.lower() in t.lower()]
+        if not labels:
+            log(f"label {label_text!r} not found")
+            pyautogui.press("esc");return False
+        _,lt,lr=labels[0]
+        ly=(lr.top+lr.bottom)//2
+        candidates=[]
+        for e,t,r in edits:
+            cy=(r.top+r.bottom)//2
+            candidates.append((abs(cy-ly), -r.width(), e, t, r))
+        candidates.sort(key=lambda z:(z[0],z[1]))
+        if not candidates or candidates[0][0]>25:
+            log(f"edit near label {label_text!r} not found")
+            pyautogui.press("esc");return False
+        e=candidates[0][2]
+        try:e.set_edit_text(value)
+        except:
+            e.click_input();pyautogui.hotkey("ctrl","a");pyautogui.write(value,interval=.04)
+        clicked=False
+        for b in d.descendants():
+            try:
+                if b.window_text().replace("&","").strip()=="OK" and b.rectangle().width()>5:
+                    b.click_input();clicked=True;break
+            except:pass
+        if not clicked:pyautogui.press("enter")
+        time.sleep(1)
+        log(f"set {label_text}={value} at {x},{y}")
+        return True
+    except Exception as e:
+        log(f"set_property_by_label error {e}")
+        pyautogui.press("esc");return False
+
+def place_wattmeter(x,y):
+    import pyautogui
+    w=focus()
+    try:
+        w.menu_select("Simulate->Instruments->Wattmeter")
+    except Exception as e:
+        log(f"wattmeter menu_select failed: {e}")
+        try:
+            pyautogui.hotkey("alt","s");time.sleep(.3)
+        except:pass
+        return False
+    time.sleep(.8)
+    pyautogui.click(x,y);time.sleep(.8);pyautogui.press("esc")
+    log(f"placed Wattmeter instrument at {x},{y}")
+    return True
+
 def find_hotspot(x,y,radius=5):
     import pyautogui, win32gui
     # Cursor over blank grid is the baseline. A component terminal changes it.
@@ -581,99 +651,85 @@ def main():
     if trial_present():
         dismiss_trial();time.sleep(3)
     if not focus():return 12
-    DY=24
-    WIRE_STRATEGY="click"
+    DY=24;WIRE_STRATEGY="click"
 
-    # Full native Multisim circuit for Fig. 3.5:
-    # AC source -> wattmeter current coil -> total ammeter -> parallel R-L and C branches.
+    # Native Multisim circuit matching Fig. 3.5.
     items=[
-      ("AC_POWER",350,255,1),
-      ("WATTMETER",470,255,0),
-      ("AMMETER",610,255,0),
-      ("AMMETER",430,350,0),("RESISTOR",550,350,0),("INDUCTOR",700,350,0),
-      ("AMMETER",500,445,0),("CAPACITOR",650,445,0),
+      ("AC_POWER",350,255,1),("AMMETER",570,255,0),
+      ("AMMETER",430,350,0),("INDUCTOR_RATED",600,350,0),
+      ("AMMETER",430,445,0),("CAPACITOR_RATED",600,445,0),
       ("VOLTMETER",570,535,0),("GROUND",328,351,0)
     ]
     for it in items:
         if not place(*it):
             log(f"FAILED placement {it}");return 20
+
+    # Real Multisim wattmeter instrument from Simulate > Instruments.
+    watt_ok=place_wattmeter(800,500)
     shot("10_full_components.png")
 
-    # Method values.
+    # Method values: 220 V, 50 Hz, active coil resistance 450 Ohm.
     ok1=set_value(*P(369,209),"220","Vrms")
     ok2=set_value(*P(369,209),"50","Hz")
-    ok3=set_value(*P(575,304),"450","OHM")
-    # Choose L so the resonance lies near 8 uF: L ≈ 1.27 H at 50 Hz.
-    # If the rated-inductor dialog varies, continue with the placed inductor rather than abort.
-    okL=set_value(*P(725,304),"1270","mH")
-    okC=set_value(*P(675,399),"8","uF")
-    log(f"value edits source={ok1}/{ok2} R={ok3} L={okL} C={okC}")
-    if not (ok1 and ok2 and ok3 and okC):return 21
+    ok3=set_property_by_label(*P(625,304),"Inductance","1.27")
+    ok4=set_property_by_label(*P(625,304),"Coil Resistance","450")
+    ok5=set_property_by_label(*P(625,399),"Capacitance","8u")
+    log(f"value edits source={ok1}/{ok2} L={ok3} Rcoil={ok4} C={ok5} watt={watt_ok}")
+    if not (ok1 and ok2 and ok3 and ok4 and ok5):return 21
     shot("20_values_220V_C8.png")
 
-    # Locate native blue pins from the actual Multisim canvas.
-    y1=233; y2=328; y3=423; yv=513
-    srcL=blue_pin(370,y1,"left",85,40); srcR=blue_pin(370,y1,"right",85,40)
-    wmL=blue_pin(495,y1,"left",105,70); wmR=blue_pin(495,y1,"right",105,70)
-    wmT=blue_pin(495,y1,"top",105,70); wmB=blue_pin(495,y1,"bottom",105,70)
-    a1L=blue_pin(655,y1,"left",95,40); a1R=blue_pin(655,y1,"right",95,40)
-    a2L=blue_pin(475,y2,"left",95,40); a2R=blue_pin(475,y2,"right",95,40)
-    rL=blue_pin(575,y2,"left",75,40); rR=blue_pin(575,y2,"right",75,40)
-    lL=blue_pin(725,y2,"left",90,45); lR=blue_pin(725,y2,"right",90,45)
-    a3L=blue_pin(545,y3,"left",95,40); a3R=blue_pin(545,y3,"right",95,40)
-    cL=blue_pin(675,y3,"left",80,45); cR=blue_pin(675,y3,"right",80,45)
-    vL=blue_pin(615,yv,"left",95,40); vR=blue_pin(615,yv,"right",95,40)
-    gT=blue_pin(328,375,"top",40,65)
+    def hp(x,y,r=10):
+        xx,yy=P(x,y)
+        return find_hotspot(xx,yy,radius=r)
 
-    LEFT=310; RIGHT=840
-    # Source + wattmeter + total current meter.
-    direct_path([srcR,wmL])
-    direct_path([wmR,a1L])
-    direct_path([a1R,(RIGHT,y1),(RIGHT,y3)])
+    y1=P(0,209)[1]; y2=P(0,299)[1]; y3=P(0,398)[1]; yv=P(0,489)[1]
+    srcL=hp(349,209); srcR=hp(385,209)
+    a1L=hp(568,209); a1R=hp(667,209)
+    a2L=hp(428,299); a2R=hp(527,299)
+    lL=hp(599,299); lR=hp(644,299)
+    a3L=hp(428,398); a3R=hp(527,398)
+    cL=hp(599,398); cR=hp(644,398)
+    vL=hp(568,489); vR=hp(667,489)
+    gT=hp(325,327)
+
+    LEFT=300;RIGHT=830
+    # Supply and total-current branch.
+    direct_path([srcR,a1L])
     direct_path([srcL,(LEFT,y1),(LEFT,y3)])
-
-    # Wattmeter voltage coil across source.
-    direct_path([wmT,(430,190),(LEFT,190),(LEFT,y1)])
-    direct_path([wmB,(430,300),(LEFT,300),(LEFT,y2)])
-
-    # Coil branch: A2 - R(450 Ohm) - L.
+    direct_path([a1R,(RIGHT,y1),(RIGHT,y3)])
+    # Coil branch.
     direct_path([(LEFT,y2),a2L])
-    direct_path([a2R,rL])
-    direct_path([rR,lL])
+    direct_path([a2R,lL])
     direct_path([lR,(RIGHT,y2)])
-
-    # Capacitor branch: A3 - C.
+    # Capacitor branch.
     direct_path([(LEFT,y3),a3L])
     direct_path([a3R,cL])
     direct_path([cR,(RIGHT,y3)])
-
-    # Ground and voltmeter across the parallel network.
-    direct_path([gT,(LEFT,375),(LEFT,y3)])
+    # Voltage and ground.
     direct_path([vL,(LEFT,yv),(LEFT,y3)])
     direct_path([vR,(RIGHT,yv),(RIGHT,y3)])
+    direct_path([gT,(LEFT,P(0,327)[1]),(LEFT,y3)])
 
     shot("30_full_scheme_multisim.png")
 
-    # Save native file before measurements. Screenshot work continues even if reopen is not required.
     if not save_as():
         log("save failed");return 22
     shot("40_saved_full_scheme.png")
 
-    # Characteristic operating points in the SAME Multisim document.
-    cap_xy=P(675,399)
-    for tag,val in [("04","4"),("08","8"),("10","10")]:
-        if not set_value(*cap_xy,val,"uF"):
-            log(f"cannot set C={val} uF");return 23
+    # Characteristic C states requested for the report.
+    cap_xy=P(625,399)
+    for tag,val in [("04","4u"),("08","8u"),("10","10u")]:
+        if not set_property_by_label(*cap_xy,"Capacitance",val):
+            log(f"cannot set C={val}");return 23
         focus();pyautogui.press("f5");time.sleep(5)
         shot(f"50_run_C_{tag}uF.png")
-        msgs=simulation_messages();log(f"C={val}uF messages="+" || ".join(msgs))
+        msgs=simulation_messages();log(f"C={val} messages="+" || ".join(msgs))
         bad=[m for m in msgs if ("No ground node" in m or re.search(r"\b[1-9]\d* error\(s\)",m,re.I))]
         pyautogui.press("f5");time.sleep(.7)
         if bad:return 24
 
-    # Leave the submitted native file at the near-resonant point C=8 uF.
-    set_value(*cap_xy,"8","uF")
-    focus();pyautogui.hotkey("ctrl","s");time.sleep(3)
+    set_property_by_label(*cap_xy,"Capacitance","8u")
+    focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
     shot("60_final_C8_scheme.png")
     log("LAB3_SCREENSHOTS_DONE")
     return 0
