@@ -446,27 +446,38 @@ def run_and_capture(name):
 def save_as():
     import pyautogui
     from pywinauto import Desktop
-    focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
+    focus()
+    try:
+        focus().menu_select("File->Save As...")
+    except:
+        pyautogui.hotkey("ctrl","shift","s")
+    time.sleep(2)
     d=None
-    for backend in ("win32","uia"):
-        try:
-            q=Desktop(backend=backend).window(title_re=".*[Ss]ave.*")
-            if q.exists(timeout=1):d=q;break
-        except:pass
+    for _ in range(20):
+        for backend in ("win32","uia"):
+            try:
+                for q in Desktop(backend=backend).windows():
+                    try:
+                        r=q.rectangle(); cls=q.class_name(); t=q.window_text()
+                    except: continue
+                    if cls=="#32770" and r.width()>500 and r.height()>250 and "Select a Component" not in t:
+                        d=q; break
+                if d: break
+            except: pass
+        if d: break
+        time.sleep(.3)
     if not d:
-        log("save dialog missing");shot("49_save_dialog_missing.png");return False
-    try:d.set_focus()
-    except:pass
-    pyautogui.hotkey("alt","n");time.sleep(.3)
-    pyautogui.hotkey("ctrl","a");pyautogui.write(str(TARGET),interval=.002)
-    pyautogui.press("enter");time.sleep(7)
-    pyautogui.press("enter");time.sleep(2)
-    candidates=list(OUT.glob("*.ms14"))
-    log("saved candidates="+", ".join([p.name+":"+str(p.stat().st_size) for p in candidates]))
-    if TARGET.exists():return TARGET.stat().st_size>1000
-    for p in candidates:
+        log("save dialog missing"); shot("49_save_dialog_missing.png"); return False
+    try: d.set_focus()
+    except: pass
+    pyautogui.hotkey("alt","n"); time.sleep(.3)
+    pyautogui.hotkey("ctrl","a"); pyautogui.write(str(TARGET),interval=.002)
+    pyautogui.press("enter"); time.sleep(7); pyautogui.press("enter"); time.sleep(2)
+    cand=list(OUT.glob("*.ms14"))
+    if TARGET.exists(): return TARGET.stat().st_size>1000
+    for p in cand:
         if p.stat().st_size>1000:
-            p.replace(TARGET);return True
+            p.replace(TARGET); return True
     return False
 
 def reopen_in_app():
@@ -538,80 +549,108 @@ def direct_path(points):
     pyautogui.press("esc");time.sleep(.35)
     return True
 
+
+def cursor_pin(cx,cy,side,rx=70,ry=30):
+    import win32api, win32gui, time
+    focus()
+    win32api.SetCursorPos((900,575)); time.sleep(.05)
+    base=win32gui.GetCursorInfo()[1]
+    candidates=[]
+    x0=max(260,int(cx-rx)); x1=min(950,int(cx+rx))
+    y0=max(165,int(cy-ry)); y1=min(540,int(cy+ry))
+    for yy in range(y0,y1+1,2):
+        for xx in range(x0,x1+1,2):
+            win32api.SetCursorPos((xx,yy))
+            h=win32gui.GetCursorInfo()[1]
+            if h!=base:
+                candidates.append((xx,yy,h))
+    if not candidates:
+        log(f"cursor_pin fallback {side} around {cx},{cy}")
+        return (int(cx),int(cy))
+    if side=="left": q=min(candidates,key=lambda p:p[0])
+    elif side=="right": q=max(candidates,key=lambda p:p[0])
+    elif side=="top": q=min(candidates,key=lambda p:p[1])
+    else: q=max(candidates,key=lambda p:p[1])
+    p=(q[0],q[1])
+    log(f"cursor_pin {side} around {cx},{cy} -> {p} handle={q[2]} base={base}")
+    return p
+
+def direct_path2(points):
+    import pyautogui
+    focus()
+    pyautogui.moveTo(*points[0],duration=.1); pyautogui.click(); time.sleep(.25)
+    for p in points[1:]:
+        pyautogui.moveTo(*p,duration=.12); pyautogui.click(); time.sleep(.2)
+    pyautogui.press("esc"); time.sleep(.35)
+    return True
+
 def main():
     import pyautogui
-    global DY, WIRE_STRATEGY
+    global DY
     pyautogui.FAILSAFE=False
-    p=subprocess.Popen([str(MULTISIM)]);log(f"launch pid={p.pid}");time.sleep(10)
-    if trial_present():
-        dismiss_trial();time.sleep(3)
-    if not focus():return 12
-    DY=24;WIRE_STRATEGY="click"
+    p=subprocess.Popen([str(MULTISIM)]); log(f"launch pid={p.pid}"); time.sleep(10)
+    if trial_present() and not dismiss_trial(): return 11
+    if not focus(): return 12
+    DY=24
 
-    # Three independent native measurement sections on one Multisim sheet.
-    # Rows: 1N4001, inverse 1N4728, green LED.
     rows=[
       ("1N4001",245,0,"0.7"),
-      ("1N4728",365,2,"3.2"),
-      ("LED_GREEN",485,0,"2.0")
+      ("1N4728",365,1,"3.2"),
+      ("LED_GREEN",485,1,"2.0")
     ]
     for name,y,rot,voltage in rows:
-        if not place("DC_POWER",430,y,1):return 20
-        if not place("AMMETER",530,y,0):return 20
+        if not place("DC_POWER",430,y,1): return 20
+        if not place("AMMETER",530,y,0): return 20
         ok=place(name,690,y,rot)
-        if not ok and name=="LED_GREEN":ok=place("GREEN LED",690,y,rot)
-        if not ok and name=="LED_GREEN":ok=place("LED",690,y,rot)
-        if not ok:return 20
-        if not place("VOLTMETER",690,y+60,0):return 20
-    if not place("GROUND",330,535,0):return 20
+        if not ok and name=="LED_GREEN": ok=place("GREEN LED",690,y,rot)
+        if not ok and name=="LED_GREEN": ok=place("LED",690,y,rot)
+        if not ok: return 20
+        if not place("VOLTMETER",690,y+60,0): return 20
+    if not place("GROUND",300,535,0): return 20
     shot("10_components.png")
 
-    # Safe representative operating points for the three devices.
-    for y,val in [(199,"0.7"),(319,"3.2"),(439,"2.0")]:
-        set_value(*P(449,y),val,"V")
+    ok=[
+      set_value(*P(449,199),"0.7","V"),
+      set_value(*P(449,319),"3.2","V"),
+      set_value(*P(449,439),"2.0","V")
+    ]
     shot("20_values.png")
+    if not all(ok): return 21
 
-    # Store all blue terminal coordinates before any wiring.
-    pinsets=[]
-    for yplace in [245,365,485]:
-        ys=yplace-22
-        srcL=blue_pin(450,ys,"left",80,35);srcR=blue_pin(450,ys,"right",80,35)
-        amL=blue_pin(575,ys,"left",90,35);amR=blue_pin(575,ys,"right",90,35)
-        dL=blue_pin(715,ys,"left",80,35);dR=blue_pin(715,ys,"right",80,35)
-        vy=ys+60
-        vL=blue_pin(735,vy,"left",95,35);vR=blue_pin(735,vy,"right",95,35)
-        pinsets.append((ys,srcL,srcR,amL,amR,dL,dR,vL,vR))
+    data=[
+      (200,355,486,625,646,255),
+      (320,355,486,625,646,375),
+      (440,355,486,625,646,495)
+    ]
+    returns=[]
+    for y,sc,ac,dc,vc,vy in data:
+        sL=cursor_pin(sc,y,"left",55,28); sR=cursor_pin(sc,y,"right",55,28)
+        aL=cursor_pin(ac,y,"left",60,28); aR=cursor_pin(ac,y,"right",60,28)
+        dL=cursor_pin(dc,y,"left",75,35); dR=cursor_pin(dc,y,"right",75,35)
+        vL=cursor_pin(vc,vy,"left",65,28); vR=cursor_pin(vc,vy,"right",65,28)
 
-    # Common return/ground bus and three isolated source-device loops.
-    direct_path([(330,220),(330,500)])
-    gT=blue_pin(330,515,"top",40,55)
-    direct_path([gT,(330,500)])
+        direct_path2([sR,aL]); direct_path2([aR,dL])
+        direct_path2([dR,(790,y),(790,y+45),(300,y+45),(300,y),sL])
+        direct_path2([dL,(600,vy),vL])
+        direct_path2([dR,(760,vy),vR])
+        returns.append((300,y+45))
 
-    for ys,srcL,srcR,amL,amR,dL,dR,vL,vR in pinsets:
-        direct_path([(330,ys),srcL])
-        direct_path([srcR,amL])
-        direct_path([amR,dL])
-        direct_path([dR,(800,ys),(800,ys+45),(330,ys+45),(330,ys)])
-        # voltmeter across diode
-        direct_path([dL,(650,ys+60),vL])
-        direct_path([dR,(790,ys+60),vR])
+    gT=cursor_pin(300,515,"top",35,60)
+    direct_path2([gT,(300,485)])
     shot("30_wired.png")
 
-    if not save_as():
-        log("Lab4 save failed");return 21
+    if not save_as(): return 22
     shot("40_saved.png")
-    if not reopen_in_app():
-        log("Lab4 reopen failed");return 22
-    shot("50_reopened.png")
+    if not reopen_in_app(): return 23
 
-    focus();pyautogui.press("f5");time.sleep(6)
+    focus(); pyautogui.press("f5"); time.sleep(6)
     shot("60_reopened_run.png")
-    msgs=simulation_messages();log("Lab4 messages="+" || ".join(msgs))
+    msgs=simulation_messages(); log("Lab4 messages="+" || ".join(msgs))
     bad=[m for m in msgs if ("No ground node" in m or re.search(r"\\b[1-9]\\d* error\\(s\\)",m,re.I))]
-    pyautogui.press("f5");time.sleep(1)
-    if bad:return 23
+    pyautogui.press("f5"); time.sleep(1)
+    if bad: return 24
 
-    focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
+    focus(); pyautogui.hotkey("ctrl","s"); time.sleep(2)
     log("LAB4_NATIVE_DONE")
     return 0
 
