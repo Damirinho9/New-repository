@@ -503,9 +503,9 @@ def main():
     # Figure 2.6 topology, laid out as three horizontal branches for reliable native GUI wiring.
     # Common node a is the left bus, node c is the right bus.
     items=[
-      ("SPST",380,255,0),("DC_POWER",470,255,3),("AMMETER",570,255,0),("RESISTOR",700,255,0),
+      ("SPST",380,255,0),("DC_POWER",470,255,1),("AMMETER",570,255,0),("RESISTOR",700,255,0),
       ("AMMETER",500,350,2),("RESISTOR",650,350,0),
-      ("SPST",380,445,0),("DC_POWER",470,445,3),("AMMETER",570,445,0),("RESISTOR",700,445,0),
+      ("SPST",380,445,0),("DC_POWER",470,445,1),("AMMETER",570,445,0),("RESISTOR",700,445,0),
       ("VOLTMETER",570,535,0),("GROUND",328,351,0)
     ]
     for it in items:
@@ -520,8 +520,8 @@ def main():
       set_value(*P(725,209),"100","OHM"),
       set_value(*P(675,299),"200","OHM"),
       set_value(*P(725,398),"150","OHM"),
-      set_value(*P(450,209),"10","V"),
-      set_value(*P(450,398),"15","V")
+      set_value(*P(489,209),"10","V"),
+      set_value(*P(489,398),"15","V")
     ]
     shot("30_values_set.png")
     if not all(okvals):
