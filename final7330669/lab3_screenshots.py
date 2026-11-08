@@ -322,16 +322,22 @@ def set_property_by_label(x,y,label_text,value):
 
 def place_wattmeter(x,y):
     import pyautogui
-    w=focus()
+    focus()
+    ok=False
     try:
+        w=focus()
         w.menu_select("Simulate->Instruments->Wattmeter")
+        ok=True
     except Exception as e:
-        log(f"wattmeter menu_select failed: {e}")
+        log(f"wattmeter menu_select failed: {e}; trying keyboard menu")
         try:
-            pyautogui.hotkey("alt","s");time.sleep(.3)
-        except:pass
-        return False
-    time.sleep(.8)
+            pyautogui.hotkey("alt","s");time.sleep(.5)
+            pyautogui.press("i");time.sleep(.5)
+            pyautogui.press("w");time.sleep(.8)
+            ok=True
+        except Exception as e2:
+            log(f"wattmeter keyboard menu failed: {e2}")
+    if not ok:return False
     pyautogui.click(x,y);time.sleep(.8);pyautogui.press("esc")
     log(f"placed Wattmeter instrument at {x},{y}")
     return True
@@ -671,9 +677,9 @@ def main():
     # Method values: 220 V, 50 Hz, active coil resistance 450 Ohm.
     ok1=set_value(*P(369,209),"220","Vrms")
     ok2=set_value(*P(369,209),"50","Hz")
-    ok3=set_property_by_label(*P(625,304),"Inductance","1.27")
-    ok4=set_property_by_label(*P(625,304),"Coil Resistance","450")
-    ok5=set_property_by_label(*P(625,399),"Capacitance","8u")
+    ok3=set_value(*P(625,304),"1270","mH")
+    ok4=set_value(*P(625,304),"450","OHM")
+    ok5=set_value(*P(625,399),"8","uF")
     log(f"value edits source={ok1}/{ok2} L={ok3} Rcoil={ok4} C={ok5} watt={watt_ok}")
     if not (ok1 and ok2 and ok3 and ok4 and ok5):return 21
     shot("20_values_220V_C8.png")
@@ -719,7 +725,7 @@ def main():
     # Characteristic C states requested for the report.
     cap_xy=P(625,399)
     for tag,val in [("04","4u"),("08","8u"),("10","10u")]:
-        if not set_property_by_label(*cap_xy,"Capacitance",val):
+        if not set_value(*cap_xy,val.replace("u",""),"uF"):
             log(f"cannot set C={val}");return 23
         focus();pyautogui.press("f5");time.sleep(5)
         shot(f"50_run_C_{tag}uF.png")
@@ -728,7 +734,7 @@ def main():
         pyautogui.press("f5");time.sleep(.7)
         if bad:return 24
 
-    set_property_by_label(*cap_xy,"Capacitance","8u")
+    set_value(*cap_xy,"8","uF")
     focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
     shot("60_final_C8_scheme.png")
     log("LAB3_SCREENSHOTS_DONE")
