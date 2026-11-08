@@ -660,7 +660,6 @@ def main():
     DY=24
     WIRE_STRATEGY="click"
 
-    # Place native Multisim components in the exact layout already verified on the runner.
     items=[
       ("AC_POWER",350,255,1),("AMMETER",570,255,0),
       ("AMMETER",430,350,0),("INDUCTOR_RATED",600,350,0),
@@ -671,40 +670,36 @@ def main():
         if not place(*it):
             log(f"FAILED placement {it}");return 20
 
-    # Real Wattmeter from the visible Instruments toolbar: 3rd icon from the top.
+    # Place real Wattmeter from Instruments toolbar.
     focus();pyautogui.click(989,225);time.sleep(.8);pyautogui.click(800,300);time.sleep(.8);pyautogui.press("esc")
     shot("10_full_components.png")
 
-    # Source 220 V / 50 Hz.
-    if not set_value(284,233,"220","Vrms"): return 21
-    if not set_value(284,233,"50","Hz"): return 21
-
-    # Rated inductor: use unit rows actually exposed by Multisim.
-    if not set_value(527,327,"1.27","H"): return 21
-    if not set_value(527,327,"450","OHM"): return 21
-
-    # Rated capacitor, saved near resonance.
-    if not set_value(527,423,"8u","F"): return 21
+    # Exact actual positions observed on this native Multisim layout.
+    if not set_value(378,233,"220","Vrms"): return 21
+    if not set_value(378,233,"50","Hz"): return 21
+    if not set_value(625,327,"1.27","H"): return 21
+    if not set_value(625,327,"450","OHM"): return 21
+    if not set_value(625,423,"8u","F"): return 21
     shot("20_values_220V_C8.png")
 
-    # Exact terminal coordinates taken from the real Multisim canvas.
-    srcL=(264,233); srcR=(303,233)
-    a1L=(474,233); a1R=(568,233)
-    a2L=(339,327); a2R=(433,327)
-    lL=(481,327); lR=(575,327)
-    a3L=(339,423); a3R=(433,423)
-    cL=(481,423); cR=(575,423)
-    vL=(474,499); vR=(568,499)
-    gT=(300,452)
+    # Exact terminal coordinates from the real screenshot.
+    srcL=(360,233); srcR=(396,233)
+    a1L=(568,233); a1R=(665,233)
+    a2L=(433,327); a2R=(530,327)
+    lL=(598,327); lR=(650,327)
+    a3L=(433,423); a3R=(530,423)
+    cL=(598,423); cR=(650,423)
+    vL=(568,477); vR=(665,477)
+    gT=(298,468)
 
-    LEFT=300; RIGHT=800
+    LEFT=350; RIGHT=700
 
-    # Supply branch. Always start from a real component pin.
+    # Source and common buses, always beginning from real component pins.
     direct_path([srcR,a1L])
     direct_path([srcL,(LEFT,233),(LEFT,423),a3L])
     direct_path([a1R,(RIGHT,233),(RIGHT,423),cR])
 
-    # Coil branch.
+    # R-L equivalent branch represented by rated inductor with 450 Ohm coil resistance.
     direct_path([a2L,(LEFT,327)])
     direct_path([a2R,lL])
     direct_path([lR,(RIGHT,327)])
@@ -712,12 +707,12 @@ def main():
     # Capacitor branch.
     direct_path([a3R,cL])
 
-    # Ground directly on the left bus.
-    direct_path([gT,(LEFT,423)])
+    # Ground directly to left bus / source return.
+    direct_path([gT,(LEFT,468),(LEFT,423)])
 
-    # Voltmeter across buses.
-    direct_path([vL,(LEFT,499),(LEFT,423)])
-    direct_path([vR,(RIGHT,499),(RIGHT,423)])
+    # Voltmeter across the parallel network.
+    direct_path([vL,(LEFT,477),(LEFT,423)])
+    direct_path([vR,(RIGHT,477),(RIGHT,423)])
 
     shot("30_full_scheme_multisim.png")
 
@@ -725,7 +720,7 @@ def main():
         log("save failed");return 22
     shot("40_saved_full_scheme.png")
 
-    # Run at C=8 uF first - the mandatory report screenshot.
+    # Mandatory near-resonant operating point C=8 uF.
     focus();pyautogui.press("f5");time.sleep(5)
     shot("50_run_C_08uF.png")
     msgs=simulation_messages();log("C=8uF messages="+" || ".join(msgs))
@@ -733,17 +728,15 @@ def main():
     pyautogui.press("f5");time.sleep(.8)
     if bad:return 24
 
-    # Extra characteristic states.
+    # Optional additional states.
     for tag,val in [("04","4u"),("10","10u")]:
-        if not set_value(527,423,val,"F"):
+        if not set_value(625,423,val,"F"):
             log(f"cannot set C={val}");return 23
         focus();pyautogui.press("f5");time.sleep(4)
         shot(f"60_run_C_{tag}uF.png")
-        msgs=simulation_messages();log(f"C={val} messages="+" || ".join(msgs))
         pyautogui.press("f5");time.sleep(.6)
 
-    # Leave final file at 8 uF.
-    set_value(527,423,"8u","F")
+    set_value(625,423,"8u","F")
     focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
     shot("70_final_C8_scheme.png")
     log("LAB3_SCREENSHOTS_DONE")
