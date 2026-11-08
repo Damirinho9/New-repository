@@ -581,17 +581,21 @@ def main():
 
     # State 2: Uxx. Remove the middle 200 Ohm resistor completely.
     # On the reopened verified canvas its center is at approximately (575,323).
-    pyautogui.click(575,323);pyautogui.press("delete");time.sleep(1)
+    pyautogui.click(575,323);pyautogui.hotkey("ctrl","x");time.sleep(1)
+    pyautogui.press("f9");time.sleep(.8)
     run_and_capture("80_state_Uxx_open_R3.png")
+    pyautogui.press("f8");time.sleep(.8)
     pyautogui.hotkey("ctrl","z");time.sleep(1)
 
     # State 3: Ikz. Remove R2 again and short the middle branch through ammeter U2.
-    pyautogui.click(575,323);pyautogui.press("delete");time.sleep(1)
+    pyautogui.click(575,323);pyautogui.hotkey("ctrl","x");time.sleep(1)
     focus();pyautogui.hotkey("ctrl","q");time.sleep(.3)
     pyautogui.click(498,323);time.sleep(.2)
     pyautogui.click(697,323);time.sleep(.2)
     pyautogui.press("esc");time.sleep(.8)
+    pyautogui.press("f9");time.sleep(.8)
     run_and_capture("90_state_Ikz_R3_short.png")
+    pyautogui.press("f8");time.sleep(.8)
     pyautogui.hotkey("ctrl","z");pyautogui.hotkey("ctrl","z");time.sleep(1)
 
     # Return to original state and save it as the submitted MS14.
