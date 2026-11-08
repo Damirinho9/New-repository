@@ -1,0 +1,50 @@
+name: Final native Multisim screenshots - order 7330669
+
+on:
+  push:
+    branches:
+      - multisim-7330669-native-gui
+    paths:
+      - ".github/workflows/multisim-7330669-final-screenshots.yml"
+      - "final7330669/lab2_final.py"
+      - "final7330669/lab3_final.py"
+      - "final7330669/lab4_final.py"
+      - "final7330669/run-one.ps1"
+  workflow_dispatch:
+
+jobs:
+  finalize:
+    strategy:
+      fail-fast: false
+      matrix:
+        lab: [lab2, lab3, lab4]
+    runs-on: windows-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and verify native Multisim ${{ matrix.lab }}
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\final7330669\run-one.ps1 -Workspace "$env:GITHUB_WORKSPACE" -Lab "${{ matrix.lab }}"
+
+      - name: Inventory
+        if: always()
+        shell: powershell
+        run: |
+          $p=".\final7330669-${{ matrix.lab }}-artifacts"
+          if(Test-Path $p){
+            Get-ChildItem $p -Recurse |
+              Select-Object FullName,Length,LastWriteTime |
+              Format-Table -AutoSize
+          }
+
+      - name: Upload native Multisim ${{ matrix.lab }}
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multisim-7330669-${{ matrix.lab }}-screenshots
+          path: final7330669-${{ matrix.lab }}-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
