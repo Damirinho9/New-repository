@@ -657,64 +657,67 @@ def main():
     if trial_present():
         dismiss_trial();time.sleep(3)
     if not focus():return 12
-    DY=24;WIRE_STRATEGY="click"
+    DY=24
+    WIRE_STRATEGY="click"
 
-    # Native Multisim circuit matching Fig. 3.5.
+    # Place native Multisim components in the exact layout already verified on the runner.
     items=[
       ("AC_POWER",350,255,1),("AMMETER",570,255,0),
       ("AMMETER",430,350,0),("INDUCTOR_RATED",600,350,0),
       ("AMMETER",430,445,0),("CAPACITOR_RATED",600,445,0),
-      ("VOLTMETER",570,535,0),("GROUND",328,351,0)
+      ("VOLTMETER",570,500,0),("GROUND",300,470,0)
     ]
     for it in items:
         if not place(*it):
             log(f"FAILED placement {it}");return 20
 
-    # Real Multisim wattmeter instrument from Simulate > Instruments.
-    watt_ok=place_wattmeter(800,500)
+    # Real Wattmeter from the visible Instruments toolbar: 3rd icon from the top.
+    focus();pyautogui.click(989,225);time.sleep(.8);pyautogui.click(800,300);time.sleep(.8);pyautogui.press("esc")
     shot("10_full_components.png")
 
-    # Method values: 220 V, 50 Hz, active coil resistance 450 Ohm.
-    ok1=set_value(*P(369,209),"220","Vrms")
-    ok2=set_value(*P(369,209),"50","Hz")
-    ok3=set_value(*P(625,304),"1270","mH")
-    ok4=set_value(*P(625,304),"450","OHM")
-    ok5=set_value(*P(625,399),"8","uF")
-    log(f"value edits source={ok1}/{ok2} L={ok3} Rcoil={ok4} C={ok5} watt={watt_ok}")
-    if not (ok1 and ok2 and ok3 and ok4 and ok5):return 21
+    # Source 220 V / 50 Hz.
+    if not set_value(284,233,"220","Vrms"): return 21
+    if not set_value(284,233,"50","Hz"): return 21
+
+    # Rated inductor: use unit rows actually exposed by Multisim.
+    if not set_value(527,327,"1.27","H"): return 21
+    if not set_value(527,327,"450","OHM"): return 21
+
+    # Rated capacitor, saved near resonance.
+    if not set_value(527,423,"8u","F"): return 21
     shot("20_values_220V_C8.png")
 
-    def hp(x,y,r=10):
-        xx,yy=P(x,y)
-        return find_hotspot(xx,yy,radius=r)
+    # Exact terminal coordinates taken from the real Multisim canvas.
+    srcL=(264,233); srcR=(303,233)
+    a1L=(474,233); a1R=(568,233)
+    a2L=(339,327); a2R=(433,327)
+    lL=(481,327); lR=(575,327)
+    a3L=(339,423); a3R=(433,423)
+    cL=(481,423); cR=(575,423)
+    vL=(474,499); vR=(568,499)
+    gT=(300,452)
 
-    y1=P(0,209)[1]; y2=P(0,299)[1]; y3=P(0,398)[1]; yv=P(0,489)[1]
-    srcL=hp(349,209); srcR=hp(385,209)
-    a1L=hp(568,209); a1R=hp(667,209)
-    a2L=hp(428,299); a2R=hp(527,299)
-    lL=hp(599,299); lR=hp(644,299)
-    a3L=hp(428,398); a3R=hp(527,398)
-    cL=hp(599,398); cR=hp(644,398)
-    vL=hp(568,489); vR=hp(667,489)
-    gT=hp(325,327)
+    LEFT=300; RIGHT=800
 
-    LEFT=300;RIGHT=830
-    # Supply and total-current branch.
+    # Supply branch. Always start from a real component pin.
     direct_path([srcR,a1L])
-    direct_path([srcL,(LEFT,y1),(LEFT,y3)])
-    direct_path([a1R,(RIGHT,y1),(RIGHT,y3)])
+    direct_path([srcL,(LEFT,233),(LEFT,423),a3L])
+    direct_path([a1R,(RIGHT,233),(RIGHT,423),cR])
+
     # Coil branch.
-    direct_path([(LEFT,y2),a2L])
+    direct_path([a2L,(LEFT,327)])
     direct_path([a2R,lL])
-    direct_path([lR,(RIGHT,y2)])
+    direct_path([lR,(RIGHT,327)])
+
     # Capacitor branch.
-    direct_path([(LEFT,y3),a3L])
     direct_path([a3R,cL])
-    direct_path([cR,(RIGHT,y3)])
-    # Voltage and ground.
-    direct_path([vL,(LEFT,yv),(LEFT,y3)])
-    direct_path([vR,(RIGHT,yv),(RIGHT,y3)])
-    direct_path([gT,(LEFT,P(0,327)[1]),(LEFT,y3)])
+
+    # Ground directly on the left bus.
+    direct_path([gT,(LEFT,423)])
+
+    # Voltmeter across buses.
+    direct_path([vL,(LEFT,499),(LEFT,423)])
+    direct_path([vR,(RIGHT,499),(RIGHT,423)])
 
     shot("30_full_scheme_multisim.png")
 
@@ -722,21 +725,27 @@ def main():
         log("save failed");return 22
     shot("40_saved_full_scheme.png")
 
-    # Characteristic C states requested for the report.
-    cap_xy=P(625,399)
-    for tag,val in [("04","4u"),("08","8u"),("10","10u")]:
-        if not set_value(*cap_xy,val.replace("u",""),"uF"):
-            log(f"cannot set C={val}");return 23
-        focus();pyautogui.press("f5");time.sleep(5)
-        shot(f"50_run_C_{tag}uF.png")
-        msgs=simulation_messages();log(f"C={val} messages="+" || ".join(msgs))
-        bad=[m for m in msgs if ("No ground node" in m or re.search(r"\b[1-9]\d* error\(s\)",m,re.I))]
-        pyautogui.press("f5");time.sleep(.7)
-        if bad:return 24
+    # Run at C=8 uF first - the mandatory report screenshot.
+    focus();pyautogui.press("f5");time.sleep(5)
+    shot("50_run_C_08uF.png")
+    msgs=simulation_messages();log("C=8uF messages="+" || ".join(msgs))
+    bad=[m for m in msgs if ("No ground node" in m or re.search(r"\b[1-9]\d* error\(s\)",m,re.I))]
+    pyautogui.press("f5");time.sleep(.8)
+    if bad:return 24
 
-    set_value(*cap_xy,"8","uF")
+    # Extra characteristic states.
+    for tag,val in [("04","4u"),("10","10u")]:
+        if not set_value(527,423,val,"F"):
+            log(f"cannot set C={val}");return 23
+        focus();pyautogui.press("f5");time.sleep(4)
+        shot(f"60_run_C_{tag}uF.png")
+        msgs=simulation_messages();log(f"C={val} messages="+" || ".join(msgs))
+        pyautogui.press("f5");time.sleep(.6)
+
+    # Leave final file at 8 uF.
+    set_value(527,423,"8u","F")
     focus();pyautogui.hotkey("ctrl","s");time.sleep(2)
-    shot("60_final_C8_scheme.png")
+    shot("70_final_C8_scheme.png")
     log("LAB3_SCREENSHOTS_DONE")
     return 0
 
