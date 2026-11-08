@@ -568,7 +568,6 @@ def main():
     ok.append(set_value(*P(489,209),"50","Hz"))
     ok.append(set_value(*P(575,304),"450","OHM"))
     # Use 1 H for L and 4 uF as the saved representative C state.
-    ok.append(set_value(*P(700,304),"1000","mH"))
     ok.append(set_value(*P(675,399),"4","uF"))
     shot("20_values.png")
     log("value edits="+str(ok))
