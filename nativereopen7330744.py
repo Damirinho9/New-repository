@@ -24,13 +24,70 @@ def shot(name,window=True):
 
 def reminders():
     # Official trial controls only, no license bypass.
-    if h.trial_present():h.dismiss_trial()
+    if h.trial_present():
+        h.dismiss_trial()
+
+    # A fresh Multisim process can surface the ordinary NI User Account
+    # sign-in window even though the evaluation session is otherwise usable.
+    # Close only that sign-in window, then choose Cancel on the underlying
+    # licensing prompt. This does not activate or bypass any license.
     for backend in ['uia','win32']:
-        for w in Desktop(backend=backend).windows():
-            for e in w.descendants():
+        try:
+            for w in Desktop(backend=backend).windows():
                 try:
-                    if e.window_text().strip()=='Remind Me Later' and e.is_visible():e.click_input();time.sleep(4)
-                except Exception:pass
+                    title=w.window_text().strip()
+                except Exception:
+                    title=''
+                if title=='NI User Account':
+                    try:
+                        w.close()
+                        time.sleep(2)
+                        log('Closed NI User Account dialog without credentials')
+                    except Exception as e:
+                        log('Could not close NI User Account dialog: '+repr(e))
+        except Exception:
+            pass
+
+    # Click Cancel only on visible top-level licensing/activation dialogs.
+    for backend in ['uia','win32']:
+        try:
+            for w in Desktop(backend=backend).windows():
+                try:
+                    title=w.window_text().strip()
+                    if 'Multisim' not in title and 'License' not in title and 'Activation' not in title:
+                        continue
+                    for e in w.descendants():
+                        try:
+                            if e.window_text().replace('&','').strip()=='Cancel' and e.is_visible():
+                                e.click_input()
+                                time.sleep(3)
+                                log('Cancelled NI sign-in/licensing prompt')
+                                raise StopIteration
+                        except StopIteration:
+                            raise
+                        except Exception:
+                            pass
+                except StopIteration:
+                    break
+                except Exception:
+                    pass
+        except StopIteration:
+            pass
+        except Exception:
+            pass
+
+    for backend in ['uia','win32']:
+        try:
+            for w in Desktop(backend=backend).windows():
+                for e in w.descendants():
+                    try:
+                        if e.window_text().strip()=='Remind Me Later' and e.is_visible():
+                            e.click_input()
+                            time.sleep(4)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
 def open_native():
     global DX,DY
