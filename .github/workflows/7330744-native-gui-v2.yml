@@ -1,0 +1,25 @@
+name: PhotoRelay native Multisim GUI 7330744
+on:
+  push:
+    branches: [multisim-7330744-native-gui-v2]
+    paths: ['native7330744/**', '.github/workflows/7330744-native-gui-v2.yml']
+  workflow_dispatch:
+concurrency:
+  group: 7330744-native-gui-v2
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native GUI component placement and save verification
+        shell: powershell
+        run: ./native7330744/run-native.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-native-gui-v2
+          path: native7330744-artifacts/
+          retention-days: 7
+          if-no-files-found: warn
