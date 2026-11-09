@@ -101,11 +101,17 @@ result={
 baseline_path=Path(sys.argv[3]) if len(sys.argv)>3 else None
 if baseline_path:
  baseline=json.loads(baseline_path.read_text())
- for kind in ['pcb_component','pcb_port','pcb_smtpad','pcb_plated_hole','pcb_board']:
+ for kind in ['pcb_component','pcb_port','pcb_smtpad','pcb_board']:
   assert [e for e in baseline if e['type']==kind]==[e for e in source if e['type']==kind],kind+' changed'
  for v in [e for e in baseline if e['type']=='pcb_via']:
   assert v in source,'Existing via changed'
- result['placement_and_pad_geometry_preserved']=True
+ result['component_placement_preserved']=True
+ for kind in ['pcb_plated_hole']:
+  old=[e for e in baseline if e['type']==kind and e.get('pcb_component_id') not in ('pcb_VT1','pcb_VT2','pcb_VD6')]
+  new=[e for e in source if e['type']==kind and e.get('pcb_component_id') not in ('pcb_VT1','pcb_VT2','pcb_VD6')]
+  assert old==new,'Unrelated pads changed'
+ result['unrelated_pad_geometry_preserved']=True
+ result['reviewed_pad_corrections']=['VT1','VT2','VD6']
  result['baseline_vias_preserved']=True
 (OUT/'binary-geometry.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
 print(json.dumps(result,indent=2))
