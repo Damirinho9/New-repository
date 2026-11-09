@@ -28,8 +28,11 @@ for($i=0;$i -lt $partCount;$i++){
 }
 foreach($download in $downloads){
  $download.Process.WaitForExit()
- if($download.Process.ExitCode -ne 0){throw "Range transfer failed exit=$($download.Process.ExitCode)"}
- if((Get-Item $download.Path).Length -ne $download.Expected){throw "Server did not honor exact byte range"}
+ $download.Process.Refresh()
+ if($null -ne $download.Process.ExitCode -and $download.Process.ExitCode -ne 0){throw "Range transfer failed exit=$($download.Process.ExitCode)"}
+ $actual=(Get-Item $download.Path).Length
+ L "Range part=$($download.Path) expected=$($download.Expected) actual=$actual exit=$($download.Process.ExitCode)"
+ if($actual -ne $download.Expected){throw "Server did not honor exact byte range"}
 }
 $stream=[IO.File]::Open($rar,[IO.FileMode]::Create,[IO.FileAccess]::Write)
 try{
@@ -57,6 +60,7 @@ $run=$runs[0].databaseId
 L "Input Stage11 run=$run"
 gh run download $run --repo Damirinho9/New-repository -D $InputDir
 if($LASTEXITCODE -ne 0){throw "Cannot download corrected project"}
+Get-ChildItem $InputDir -Recurse -File | Where-Object {$_.Extension -in '.PcbDoc','.SchDoc','.PrjPcb'} | ForEach-Object {L "Input file=$($_.FullName) SHA256=$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)"}
 python -m pip install --disable-pip-version-check --quiet pywinauto pyautogui pillow olefile
 if($LASTEXITCODE -ne 0){throw "GUI dependencies failed"}
 python .\altium_stage11\collect_templates.py (Join-Path $A "vendor-rules")
