@@ -1,0 +1,58 @@
+name: PhotoRelay managed Windows native GUI session 7330744
+on:
+  push:
+    branches: [multisim-7330744-native-gui-v2]
+    paths: ['.github/workflows/7330744-native-live.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: 7330744-native-live
+  cancel-in-progress: false
+jobs:
+  native-session:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install signed NI Multisim and attempt native functional assembly
+        shell: powershell
+        run: ./native-live-setup.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-native-live-progress-0
+          path: native7330744-artifacts/
+          retention-days: 7
+      - name: Apply verified screenshot correction sequence 1
+        if: env.GUI_DONE != 'true'
+        shell: powershell
+        run: ./native-wait-actions.ps1 -Sequence 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-native-live-progress-1
+          path: native7330744-artifacts/
+          retention-days: 7
+      - name: Apply verified screenshot correction sequence 2
+        if: env.GUI_DONE != 'true'
+        shell: powershell
+        run: ./native-wait-actions.ps1 -Sequence 2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-native-live-progress-2
+          path: native7330744-artifacts/
+          retention-days: 7
+      - name: Apply verified screenshot correction sequence 3
+        if: env.GUI_DONE != 'true'
+        shell: powershell
+        run: ./native-wait-actions.ps1 -Sequence 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-native-live-progress-3
+          path: native7330744-artifacts/
+          retention-days: 7
