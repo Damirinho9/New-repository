@@ -36,8 +36,9 @@ $run=$runs[0].databaseId
 L "Input Stage11 run=$run"
 gh run download $run --repo Damirinho9/New-repository -D $InputDir
 if($LASTEXITCODE -ne 0){throw "Cannot download corrected project"}
-python -m pip install --disable-pip-version-check --quiet pywinauto pyautogui pillow
+python -m pip install --disable-pip-version-check --quiet pywinauto pyautogui pillow olefile
 if($LASTEXITCODE -ne 0){throw "GUI dependencies failed"}
+python .\altium_stage11\collect_templates.py (Join-Path $A "vendor-rules")
 python .\altium_stage11\probe_gui.py $exe $InputDir $A
 L "GUI exit=$LASTEXITCODE"
 Get-Process | Where-Object {$_.ProcessName -match 'Altium|X2|DXP'} | Select ProcessName,Id,MainWindowTitle | ConvertTo-Json | Out-File (Join-Path $A "processes.json")
