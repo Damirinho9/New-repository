@@ -32,6 +32,7 @@ jobs:
         run: |
           python -m pip install olefile
           BASE_JSON=$(find baseline -name PhotoRelay_V6.circuit.json -print -quit)
+          python altium-native/finish_pin_types.py altium-native/out
           python altium-native/verify_geometry.py altium-native/out altium-native/out "$BASE_JSON"
       - name: Package checked project
         run: |
