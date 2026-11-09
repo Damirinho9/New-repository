@@ -40,8 +40,10 @@ def launch():
     if h.trial_present():h.dismiss_trial()
     dismiss_reminders()
     w=h.focus()
-    if not w or not win32gui.GetMenu(w.handle):
-        h.shot('blocked_main_window.png');raise RuntimeError('Native Multisim frame with menu absent')
+    if not w or 'Design' not in w.window_text():
+        h.shot('blocked_main_window.png');raise RuntimeError('Native Multisim Design window absent')
+    # Close Spreadsheet View using its actual close button verified in run 42597839152.
+    pg.click(69,570);time.sleep(.7);h.shot('00_canvas_expanded.png')
     return w
 
 def blue_clusters(box):
@@ -126,7 +128,8 @@ def set_meter_ac(point):
     pg.press('esc');raise RuntimeError('AC RMS meter mode control absent')
 
 def run_capture(name):
-    h.focus();pg.press('f5');time.sleep(9);h.shot(name)
+    w=h.focus();pg.press('f5');time.sleep(9)
+    r=w.rectangle();pg.screenshot(region=(max(0,r.left),max(0,r.top),r.width(),r.height())).save(str(h.OUT/name))
     (h.OUT/(name+'.messages.json')).write_text(json.dumps(h.simulation_messages(),indent=2),encoding='utf-8')
     pg.press('f5');time.sleep(1)
 
@@ -136,13 +139,13 @@ def main():
     items=[
         ('V12','DC_POWER',330,245,1,36),('R1','RESISTOR',430,245,0,45),('R2','RESISTOR',520,245,0,45),
         ('PHOTO','DC_CURRENT',650,245,1,36),('SENS_METER','VOLTMETER',780,245,0,99),
-        ('CTRL','ABM_VOLTAGE',330,365,1,36),('CTRL_R','RESISTOR',500,365,0,45),('CTRL_METER','VOLTMETER',680,365,0,99),
-        ('AC','AC_POWER',330,460,1,36),('KEY','ABM_CURRENT',470,460,1,36),('LOAD','RESISTOR',650,460,0,45),
-        ('LOAD_METER','VOLTMETER',800,460,0,99),('SNUB','CAPACITOR',470,520,0,36),
+        ('CTRL','ABM_VOLTAGE',330,390,1,36),('CTRL_R','RESISTOR',500,390,0,45),('CTRL_METER','VOLTMETER',680,390,0,99),
+        ('AC','AC_POWER',330,530,1,36),('KEY','ABM_CURRENT',470,530,1,36),('LOAD','RESISTOR',650,530,0,45),
+        ('LOAD_METER','VOLTMETER',800,530,0,99),('SNUB','CAPACITOR',470,600,0,36),
     ]
     for ref,component,x,y,rot,width in items:
         if not h.place(component,x,y,rot):raise RuntimeError('Placement failed '+ref)
-    h.place('GROUND',350,300,0)
+    h.place('GROUND',350,330,0)
     h.shot('10_native_components.png')
     p={ref:pins(x,y,width) for ref,component,x,y,rot,width in items}
     (h.OUT/'terminal_coordinates.json').write_text(json.dumps(p,indent=2))
@@ -152,33 +155,33 @@ def main():
     path([p['R2'][1],p['PHOTO'][0]])
     sx=round((p['R2'][1][0]+p['PHOTO'][0][0])/2);sy=sensor_y
     name_wire((sx,sy),'SENS')
-    path([p['PHOTO'][1],(740,sensor_y),(740,275),(310,275),(310,sensor_y),p['V12'][0]])
-    path([p['SENS_METER'][0],(770,sensor_y),(770,255),(635,255),(635,sensor_y)])
-    path([p['SENS_METER'][1],(920,sensor_y),(920,275),(740,275)])
+    path([p['PHOTO'][1],(740,sensor_y),(740,300),(310,300),(310,sensor_y),p['V12'][0]])
+    path([p['SENS_METER'][0],(770,sensor_y),(770,275),(635,275),(635,sensor_y)])
+    path([p['SENS_METER'][1],(920,sensor_y),(920,300),(740,300)])
     # Ground terminal is observed by color / cursor refinement at its native location.
-    candidates=blue_clusters((335,220,370,315))
+    candidates=blue_clusters((335,255,370,340))
     h.log('ground candidates '+repr(candidates))
     if not candidates:raise RuntimeError('Ground pin not verified')
-    ground=min(candidates,key=lambda q:abs(q[0]-350)+abs(q[1]-276))[:2]
-    path([ground,(350,275)])
+    ground=min(candidates,key=lambda q:abs(q[0]-350)+abs(q[1]-306))[:2]
+    path([ground,(350,300)])
     # Behavioral comparator as functional equivalent of the VT1-VT3 controller.
     cy=p['CTRL'][0][1]
     path([p['CTRL'][1],p['CTRL_R'][0]])
     name_wire((round((p['CTRL'][1][0]+p['CTRL_R'][0][0])/2),cy),'GDRV')
-    path([p['CTRL_R'][1],(600,cy),(600,385),(310,385),(310,275)])
+    path([p['CTRL_R'][1],(600,cy),(600,445),(310,445),(310,300)])
     path([p['CTRL'][0],(310,cy)])
-    path([p['CTRL_METER'][0],(665,cy),(665,355),(450,355),(450,cy)])
-    path([p['CTRL_METER'][1],(920,cy),(920,385),(600,385)])
+    path([p['CTRL_METER'][0],(665,cy),(665,420),(450,420),(450,cy)])
+    path([p['CTRL_METER'][1],(920,cy),(920,445),(600,445)])
     # Bidirectional behavioral conductance switch, with actual AC source and load.
     ly=p['AC'][0][1]
     path([p['AC'][1],p['KEY'][0]])
     name_wire((round((p['AC'][1][0]+p['KEY'][0][0])/2),ly),'MAINS')
     path([p['KEY'][1],p['LOAD'][0]])
     name_wire((round((p['KEY'][1][0]+p['LOAD'][0][0])/2),ly),'SW')
-    path([p['AC'][0],(310,ly),(310,385)])
-    path([p['LOAD'][1],(740,ly),(740,490),(310,490),(310,385)])
-    path([p['LOAD_METER'][0],(785,ly),(785,450),(635,450),(635,ly)])
-    path([p['LOAD_METER'][1],(930,ly),(930,490),(740,490)])
+    path([p['AC'][0],(310,ly),(310,445)])
+    path([p['LOAD'][1],(740,ly),(740,625),(310,625),(310,445)])
+    path([p['LOAD_METER'][0],(785,ly),(785,570),(635,570),(635,ly)])
+    path([p['LOAD_METER'][1],(930,ly),(930,625),(740,625)])
     path([p['SNUB'][0],(455,p['SNUB'][0][1]),(455,ly)])
     path([p['SNUB'][1],(570,p['SNUB'][1][1]),(570,ly)])
     h.shot('20_native_wired.png')
