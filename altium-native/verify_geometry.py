@@ -126,6 +126,12 @@ if baseline_path:
   writer=csv.DictWriter(f,fieldnames=['trace_id','net','old_segments','new_segments']);writer.writeheader();writer.writerows(changes)
  (OUT/'routing-changes.json').write_text(json.dumps(changes,indent=2))
  result['changed_routing_objects_vs_baseline']=len(changes)
+ val_path=BASE/'7330744_Stage11_Validation.json'
+ val=json.loads(val_path.read_text())
+ val['local_trace_objects_replaced']=len(changes)
+ val['rules6_present']=result['rules6_present'];val['rules6_count']=result['rules6_count']
+ val['independent_track_overlap_pairs']=len(conflicts)
+ val_path.write_text(json.dumps(val,ensure_ascii=False,indent=2))
 
 (OUT/'binary-geometry.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
 print(json.dumps(result,indent=2))
