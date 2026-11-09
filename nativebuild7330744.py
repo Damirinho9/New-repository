@@ -111,6 +111,20 @@ def property_value(point,value,tag):
 
 def center(pair):return tuple(round((pair[0][i]+pair[1][i])/2) for i in [0,1])
 
+def set_meter_ac(point):
+    h.focus();pg.doubleClick(*point,interval=.15);time.sleep(1)
+    dlg=Desktop(backend='win32').window(handle=win32gui.GetForegroundWindow())
+    dump(dlg,'load_meter_mode')
+    if dlg.class_name()!='#32770':raise RuntimeError('Load meter property dialog absent')
+    for e in dlg.descendants():
+        try:
+            if e.window_text().strip().upper()=='AC' and e.is_visible():
+                e.click_input();time.sleep(.3)
+                for b in dlg.descendants():
+                    if b.window_text().replace('&','').strip()=='OK':b.click_input();time.sleep(1);return
+        except Exception:pass
+    pg.press('esc');raise RuntimeError('AC RMS meter mode control absent')
+
 def run_capture(name):
     h.focus();pg.press('f5');time.sleep(9);h.shot(name)
     (h.OUT/(name+'.messages.json')).write_text(json.dumps(h.simulation_messages(),indent=2),encoding='utf-8')
@@ -173,6 +187,8 @@ def main():
     property_value(center(p['CTRL']),'IF(V(SENS)>5,9.995,0)','CTRL')
     property_value(center(p['KEY']),'IF(V(GDRV)>5,1000,1e-9)*(V(MAINS)-V(SW))','KEY')
     property_value(center(p['AC']),'220','AC')
+    if not h.set_value(*center(p['AC']),'50','Hz'):raise RuntimeError('AC frequency could not be set to 50 Hz')
+    set_meter_ac(center(p['LOAD_METER']))
     h.shot('30_native_values.png')
     if not h.save_as():raise RuntimeError('Native Save As failed')
     subprocess.run(['taskkill','/IM','Multisim.exe','/T','/F'],check=False);time.sleep(3)
