@@ -94,10 +94,10 @@ const footprints: Record<string, FootprintSpec> = {
   VD5: {name:"D_Axial_KD4B_L4.8mm_D3.0mm_P10.16mm",mounting:"THT",width:10.16,height:3.2,padOffsets:[{x:-5.08,y:0},{x:5.08,y:0}],holeDiameter:1.0,padDiameter:2.0,note:"KD243Zh axial KD-4B."},
   HL1: {name:"LED_Rectangular_5.0x2.5mm_P2.54mm",mounting:"THT",width:5.0,height:2.5,padOffsets:[{x:-1.27,y:0},{x:1.27,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"Kingbright L383SRWT rectangular 2.5 x 5 mm THT LED."},
   RU1: {name:"Varistor_FNR20_D24mm_P10.0mm",mounting:"THT",width:24.0,height:9.0,padOffsets:[{x:-5.0,y:0},{x:5.0,y:0}],holeDiameter:1.3,padDiameter:2.6,note:"FNR-20K391, 20 mm class disc; datasheet envelope approx. 24 x 28 x 9 mm, 10 mm lead spacing."},
-  VD6: {name:"Bridge_RB15_D9.1mm_4P_P5.08mm",mounting:"THT",width:9.1,height:9.1,padOffsets:[{x:-2.54,y:-2.54},{x:-2.54,y:2.54},{x:2.54,y:-2.54},{x:2.54,y:2.54}],holeDiameter:1.0,padDiameter:2.0,note:"RB154 bridge, RB-15 / 4-circular through-hole package."},
+  VD6: {name:"Bridge_RB15_D9.1mm_4P_P5.08mm",mounting:"THT",width:9.1,height:9.1,padOffsets:[{x:-2.54,y:-2.54},{x:2.54,y:2.54},{x:-2.54,y:2.54},{x:2.54,y:-2.54}],holeDiameter:1.0,padDiameter:2.0,note:"RB154 bridge, RB-15 / 4-circular through-hole package."},
 
-  VT1: {name:"TO-92_Inline_P2.54mm",mounting:"THT",width:5.0,height:4.5,padOffsets:[{x:-2.54,y:0},{x:0,y:0},{x:2.54,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"KP501A uses KT-26, equivalent to TO-92."},
-  VT2: {name:"TO-92_Inline_P2.54mm",mounting:"THT",width:5.0,height:4.5,padOffsets:[{x:-2.54,y:0},{x:0,y:0},{x:2.54,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"KP501A uses KT-26, equivalent to TO-92."},
+  VT1: {name:"TO-92_Inline_P2.54mm",mounting:"THT",width:5.0,height:4.5,padOffsets:[{x:0,y:0},{x:2.54,y:0},{x:-2.54,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"KP501A KT-26: manufacturer physical pins1=G,2=D,3=S. Logical source IDs remain D/S/G; footprint positions follow physical numbering."},
+  VT2: {name:"TO-92_Inline_P2.54mm",mounting:"THT",width:5.0,height:4.5,padOffsets:[{x:0,y:0},{x:2.54,y:0},{x:-2.54,y:0}],holeDiameter:0.8,padDiameter:1.8,note:"KP501A KT-26: manufacturer physical pins1=G,2=D,3=S. Logical source IDs remain D/S/G; footprint positions follow physical numbering."},
   VT3: {name:"TO-220-3_Vertical_P2.54mm_KP707B1",mounting:"THT",width:10.0,height:4.8,padOffsets:[{x:-2.54,y:0},{x:0,y:0},{x:2.54,y:0}],holeDiameter:1.1,padDiameter:2.3,note:"Uses permitted KP707-series replacement in KT-28 / TO-220 plastic package."},
 
   VS1: {name:"T123-250_EXTERNAL_IF_3P_P5.08mm",mounting:"EXTERNAL",width:18.0,height:10.0,padOffsets:[{x:-5.08,y:0},{x:0,y:0},{x:5.08,y:0}],holeDiameter:1.5,padDiameter:3.0,note:"T123-250 is chassis-mounted high-current hardware (body up to ~42 mm); PCB footprint is an external A/K/G interface, not a fake solder footprint."},
@@ -231,7 +231,7 @@ for (const c of components) {
 
     elements.push({
       type:"source_port",source_port_id:spid,source_component_id:scid,
-      pin_number:pi+1,name:pin.name,port_hints:[pin.name,`pin${pi+1}`,`${pi+1}`],
+      pin_number:(c.ref==="VT1"||c.ref==="VT2") ? [2,3,1][pi] : pi+1,name:pin.name,port_hints:[pin.name,`pin${(c.ref==="VT1"||c.ref==="VT2") ? [2,3,1][pi] : pi+1}`,`${(c.ref==="VT1"||c.ref==="VT2") ? [2,3,1][pi] : pi+1}`],
     })
     elements.push({
       type:"schematic_port",schematic_port_id:schpid,schematic_component_id:schcid,
@@ -475,6 +475,19 @@ for(const replacement of routingPatch.replace_traces){
   elements[index]=replacement
 }
 elements.push(...routingPatch.add_vias)
+// Correct verified physical KP501A and bridge footprints, then locally reconnect their nets.
+const pinPatch=JSON.parse(await Bun.file(new URL("./pinmap-routing-patch.json",import.meta.url)).text())
+for(let i=elements.length-1;i>=0;i--){
+ const e:any=elements[i]
+ if(e.type==="pcb_via" && (e.pcb_trace_id==="gate_G1" || e.pcb_trace_id==="gate_G2")) elements.splice(i,1)
+}
+for(const replacement of pinPatch.replace_traces){
+ const index=elements.findIndex((e:any)=>e.type==="pcb_trace" && e.pcb_trace_id===replacement.pcb_trace_id)
+ if(index<0) throw new Error("Pin-map patch target absent")
+ elements[index]=replacement
+}
+elements.push(...pinPatch.add_vias)
+
 const outDir=process.argv[2] ?? "out"
 await mkdir(outDir,{recursive:true})
 await Bun.write(`${outDir}/PhotoRelay_V6.circuit.json`,JSON.stringify(elements,null,2))
@@ -547,13 +560,15 @@ const validation={
   schematic_structure_valid:schValidation.valid,pcb_structure_valid:pcbValidation.valid,
   dangling_references:dangling,all_patterns_match:badPatterns.length===0,
   placement_preserved:true,existing_vias_preserved:true,
+  KP501A_physical_pins:{G:1,D:2,S:3},RB154_opposite_AC_and_DC_pairs:true,
   local_trace_objects_replaced:routingPatch.replace_traces.length,
   added_vias:routingPatch.add_vias.length,
   full_board_autoroute_used:false,
   local_reroute_method:"Obstacle-aware grid search of selected routes only; original pad endpoints retained except two same-net polygon junctions",
-  electrical_pin_types:"unchanged pending per-device review",
+  electrical_pin_types:"Five gate pins set Input; passive terminals retained. See binary verification.",
   VT3_marking:"KP707V2 (Cyrillic КП707В2 per original assignment)",
   physical_pinout_verified:false,
+  physical_pinout_scope:"KP501A verified to manufacturer sheet; RB154 geometry verified to Rectron. Remaining package assignments require individual checks.",
   altium_native_erc_performed:false,altium_native_drc_performed:false,
   rules_saved_in_altium:false,
   geometry_verification:"See independent binary-geometry.json; not Altium DRC",
