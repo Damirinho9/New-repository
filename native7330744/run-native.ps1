@@ -15,3 +15,5 @@ python (Join-Path $Workspace 'nativebuild7330744.py') "$($ms.FullName)" "$Out"
 $rc=$LASTEXITCODE
 try{taskkill /IM Multisim.exe /T /F|Out-Null}catch{}
 exit $rc
+
+# Native GUI pass 2: verified canvas, explicit 50 Hz and AC RMS meter.
