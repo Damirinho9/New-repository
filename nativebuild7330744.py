@@ -66,15 +66,15 @@ def blue_clusters(box):
     return clusters
 
 def pins(x,y,width=45):
-    cand=blue_clusters((x-10,y-80,x+width+15,y+20));pairs=[]
-    for a in cand:
-        for b in cand:
-            if b[0]-a[0]>width*.55 and abs(a[1]-b[1])<3:
-                score=abs(a[0]-x)+abs(b[0]-x-width)+abs(a[1]-(y-46))*.2
-                pairs.append((score,a[:2],b[:2]))
-    h.log(f'pin candidates at {x},{y} width={width}: {cand}')
-    if not pairs:raise RuntimeError(f'Cannot verify native terminals near {x},{y}')
-    pairs.sort();h.log(f'pin chosen {pairs[0]}');return pairs[0][1:]
+    # Real Multisim terminals in run 42599163152 are black, not blue/red.
+    im=pg.screenshot().convert('RGB');rows=[]
+    for yy in range(y-8,y+9):
+        xs=[xx for xx in range(x-10,x+width+15) if max(im.getpixel((xx,yy)))<120]
+        if xs:rows.append((len(xs),yy,min(xs),max(xs)))
+    rows.sort(reverse=True)
+    h.log(f'black terminal rows at {x},{y} width={width}: {rows[:4]}')
+    if not rows or rows[0][3]-rows[0][2]<width*.7:raise RuntimeError(f'Cannot verify native terminals near {x},{y}')
+    count,yy,x1,x2=rows[0];return [(x1,yy),(x2,yy)]
 
 def path(points):
     h.focus();pg.moveTo(*points[0],duration=.08);pg.click();time.sleep(.25)
@@ -113,6 +113,34 @@ def property_value(point,value,tag):
 
 def center(pair):return tuple(round((pair[0][i]+pair[1][i])/2) for i in [0,1])
 
+def save_partial():
+    pg.press('esc',presses=2,interval=.1);h.focus();pg.hotkey('ctrl','s');time.sleep(2)
+    d=Desktop(backend='win32').window(handle=win32gui.GetForegroundWindow())
+    if 'save' in d.window_text().lower():
+        partial=h.OUT/'7330744_PhotoRelay_V6_Partial.ms14'
+        pg.hotkey('alt','n');pg.hotkey('ctrl','a');pg.write(str(partial),interval=.002);pg.press('enter');time.sleep(5)
+    h.shot('partial_saved.png')
+
+def save_final_as():
+    h.focus();pg.hotkey('alt','f');time.sleep(.7);found=False
+    menu_names=[]
+    for w in Desktop(backend='uia').windows():
+        for e in w.descendants():
+            try:
+                name=e.window_text().replace('&','').strip();menu_names.append(name)
+                if name.lower().startswith('save as') and e.is_visible():e.click_input();found=True;break
+            except Exception:pass
+        if found:break
+    (h.OUT/'file_menu_items.json').write_text(json.dumps(menu_names,ensure_ascii=False,indent=2))
+    if not found:
+        h.shot('file_menu_save_as_needed.png');raise RuntimeError('Save As menu needs verified coordinate correction')
+    time.sleep(1)
+    d=Desktop(backend='win32').window(handle=win32gui.GetForegroundWindow())
+    dump(d,'final_save_as_dialog')
+    if 'save' not in d.window_text().lower():raise RuntimeError('Save As dialog not visible')
+    pg.hotkey('alt','n');pg.hotkey('ctrl','a');pg.write(str(h.TARGET),interval=.002);pg.press('enter');time.sleep(5)
+    if not h.TARGET.exists() or h.TARGET.stat().st_size<1000:raise RuntimeError('Final native Save As did not produce file')
+
 def set_meter_ac(point):
     h.focus();pg.doubleClick(*point,interval=.15);time.sleep(1)
     dlg=Desktop(backend='win32').window(handle=win32gui.GetForegroundWindow())
@@ -138,15 +166,18 @@ def main():
     # All objects are placed from the installed Multisim database, on one sheet.
     items=[
         ('V12','DC_POWER',330,245,1,36),('R1','RESISTOR',430,245,0,45),('R2','RESISTOR',520,245,0,45),
-        ('PHOTO','DC_CURRENT',650,245,1,36),('SENS_METER','VOLTMETER',780,245,0,99),
-        ('CTRL','ABM_VOLTAGE',330,390,1,36),('CTRL_R','RESISTOR',500,390,0,45),('CTRL_METER','VOLTMETER',680,390,0,99),
-        ('AC','AC_POWER',330,530,1,36),('KEY','ABM_CURRENT',470,530,1,36),('LOAD','RESISTOR',650,530,0,45),
-        ('LOAD_METER','VOLTMETER',800,530,0,99),('SNUB','CAPACITOR',470,600,0,36),
+        ('PHOTO','DC_CURRENT',650,245,1,54),('SENS_METER','VOLTMETER',780,245,0,99),
+        ('CTRL','ABM_VOLTAGE',330,390,1,54),('CTRL_R','RESISTOR',500,390,0,45),('CTRL_METER','VOLTMETER',680,390,0,99),
+        ('AC','AC_POWER',330,530,1,54),('KEY','ABM_CURRENT',470,530,1,54),('LOAD','RESISTOR',650,530,0,45),
+        ('LOAD_METER','VOLTMETER',800,530,0,99),
     ]
     for ref,component,x,y,rot,width in items:
         if not h.place(component,x,y,rot):raise RuntimeError('Placement failed '+ref)
     h.place('GROUND',350,330,0)
     h.shot('10_native_components.png')
+    final_target=h.TARGET;h.TARGET=h.OUT/'7330744_PhotoRelay_V6_Partial.ms14'
+    if not h.save_as():raise RuntimeError('Partial native component placement could not be saved')
+    h.TARGET=final_target
     p={ref:pins(x,y,width) for ref,component,x,y,rot,width in items}
     (h.OUT/'terminal_coordinates.json').write_text(json.dumps(p,indent=2))
     # DC sensor chain and permanent SENS measurement.
@@ -159,10 +190,10 @@ def main():
     path([p['SENS_METER'][0],(770,sensor_y),(770,275),(635,275),(635,sensor_y)])
     path([p['SENS_METER'][1],(920,sensor_y),(920,300),(740,300)])
     # Ground terminal is observed by color / cursor refinement at its native location.
-    candidates=blue_clusters((335,255,370,340))
-    h.log('ground candidates '+repr(candidates))
-    if not candidates:raise RuntimeError('Ground pin not verified')
-    ground=min(candidates,key=lambda q:abs(q[0]-350)+abs(q[1]-306))[:2]
+    im=pg.screenshot().convert('RGB')
+    candidates=[(xx,yy) for yy in range(320,350) for xx in range(340,363) if max(im.getpixel((xx,yy)))<120]
+    if not candidates:raise RuntimeError('Ground terminal not verified')
+    ground=min(candidates,key=lambda q:(q[1],abs(q[0]-352)))
     path([ground,(350,300)])
     # Behavioral comparator as functional equivalent of the VT1-VT3 controller.
     cy=p['CTRL'][0][1]
@@ -182,10 +213,8 @@ def main():
     path([p['LOAD'][1],(740,ly),(740,625),(310,625),(310,445)])
     path([p['LOAD_METER'][0],(785,ly),(785,570),(635,570),(635,ly)])
     path([p['LOAD_METER'][1],(930,ly),(930,625),(740,625)])
-    path([p['SNUB'][0],(455,p['SNUB'][0][1]),(455,ly)])
-    path([p['SNUB'][1],(570,p['SNUB'][1][1]),(570,ly)])
     h.shot('20_native_wired.png')
-    for ref,value in [('V12','12'),('R1','4.7Meg'),('R2','47k'),('PHOTO','2.107u'),('CTRL_R','10k'),('LOAD','1k'),('SNUB','100n')]:
+    for ref,value in [('V12','12'),('R1','4.7Meg'),('R2','47k'),('PHOTO','2.107u'),('CTRL_R','10k'),('LOAD','1k')]:
         property_value(center(p[ref]),value,ref)
     property_value(center(p['CTRL']),'IF(V(SENS)>5,9.995,0)','CTRL')
     property_value(center(p['KEY']),'IF(V(GDRV)>5,1000,1e-9)*(V(MAINS)-V(SW))','KEY')
@@ -193,7 +222,7 @@ def main():
     if not h.set_value(*center(p['AC']),'50','Hz'):raise RuntimeError('AC frequency could not be set to 50 Hz')
     set_meter_ac(center(p['LOAD_METER']))
     h.shot('30_native_values.png')
-    if not h.save_as():raise RuntimeError('Native Save As failed')
+    save_final_as()
     subprocess.run(['taskkill','/IM','Multisim.exe','/T','/F'],check=False);time.sleep(3)
     subprocess.Popen([str(h.MULTISIM),str(h.TARGET)]);time.sleep(15);dismiss_reminders();h.focus()
     if '7330744_PhotoRelay_V6' not in h.mainwin().window_text():raise RuntimeError('Saved filename not present in reopened title')
@@ -207,4 +236,7 @@ def main():
 if __name__=='__main__':
     try:sys.exit(main())
     except Exception:
-        h.log(traceback.format_exc());h.shot('99_native_exception.png');sys.exit(1)
+        h.log(traceback.format_exc());h.shot('99_native_exception.png')
+        try:save_partial()
+        except Exception:h.log('Partial native save failed: '+traceback.format_exc())
+        sys.exit(1)
