@@ -1,0 +1,47 @@
+name: Stage 11 local copper repair - order 7330744
+on:
+  push:
+    branches: [altium-7330744-stage11-fix]
+    paths: [".github/workflows/altium-stage11-fix.yml", "altium-native/**"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build-and-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/download-artifact@v4
+        with:
+          name: 7330744-stage10-two-layer-routing
+          run-id: 42205499691
+          github-token: ${{ github.token }}
+          path: baseline
+      - name: Build from pinned Stage 10 serializer
+        working-directory: altium-native
+        run: |
+          bun init -y
+          bun add github:tscircuit/circuit-json-to-altium#a399f6a5341c13bc3846b166bda48894faf2fa5f altiumts@0.0.95 jszip@3.10.1 zod
+          bun run build.ts out
+      - name: Verify binary geometry and baseline placement
+        run: |
+          python -m pip install olefile
+          BASE_JSON=$(find baseline -name PhotoRelay_V6.circuit.json -print -quit)
+          python altium-native/verify_geometry.py altium-native/out altium-native/out "$BASE_JSON"
+      - name: Package checked project
+        run: |
+          cd altium-native/out
+          sha256sum *.PcbDoc *.SchDoc *.PrjPcb > SHA256SUMS.txt
+          zip -q 7330744_Stage11_Altium.zip *.PrjPcb *.SchDoc *.PcbDoc *.json *.csv SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-stage11-local-copper-fix
+          path: altium-native/out/
+          if-no-files-found: error
+          retention-days: 14
