@@ -1,0 +1,35 @@
+name: Verify genuine native PhotoRelay MS14 by reopen and Run
+on:
+  push:
+    branches: [multisim-7330744-native-gui-v2]
+    paths: ['.github/workflows/7330744-native-recovery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  reopen-native:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recover genuine GUI-authored MS14 and verify native save close reopen run
+        shell: powershell
+        run: ./native-recovery-setup.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-native-recovery-progress-0
+          path: native7330744-artifacts/
+          retention-days: 7
+      - name: Apply bounded native UI corrections if needed
+        shell: powershell
+        run: ./native-wait-actions.ps1 -Sequence 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-native-recovery-final
+          path: native7330744-artifacts/
+          retention-days: 7
