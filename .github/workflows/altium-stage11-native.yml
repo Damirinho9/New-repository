@@ -1,0 +1,37 @@
+name: Altium Stage11 licensed native verification - order 7330744
+
+on:
+  push:
+    branches: [altium-7330744-stage11-native-check]
+    paths:
+      - '.github/workflows/altium-stage11-native.yml'
+      - 'altium_stage11/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: altium-7330744-stage11-native-check
+  cancel-in-progress: true
+
+jobs:
+  native-check:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install signed Altium and inspect native project UI
+        shell: powershell
+        run: .\altium_stage11\run.ps1
+      - name: Upload native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-stage11-altium-native-evidence
+          path: altium-stage11-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
