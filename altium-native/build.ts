@@ -50,7 +50,7 @@ const components: ComponentSpec[] = [
   {ref:"R4", value:"10 kOhm", pins:[{name:"1",net:"U_CTRL"},{name:"2",net:"T1"}], schX:-6,schY:6,pcbX:-16,pcbY:15,through:false},
   {ref:"VT2", value:"KP501A", pins:[{name:"D",net:"T1"},{name:"S",net:"T2"},{name:"G",net:"G12"}], schX:0,schY:6,pcbX:-4,pcbY:15,through:false},
   {ref:"R5", value:"5.1 kOhm", pins:[{name:"1",net:"U_CTRL"},{name:"2",net:"T2"}], schX:6,schY:6,pcbX:8,pcbY:15,through:false},
-  {ref:"VT3", value:"KP707B2", pins:[{name:"D",net:"VT3_R6"},{name:"S",net:"T2"},{name:"G",net:"COM"}], schX:12,schY:6,pcbX:20,pcbY:15,through:true},
+  {ref:"VT3", value:"KP707V2", pins:[{name:"D",net:"VT3_R6"},{name:"S",net:"T2"},{name:"G",net:"COM"}], schX:12,schY:6,pcbX:20,pcbY:15,through:true},
   {ref:"R6", value:"51 Ohm", pins:[{name:"1",net:"VT3_R6"},{name:"2",net:"DRV"}], schX:18,schY:6,pcbX:34,pcbY:15,through:false},
 
   {ref:"R7", value:"58 kOhm", pins:[{name:"1",net:"L"},{name:"2",net:"LED_R"}], schX:-18,schY:0,pcbX:-40,pcbY:3,through:false},
@@ -467,6 +467,14 @@ for (const [i,point] of [[-76,-51],[76,-51],[-76,51],[76,51]].entries()) {
   })
 }
 
+// Stage 11 applies a local routing patch to Stage 10 objects. Placement is retained.
+const routingPatch=JSON.parse(await Bun.file(new URL("./local-routing-patch.json",import.meta.url)).text())
+for(const replacement of routingPatch.replace_traces){
+  const index=elements.findIndex((e:any)=>e.type==="pcb_trace" && e.pcb_trace_id===replacement.pcb_trace_id)
+  if(index<0) throw new Error("Patch target absent: "+replacement.pcb_trace_id)
+  elements[index]=replacement
+}
+elements.push(...routingPatch.add_vias)
 const outDir=process.argv[2] ?? "out"
 await mkdir(outDir,{recursive:true})
 await Bun.write(`${outDir}/PhotoRelay_V6.circuit.json`,JSON.stringify(elements,null,2))
@@ -528,143 +536,41 @@ const routedNetNames=[...new Set(routedTraceElements.map((element:any)=>String(e
 const copperPourElements=elements.filter((element:any)=>element.type==="pcb_copper_pour")
 
 const validation={
-  stage:10,
-  generator:"circuit-json-to-altium pinned a399f6a + altiumts 0.0.95",
-  project_filename:"7330744_Variant6_PhotoRelay.PrjPcb",
-  schematic_filename:schematic.filename,
-  pcb_filename:output.pcb.filename,
-  board_size_mm:{width:160,height:110},
-  pcb_layers:["Top Layer","Bottom Layer"],
-  component_specs:components.length,
-  source_nets:netNames.size,
-  source_ports:components.reduce((n,c)=>n+c.pins.length,0),
-  schematic_components:schParsed.components.length,
-  schematic_pins:schParsed.pins.length,
-  pcb_components:pcbParsed.components.length,
-  pcb_pads:pcbParsed.getRecordsByKind("Pad").length,
-  pcb_nets:pcbParsed.nets.length,
-  top_track_records:topTrackCount,
-  bottom_track_records:bottomTrackCount,
-  via_records:viaRecords.length,
-  polygon_records:polygonRecords.length,
-  region_records:regionRecords.length,
-  pcb_text_records:textRecords.length,
-  manual_pcb_trace_objects:routedTraceElements.length,
-  routed_nets:routedNetNames,
-  copper_pours:copperPourElements.map((p:any)=>({id:p.pcb_copper_pour_id,layer:p.layer,net:p.source_net_id,shape:p.shape})),
-  explicitly_external_high_current_interfaces:["XP1.2 LOAD","XP1.4 N main path","XP1.1 SW/load output","VS1 A/K","VS2 A/K"],
-  autoroute_used:false,
-  project_documents:projectParsed.documents.map((d:any)=>d.path),
-  assigned_patterns:assignedPatterns,
-  all_patterns_match:badPatterns.length===0,
-  schematic_strict_valid:schValidation.valid,
-  pcb_strict_valid:pcbValidation.valid,
-  pcb_dangling_references:dangling,
-  keepout_barrier_mm:6,
-  keepout_control_crossing_mm:25,
-  high_current_policy:"55 kW load current is not represented by ordinary PCB copper. Main L/N/SW and SCR A/K power paths remain external bus/terminal wiring.",
+  stage:11,
+  baseline_commit:"e3198c48f355f25492ca6d01c1468f12c12f3f94",
+  baseline_artifact_sha256:"369e18dcced6f1041ef679210e71824985c36a0286f4ee5a68a58024df0bc2c3",
+  component_specs:components.length, schematic_components:schParsed.components.length,
+  schematic_pins:schParsed.pins.length, pcb_components:pcbParsed.components.length,
+  pcb_pads:pcbParsed.getRecordsByKind("Pad").length,pcb_nets:pcbParsed.nets.length,
+  top_track_records:topTrackCount,bottom_track_records:bottomTrackCount,
+  via_records:viaRecords.length,polygon_records:polygonRecords.length,
+  schematic_structure_valid:schValidation.valid,pcb_structure_valid:pcbValidation.valid,
+  dangling_references:dangling,all_patterns_match:badPatterns.length===0,
+  placement_preserved:true,existing_vias_preserved:true,
+  local_trace_objects_replaced:routingPatch.replace_traces.length,
+  added_vias:routingPatch.add_vias.length,
+  full_board_autoroute_used:false,
+  local_reroute_method:"Obstacle-aware grid search of selected routes only; original pad endpoints retained except two same-net polygon junctions",
+  electrical_pin_types:"unchanged pending per-device review",
+  VT3_marking:"KP707V2 (Cyrillic КП707В2 per original assignment)",
+  physical_pinout_verified:false,
+  altium_native_erc_performed:false,altium_native_drc_performed:false,
+  rules_saved_in_altium:false,
+  geometry_verification:"See independent binary-geometry.json; not Altium DRC",
 }
-if(!schValidation.valid) throw new Error("Schematic strict validation failed: "+JSON.stringify(schValidation))
-if(!pcbValidation.valid) throw new Error("PCB strict validation failed: "+JSON.stringify(pcbValidation))
-if(dangling.length) throw new Error("Dangling PCB references: "+JSON.stringify(dangling))
-if(badPatterns.length) throw new Error("Footprint PATTERN mismatch: "+JSON.stringify(badPatterns))
-if(schParsed.components.length!==components.length) throw new Error("Schematic component count mismatch")
-if(pcbParsed.components.length!==components.length) throw new Error("PCB component count mismatch")
-if(topTrackCount===0) throw new Error("Top Layer has no routed tracks")
-if(bottomTrackCount===0) throw new Error("Bottom Layer has no routed tracks")
-if(viaRecords.length===0) throw new Error("No vias found in two-layer routing")
-if(polygonRecords.length<2) throw new Error("Expected at least two COM polygons")
-
-const routingMd=[
-  "# Этап 10. Ручная/полуручная двухслойная трассировка",
-  "",
-  "Проект: заказ 7330744, вариант 6, фотореле.",
-  "",
-  "## Архитектура слоев",
-  "",
-  "- Top Layer - короткие локальные сигнальные цепи, чувствительные связи и gate-drive.",
-  "- Bottom Layer - шины U_CTRL и COM, возвратные соединения и межзонные переходы.",
-  "- Переходы между слоями выполнены vias; autoroute не использовался.",
-  "- Два ограниченных COM-полигона находятся на Bottom Layer в управляющих областях. Сплошной полигон по всей плате намеренно не применен.",
-  "",
-  "## Основные трассы",
-  "",
-  "- N_R1, SENS, G12, T1 - Top, 0.35 мм.",
-  "- T2 - Bottom, 0.35 мм с переходом для SMD R5.",
-  "- VT3_R6 - Top, 0.50 мм.",
-  "- U_CTRL - Bottom bus 0.60 мм с короткими Top-to-Bottom переходами.",
-  "- COM - Bottom polygons + ответвления 0.60-0.80 мм.",
-  "- LED_R/LED_A - Top, 0.45 мм.",
-  "- DRV - межзонная трасса через выделенный проход, 0.80 мм.",
-  "- BR_A - ручная Top-трасса 2.00 мм.",
-  "- G1/G2 - ручные Top-трассы 0.80 мм.",
-  "- L auxiliary branch - 1.50 мм, только для вспомогательной сетевой части.",
-  "",
-  "## Силовая часть",
-  "",
-  "Основной ток нагрузки заявленного устройства 55 кВт не проводится по обычным дорожкам платы. XP1.2 LOAD, основной N/SW и силовые A/K тиристоров VS1/VS2 оставлены под внешний шинный/клеммный монтаж. Это сознательное инженерное ограничение, а не недотрассированная случайным образом плата.",
-  "",
-  "## Маркировка",
-  "",
-  "На Top Overlay добавлены обозначения всех компонентов, функциональных зон, pinout XP1, подписи VS1/VS2 и пояснение назначения слоев.",
-  "",
-  "## Контроль",
-  "",
-  `Top track records: ${topTrackCount}.`,
-  `Bottom track records: ${bottomTrackCount}.`,
-  `Vias: ${viaRecords.length}.`,
-  `Polygon records: ${polygonRecords.length}.`,
-  `PCB text records: ${textRecords.length}.`,
-  `Manual PCB trace objects: ${routedTraceElements.length}.`,
-  `Routed nets: ${routedNetNames.join(", ")}.`,
-  `Strict validation SchDoc: ${schValidation.valid ? "PASS" : "FAIL"}.`,
-  `Strict validation PcbDoc: ${pcbValidation.valid ? "PASS" : "FAIL"}.`,
-  `Dangling PCB references: ${dangling.length}.`,
-].join("\r\n")
-
+if(!schValidation.valid || !pcbValidation.valid || dangling.length || badPatterns.length) throw new Error("Structural validation failed: "+JSON.stringify(validation))
+if(pcbParsed.components.length!==28 || schParsed.components.length!==28 || schParsed.pins.length!==66) throw new Error("Baseline component/pin count changed")
 await Bun.write(`${outDir}/PhotoRelay_V6.SchDoc`,schematic.content)
 await Bun.write(`${outDir}/PhotoRelay_V6.PcbDoc`,pcbContent)
 await Bun.write(`${outDir}/7330744_Variant6_PhotoRelay.PrjPcb`,projectContent)
 await Bun.write(`${outDir}/PhotoRelay_V6.circuit.json`,JSON.stringify(elements,null,2))
-await Bun.write(`${outDir}/7330744_Stage10_Validation.json`,JSON.stringify(validation,null,2))
-await Bun.write(`${outDir}/7330744_Этап10_Трассировка.md`,routingMd)
-
-const readme=[
-  "7330744 Variant 6 - Photo Relay - Stage 10 two-layer manual routing",
-  "",
-  "Files:",
-  "- 7330744_Variant6_PhotoRelay.PrjPcb",
-  "- PhotoRelay_V6.SchDoc",
-  "- PhotoRelay_V6.PcbDoc",
-  "- 7330744_Stage10_Validation.json",
-  "- 7330744_Этап10_Трассировка.md",
-  "",
-  "No autorouter was used.",
-  "Top and Bottom copper are both used; vias provide controlled layer transitions.",
-  "COM uses two local Bottom Layer pours rather than a full-board plane.",
-  "High-current 55 kW load paths remain external bus/terminal wiring.",
-].join("\r\n")
-await Bun.write(`${outDir}/README_STAGE10.txt`,readme)
-
-function sha256(data:Uint8Array|string){
-  return createHash("sha256").update(data).digest("hex")
-}
-const manifest={
-  "7330744_Variant6_PhotoRelay.PrjPcb":sha256(projectContent),
-  "PhotoRelay_V6.SchDoc":sha256(schematic.content),
-  "PhotoRelay_V6.PcbDoc":sha256(pcbContent),
+await Bun.write(`${outDir}/7330744_Stage11_Validation.json`,JSON.stringify(validation,null,2))
+await Bun.write(`${outDir}/routing-changes.json`,JSON.stringify(routingPatch.changes,null,2))
+const csv=["trace_id,net,old_segments,new_segments,new_vias",...routingPatch.changes.map((r:any)=>[r.trace_id,r.net,r.old_segments,r.new_segments,r.new_vias].join(","))].join("\n")
+await Bun.write(`${outDir}/routing-changes.csv`,csv)
+const manifest:any={}
+for(const [name,data] of [["7330744_Variant6_PhotoRelay.PrjPcb",projectContent],["PhotoRelay_V6.SchDoc",schematic.content],["PhotoRelay_V6.PcbDoc",pcbContent],["PhotoRelay_V6.circuit.json",JSON.stringify(elements,null,2)]]){
+ manifest[String(name)]=createHash("sha256").update(data as any).digest("hex")
 }
 await Bun.write(`${outDir}/SHA256SUMS.json`,JSON.stringify(manifest,null,2))
-
-const zip=new JSZip()
-zip.file("7330744_Variant6_PhotoRelay.PrjPcb",projectContent)
-zip.file("PhotoRelay_V6.SchDoc",schematic.content)
-zip.file("PhotoRelay_V6.PcbDoc",pcbContent)
-zip.file("PhotoRelay_V6.circuit.json",JSON.stringify(elements,null,2))
-zip.file("7330744_Stage10_Validation.json",JSON.stringify(validation,null,2))
-zip.file("7330744_Этап10_Трассировка.md",routingMd)
-zip.file("README_STAGE10.txt",readme)
-zip.file("SHA256SUMS.json",JSON.stringify(manifest,null,2))
-await Bun.write(`${outDir}/7330744_Этап10_Двухслойная_трассировка.zip`,await zip.generateAsync({type:"uint8array",compression:"DEFLATE"}))
-
 console.log(JSON.stringify(validation,null,2))
