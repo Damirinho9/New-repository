@@ -1,0 +1,124 @@
+{
+  "replace_traces": [
+    {
+      "type": "pcb_trace",
+      "pcb_trace_id": "vt3_r6",
+      "source_trace_id": "trace_VT3_R6",
+      "route": [
+        {
+          "route_type": "wire",
+          "x": -9.54,
+          "y": 30,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -9.6,
+          "y": 30,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -9.0,
+          "y": 30.0,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -9.0,
+          "y": 29.4,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -8.8,
+          "y": 29.4,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -8.8,
+          "y": 29.0,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -8.6,
+          "y": 29.0,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -8.6,
+          "y": 28.6,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -8.4,
+          "y": 28.6,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -8.4,
+          "y": 28.4,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -8.0,
+          "y": 28.4,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -8.0,
+          "y": 28.2,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -7.6,
+          "y": 28.2,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": -7.6,
+          "y": 28.0,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": 3.6,
+          "y": 28.0,
+          "width": 0.5,
+          "layer": "top"
+        },
+        {
+          "route_type": "wire",
+          "x": 3.6,
+          "y": 30.0,
+          "width": 0.5,
+          "layer": "top"
+        }
+      ]
+    }
+  ],
+  "add_vias": []
+}

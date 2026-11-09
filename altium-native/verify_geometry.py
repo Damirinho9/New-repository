@@ -95,6 +95,7 @@ result={
  'binary_counts':counts,'track_layers':dict(layers),
  'same_layer_track_copper_overlap_pairs':len(conflicts),
  'rules6_present':pcb.exists('Rules6/Data'),
+ 'rules6_count':struct.unpack('<I',pcb.openstream('Rules6/Header').read()[:4])[0] if pcb.exists('Rules6/Header') else 0,
  'native_altium_erc_performed':False,'native_altium_drc_performed':False,
  'scope':'Independent check of binary copper track geometry, not Altium DRC',
 }
@@ -113,6 +114,20 @@ if baseline_path:
  result['unrelated_pad_geometry_preserved']=True
  result['reviewed_pad_corrections']=['VT1','VT2','VD6']
  result['baseline_vias_preserved']=True
+ oldtraces={e['pcb_trace_id']:e for e in baseline if e['type']=='pcb_trace'}
+ changes=[]
+ def nsegments(e):
+  return sum(a.get('route_type')=='wire' and b.get('route_type')=='wire' and a.get('layer')==b.get('layer') and (a['x'],a['y'])!=(b['x'],b['y']) for a,b in zip(e['route'],e['route'][1:]))
+ for e in [e for e in source if e['type']=='pcb_trace']:
+  old=oldtraces.get(e['pcb_trace_id'])
+  if old!=e:
+   changes.append({'trace_id':e['pcb_trace_id'],'net':e['source_trace_id'][6:],'old_segments':nsegments(old) if old else 0,'new_segments':nsegments(e)})
+ with (OUT/'routing-changes.csv').open('w',encoding='utf-8-sig',newline='') as f:
+  writer=csv.DictWriter(f,fieldnames=['trace_id','net','old_segments','new_segments']);writer.writeheader();writer.writerows(changes)
+ (OUT/'routing-changes.json').write_text(json.dumps(changes,indent=2))
+ result['changed_routing_objects_vs_baseline']=len(changes)
+
 (OUT/'binary-geometry.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
 print(json.dumps(result,indent=2))
 assert len(conflicts)==0, 'Copper overlap filter failed'
+assert result['rules6_count']==11,'Required enabled rules absent'

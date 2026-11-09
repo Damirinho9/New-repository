@@ -4,6 +4,9 @@ on:
     branches: [altium-7330744-stage11-fix]
     paths: [".github/workflows/altium-stage11-fix.yml", "altium-native/**"]
   workflow_dispatch:
+concurrency:
+  group: 7330744-stage11-fix
+  cancel-in-progress: true
 permissions:
   contents: read
   actions: read
@@ -26,12 +29,13 @@ jobs:
         working-directory: altium-native
         run: |
           bun init -y
-          bun add github:tscircuit/circuit-json-to-altium#a399f6a5341c13bc3846b166bda48894faf2fa5f altiumts@0.0.95 jszip@3.10.1 zod
+          bun add github:tscircuit/circuit-json-to-altium#a399f6a5341c13bc3846b166bda48894faf2fa5f altiumts@0.0.95 jszip@3.10.1 zod cfb@1.2.2
           bun run build.ts out
       - name: Verify binary geometry and baseline placement
         run: |
           python -m pip install olefile
           BASE_JSON=$(find baseline -name PhotoRelay_V6.circuit.json -print -quit)
+          node altium-native/add_stage11_rules.mjs altium-native/out/PhotoRelay_V6.PcbDoc
           python altium-native/finish_pin_types.py altium-native/out
           python altium-native/verify_geometry.py altium-native/out altium-native/out "$BASE_JSON"
       - name: Package checked project

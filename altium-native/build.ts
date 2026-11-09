@@ -487,6 +487,14 @@ for(const replacement of pinPatch.replace_traces){
  elements[index]=replacement
 }
 elements.push(...pinPatch.add_vias)
+const extraPatch=JSON.parse(await Bun.file(new URL("./additional-routing-patch.json",import.meta.url)).text())
+for(const replacement of extraPatch.replace_traces){
+ const index=elements.findIndex((e:any)=>e.type==="pcb_trace" && e.pcb_trace_id===replacement.pcb_trace_id)
+ if(index<0) throw new Error("Extra patch target absent")
+ elements[index]=replacement
+}
+elements.push(...extraPatch.add_vias)
+
 
 const outDir=process.argv[2] ?? "out"
 await mkdir(outDir,{recursive:true})
@@ -561,8 +569,8 @@ const validation={
   dangling_references:dangling,all_patterns_match:badPatterns.length===0,
   placement_preserved:true,existing_vias_preserved:true,
   KP501A_physical_pins:{G:1,D:2,S:3},RB154_opposite_AC_and_DC_pairs:true,
-  local_trace_objects_replaced:routingPatch.replace_traces.length,
-  added_vias:routingPatch.add_vias.length,
+  local_trace_objects_replaced:new Set([...routingPatch.replace_traces,...pinPatch.replace_traces,...extraPatch.replace_traces].map((r:any)=>r.pcb_trace_id)).size,
+  added_vias:elements.filter((e:any)=>e.type==="pcb_via").length-8,
   full_board_autoroute_used:false,
   local_reroute_method:"Obstacle-aware grid search of selected routes only; original pad endpoints retained except two same-net polygon junctions",
   electrical_pin_types:"Five gate pins set Input; passive terminals retained. See binary verification.",
