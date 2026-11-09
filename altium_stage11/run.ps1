@@ -13,8 +13,29 @@ function AltiumSignature([string]$p){
 $url="https://f1.199server.site/Pro/Altium%20Designer%2026.11.1.5%20x64.rar"
 $rar=Join-Path $env:RUNNER_TEMP "Altium_Designer_26.11.1.5_x64.rar"
 $media=Join-Path $env:RUNNER_TEMP "altium-media"
-& curl.exe -L --fail --max-time 240 -o $rar $url
-if($LASTEXITCODE -ne 0){throw "Offline media download failed"}
+L "Download offline media using eight bounded byte ranges"
+$total=3438092790L
+$partCount=8
+$chunk=[long][Math]::Ceiling($total/$partCount)
+$downloads=@()
+for($i=0;$i -lt $partCount;$i++){
+ $start=$i*$chunk
+ $end=[Math]::Min($total-1,($i+1)*$chunk-1)
+ $part="$rar.part$i"
+ $args=@("-L","--fail","--silent","--show-error","--max-time","360","--range","$start-$end","-o",$part,$url)
+ $process=Start-Process curl.exe -ArgumentList $args -PassThru -NoNewWindow
+ $downloads+=@{Process=$process;Path=$part;Expected=($end-$start+1)}
+}
+foreach($download in $downloads){
+ $download.Process.WaitForExit()
+ if($download.Process.ExitCode -ne 0){throw "Range transfer failed exit=$($download.Process.ExitCode)"}
+ if((Get-Item $download.Path).Length -ne $download.Expected){throw "Server did not honor exact byte range"}
+}
+$stream=[IO.File]::Open($rar,[IO.FileMode]::Create,[IO.FileAccess]::Write)
+try{
+ foreach($download in $downloads){$partStream=[IO.File]::OpenRead($download.Path);try{$partStream.CopyTo($stream)}finally{$partStream.Dispose()}}
+}finally{$stream.Dispose()}
+if((Get-Item $rar).Length -ne $total){throw "Combined archive length mismatch"}
 L "Archive SHA256=$((Get-FileHash $rar -Algorithm SHA256).Hash)"
 & "C:\Program Files\7-Zip\7z.exe" x -y "-o$media" $rar *> (Join-Path $A "extract.log")
 if($LASTEXITCODE -ne 0){throw "Extract failed"}
