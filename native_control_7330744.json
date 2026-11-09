@@ -1,5 +1,413 @@
 {
-  "sequence": 0,
+  "sequence": 1,
   "complete": false,
-  "actions": []
+  "actions": [
+    {
+      "op": "click",
+      "x": 610,
+      "y": 248,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 590,
+      "y": 268,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "SENS"
+    },
+    {
+      "op": "click",
+      "x": 379,
+      "y": 303,
+      "clicks": 1
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "click",
+      "x": 442,
+      "y": 392,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 590,
+      "y": 268,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "GDRV"
+    },
+    {
+      "op": "click",
+      "x": 379,
+      "y": 303,
+      "clicks": 1
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "click",
+      "x": 430,
+      "y": 527,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 590,
+      "y": 268,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "MAINS"
+    },
+    {
+      "op": "click",
+      "x": 379,
+      "y": 303,
+      "clicks": 1
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "click",
+      "x": 580,
+      "y": 527,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 590,
+      "y": 268,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "SW"
+    },
+    {
+      "op": "click",
+      "x": 379,
+      "y": 303,
+      "clicks": 1
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "click",
+      "x": 455,
+      "y": 248,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 596,
+      "y": 246,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "5"
+    },
+    {
+      "op": "click",
+      "x": 596,
+      "y": 274,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "4700000"
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "click",
+      "x": 545,
+      "y": 248,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 596,
+      "y": 246,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "5"
+    },
+    {
+      "op": "click",
+      "x": 596,
+      "y": 274,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "47000"
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "click",
+      "x": 518,
+      "y": 392,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 596,
+      "y": 246,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "5"
+    },
+    {
+      "op": "click",
+      "x": 596,
+      "y": 274,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "10000"
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "click",
+      "x": 672,
+      "y": 527,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 596,
+      "y": 246,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "5"
+    },
+    {
+      "op": "click",
+      "x": 596,
+      "y": 274,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "1000"
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "click",
+      "x": 834,
+      "y": 248,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 560,
+      "y": 251,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "a"
+      ]
+    },
+    {
+      "op": "type",
+      "text": "1000000"
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "click",
+      "x": 852,
+      "y": 527,
+      "clicks": 2
+    },
+    {
+      "op": "click",
+      "x": 560,
+      "y": 285,
+      "clicks": 1
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "home"
+      ]
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "down"
+      ]
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "enter"
+      ]
+    },
+    {
+      "op": "named_button",
+      "name": "OK"
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "s"
+      ]
+    },
+    {
+      "op": "run",
+      "seconds": 10,
+      "name": "native_live_test.png",
+      "window": true
+    },
+    {
+      "op": "stop"
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "ctrl",
+        "s"
+      ]
+    },
+    {
+      "op": "screenshot",
+      "name": "phase1_fixed.png"
+    },
+    {
+      "op": "hotkey",
+      "keys": [
+        "alt",
+        "f"
+      ]
+    },
+    {
+      "op": "dump",
+      "name": "file_menu_for_save_as"
+    }
+  ]
 }
