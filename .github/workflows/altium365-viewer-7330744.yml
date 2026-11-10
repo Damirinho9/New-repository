@@ -1,4 +1,4 @@
-name: Altium 365 layer panel probe - order 7330744
+name: Altium 365 exact layer capture - order 7330744
 on:
   push:
     branches:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  probe:
+  capture-layers:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -22,59 +22,68 @@ jobs:
           python -m pip install playwright
           python -m playwright install --with-deps chromium
 
-      - name: Probe PCB Layers panel in official Viewer
+      - name: Capture exact PCB layers and angled 3D in official Viewer
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p layer_out
-          python -m http.server 8000 > layer_out/http_server.log 2>&1 &
+          mkdir -p exact_out
+          python -m http.server 8000 > exact_out/http_server.log 2>&1 &
           server_pid=$!
           trap 'kill $server_pid || true' EXIT
           sleep 3
           python - <<'PY'
           from playwright.sync_api import sync_playwright
-          import time, json, pathlib
-          out=pathlib.Path("layer_out")
+          import time, pathlib, re, json
+          out=pathlib.Path("exact_out")
           with sync_playwright() as p:
               b=p.chromium.launch(headless=True,args=["--no-sandbox","--disable-dev-shm-usage","--use-gl=swiftshader"])
               page=b.new_page(viewport={"width":1440,"height":1000})
-              page.on("console", lambda m: print("CONSOLE",m.type,m.text))
               page.goto("http://127.0.0.1:8000/viewer/pcb.html",wait_until="domcontentloaded",timeout=120000)
               page.wait_for_selector("iframe",timeout=120000)
               time.sleep(75)
               frame=page.frames[-1]
-              print("FRAME",frame.url)
-              print("BODY BEFORE",frame.locator("body").inner_text()[:5000])
-              btn=frame.get_by_role("button",name="Layers/Objects")
-              print("BUTTON COUNT",btn.count())
-              if btn.count():
-                  btn.first.click()
-                  time.sleep(5)
-              page.screenshot(path=str(out/"pcb_layers_panel_page.png"),full_page=True)
-              page.locator("iframe").first.screenshot(path=str(out/"pcb_layers_panel_viewer.png"))
-              text=frame.locator("body").inner_text()
-              (out/"body_text.txt").write_text(text,encoding="utf-8")
-              (out/"body_html.html").write_text(frame.locator("body").inner_html(),encoding="utf-8")
-              info={}
-              for sel in ["input","label","button","[role=checkbox]","[role=treeitem]","[role=option]","[class*=layer]","[class*=Layer]"]:
-                  arr=[]
-                  loc=frame.locator(sel)
-                  for i in range(min(loc.count(),150)):
-                      e=loc.nth(i)
-                      try:
-                          arr.append({"text":e.inner_text()[:300],"html":e.evaluate("(el)=>el.outerHTML")[:1500]})
-                      except Exception as ex:
-                          arr.append({"error":str(ex)})
-                  info[sel]=arr
-              (out/"elements.json").write_text(json.dumps(info,ensure_ascii=False,indent=2),encoding="utf-8")
+              header=frame.get_by_role("button",name="Layers/Objects")
+              header.click(); time.sleep(2)
+              page.locator("iframe").first.screenshot(path=str(out/"pcb_layers_controls.png"))
+
+              for layer,fn in [("Top Layer","pcb_top_layer.png"),("Bottom Layer","pcb_bottom_layer.png"),("Top Overlay","pcb_top_overlay.png")]:
+                  # panel is open here
+                  name=frame.locator(".app-layers-panel__layer-name",has_text=layer).first
+                  row=name.locator("xpath=ancestor::div[contains(@class,'app-layers-panel__layer-row')]")
+                  print("LAYER",layer,"name_count",name.count(),"row_count",row.count())
+                  row.get_by_role("button",name="Only").click()
+                  time.sleep(3)
+                  header.click(); time.sleep(2)   # close layer panel
+                  page.locator("iframe").first.screenshot(path=str(out/fn))
+                  header.click(); time.sleep(2)   # reopen for next selection
+
+              # close panel after final capture
+              header.click(); time.sleep(1)
+
+              # 3D page, then rotate the rendered board by a real mouse drag.
+              page.goto("http://127.0.0.1:8000/viewer/3d.html",wait_until="domcontentloaded",timeout=120000)
+              page.wait_for_selector("iframe",timeout=120000)
+              time.sleep(60)
+              iframe=page.locator("iframe").first
+              iframe.screenshot(path=str(out/"pcb_3d_top.png"))
+              box=iframe.bounding_box()
+              if box:
+                  x=box["x"]+box["width"]*0.58
+                  y=box["y"]+box["height"]*0.52
+                  page.mouse.move(x,y)
+                  page.mouse.down()
+                  page.mouse.move(x+180,y+120,steps=25)
+                  page.mouse.up()
+                  time.sleep(4)
+              iframe.screenshot(path=str(out/"pcb_3d_angled.png"))
               b.close()
           PY
-          find layer_out -type f -printf '%p %s bytes\n' | sort
+          find exact_out -type f -printf '%p %s bytes\n' | sort
 
-      - name: Upload layer probe
+      - name: Upload exact Viewer captures
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: 7330744-altium365-layer-probe
-          path: layer_out/
+          name: 7330744-altium365-exact-layers
+          path: exact_out/
           if-no-files-found: warn
