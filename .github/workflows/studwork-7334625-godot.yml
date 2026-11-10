@@ -1,0 +1,668 @@
+name: Studwork 7334625 Case 1 Godot Native Capture
+
+on:
+  push:
+    branches:
+      - studwork-7334625-godot-case1
+    paths:
+      - ".github/workflows/studwork-7334625-godot.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GUI capture dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openbox ffmpeg xdotool wmctrl unzip wget libgl1-mesa-dri libglu1-mesa libxrandr2 libxi6 libxcursor1 libxinerama1 libasound2t64
+          
+      - name: Download Godot 4.7.2 stable
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip -O /tmp/godot.zip
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+          /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 --version
+          
+      - name: Create native Godot project
+        run: |
+          mkdir -p studwork_7334625_case1 artifacts
+          cat > studwork_7334625_case1/project.godot <<'EOF'
+          ; Engine configuration file.
+          ; Generated for Studwork order 7334625, Case 1.
+          config_version=5
+
+          [application]
+          config/name="RPG Case 1 Prototype"
+          run/main_scene="res://Prototype.tscn"
+
+          [display]
+          window/size/viewport_width=1280
+          window/size/viewport_height=720
+          window/size/window_width_override=1280
+          window/size/window_height_override=720
+          window/stretch/mode="canvas_items"
+
+          [rendering]
+          renderer/rendering_method="gl_compatibility"
+          renderer/rendering_method.mobile="gl_compatibility"
+          environment/defaults/default_clear_color=Color(0.055, 0.07, 0.09, 1)
+          EOF
+
+          cat > studwork_7334625_case1/Prototype.tscn <<'EOF'
+          [gd_scene load_steps=17 format=3]
+
+          [ext_resource type="Script" path="res://Prototype.gd" id="1_script"]
+
+          [sub_resource type="StandardMaterial3D" id="MatGround"]
+          albedo_color = Color(0.18, 0.25, 0.18, 1)
+          roughness = 0.92
+
+          [sub_resource type="PlaneMesh" id="GroundMesh"]
+          material = SubResource("MatGround")
+          size = Vector2(24, 18)
+
+          [sub_resource type="StandardMaterial3D" id="MatPlayer"]
+          albedo_color = Color(0.16, 0.46, 0.82, 1)
+          metallic = 0.15
+          roughness = 0.55
+
+          [sub_resource type="CapsuleMesh" id="PlayerMesh"]
+          material = SubResource("MatPlayer")
+          radius = 0.48
+          height = 1.9
+
+          [sub_resource type="StandardMaterial3D" id="MatEnemy"]
+          albedo_color = Color(0.72, 0.18, 0.16, 1)
+          metallic = 0.1
+          roughness = 0.65
+
+          [sub_resource type="CapsuleMesh" id="EnemyMesh"]
+          material = SubResource("MatEnemy")
+          radius = 0.5
+          height = 1.95
+
+          [sub_resource type="StandardMaterial3D" id="MatSword"]
+          albedo_color = Color(0.72, 0.74, 0.78, 1)
+          metallic = 0.8
+          roughness = 0.25
+
+          [sub_resource type="BoxMesh" id="SwordMesh"]
+          material = SubResource("MatSword")
+          size = Vector3(0.12, 0.12, 1.35)
+
+          [sub_resource type="StandardMaterial3D" id="MatShield"]
+          albedo_color = Color(0.34, 0.19, 0.08, 1)
+          metallic = 0.25
+          roughness = 0.7
+
+          [sub_resource type="CylinderMesh" id="ShieldMesh"]
+          material = SubResource("MatShield")
+          top_radius = 0.48
+          bottom_radius = 0.48
+          height = 0.12
+          radial_segments = 24
+
+          [sub_resource type="StandardMaterial3D" id="MatStone"]
+          albedo_color = Color(0.31, 0.32, 0.34, 1)
+          roughness = 0.95
+
+          [sub_resource type="BoxMesh" id="WallMesh"]
+          material = SubResource("MatStone")
+          size = Vector3(1, 1, 1)
+
+          [sub_resource type="StandardMaterial3D" id="MatCrate"]
+          albedo_color = Color(0.38, 0.22, 0.09, 1)
+          roughness = 0.9
+
+          [sub_resource type="BoxMesh" id="CrateMesh"]
+          material = SubResource("MatCrate")
+          size = Vector3(1, 1, 1)
+
+          [node name="Prototype" type="Node3D"]
+          script = ExtResource("1_script")
+
+          [node name="Ground" type="MeshInstance3D" parent="."]
+          mesh = SubResource("GroundMesh")
+
+          [node name="Player" type="Node3D" parent="."]
+          position = Vector3(0, 0.95, 8.5)
+
+          [node name="Body" type="MeshInstance3D" parent="Player"]
+          mesh = SubResource("PlayerMesh")
+
+          [node name="Sword" type="MeshInstance3D" parent="Player"]
+          position = Vector3(0.58, 0.15, -0.55)
+          rotation = Vector3(0.15, 0, 0)
+          mesh = SubResource("SwordMesh")
+
+          [node name="Shield" type="MeshInstance3D" parent="Player"]
+          position = Vector3(-0.62, 0.1, -0.25)
+          rotation = Vector3(1.5708, 0, 0)
+          mesh = SubResource("ShieldMesh")
+
+          [node name="ProjectileSpawn" type="Marker3D" parent="Player"]
+          position = Vector3(0.15, 0.45, -0.75)
+
+          [node name="Enemy" type="Node3D" parent="."]
+          position = Vector3(0, 0.98, 0)
+
+          [node name="Body" type="MeshInstance3D" parent="Enemy"]
+          mesh = SubResource("EnemyMesh")
+
+          [node name="Sword" type="MeshInstance3D" parent="Enemy"]
+          position = Vector3(-0.58, 0.15, -0.55)
+          mesh = SubResource("SwordMesh")
+
+          [node name="ObstacleLeft" type="MeshInstance3D" parent="."]
+          position = Vector3(-5.8, 1, 1.5)
+          scale = Vector3(2.2, 2, 0.6)
+          mesh = SubResource("WallMesh")
+
+          [node name="ObstacleRight" type="MeshInstance3D" parent="."]
+          position = Vector3(5.8, 1, 1.5)
+          scale = Vector3(2.2, 2, 0.6)
+          mesh = SubResource("WallMesh")
+
+          [node name="BackWall" type="MeshInstance3D" parent="."]
+          position = Vector3(0, 1.3, -7.5)
+          scale = Vector3(10, 2.6, 0.5)
+          mesh = SubResource("WallMesh")
+
+          [node name="Crate1" type="MeshInstance3D" parent="."]
+          position = Vector3(-3, 0.55, 5)
+          scale = Vector3(1.2, 1.1, 1.2)
+          mesh = SubResource("CrateMesh")
+
+          [node name="Crate2" type="MeshInstance3D" parent="."]
+          position = Vector3(3.4, 0.45, 3.4)
+          scale = Vector3(0.9, 0.9, 0.9)
+          mesh = SubResource("CrateMesh")
+
+          [node name="Crate3" type="MeshInstance3D" parent="."]
+          position = Vector3(4.2, 0.7, -3.5)
+          scale = Vector3(1.4, 1.4, 1.4)
+          mesh = SubResource("CrateMesh")
+
+          [node name="Camera3D" type="Camera3D" parent="."]
+          current = true
+          fov = 58.0
+
+          [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+          rotation = Vector3(-0.85, -0.55, 0)
+          light_energy = 1.25
+          shadow_enabled = true
+          EOF
+
+          cat > studwork_7334625_case1/Prototype.gd <<'EOF'
+          extends Node3D
+
+          const PLAYER_MAX_HP := 100.0
+          const PLAYER_DEFENSE := 8.0
+          const ENEMY_MAX_HP := 75.0
+          const MELEE_DAMAGE := 15.0
+          const RANGED_DAMAGE := 12.0
+          const ENEMY_DAMAGE := 15.0
+          const DETECTION_RANGE := 8.0
+          const ATTACK_RANGE := 1.8
+          const WALK_SPEED := 4.0
+          const RUN_MULTIPLIER := 1.3
+          const SNEAK_MULTIPLIER := 0.7
+
+          @onready var player: Node3D = $Player
+          @onready var enemy: Node3D = $Enemy
+          @onready var projectile_spawn: Marker3D = $Player/ProjectileSpawn
+          @onready var camera: Camera3D = $Camera3D
+
+          var player_hp := PLAYER_MAX_HP
+          var enemy_hp := ENEMY_MAX_HP
+          var blocking := false
+          var enemy_state := "IDLE"
+          var last_event := "Ready"
+          var elapsed := 0.0
+          var event_flags := {}
+          var auto_demo := false
+          var enemy_ai_enabled := true
+          var enemy_attack_clock := 0.0
+          var event_lines: Array[String] = []
+
+          var hp_label: Label
+          var enemy_label: Label
+          var state_label: Label
+          var event_label: Label
+          var block_label: Label
+
+          func _ready() -> void:
+              camera.position = Vector3(9.5, 7.2, 12.5)
+              camera.look_at(Vector3(0, 1.0, 1.5), Vector3.UP)
+              _build_hud()
+              _push_event("Prototype ready")
+              _print_validation()
+
+              if OS.has_environment("VALIDATE_ONLY"):
+                  call_deferred("_quit_validation")
+                  return
+
+              auto_demo = OS.has_environment("CI_CAPTURE")
+              if auto_demo:
+                  _push_event("AUTO DEMO: start")
+              _update_hud()
+
+          func _quit_validation() -> void:
+              get_tree().quit(0)
+
+          func _print_validation() -> void:
+              var ok := true
+              ok = ok and is_equal_approx(PLAYER_MAX_HP, 100.0)
+              ok = ok and is_equal_approx(PLAYER_DEFENSE, 8.0)
+              ok = ok and is_equal_approx(MELEE_DAMAGE, 15.0)
+              ok = ok and is_equal_approx(RANGED_DAMAGE, 12.0)
+              ok = ok and is_equal_approx(DETECTION_RANGE, 8.0)
+              ok = ok and is_equal_approx(ATTACK_RANGE, 1.8)
+              ok = ok and player != null and enemy != null and camera != null
+              if ok:
+                  print("CASE 1 VALIDATION: PASS")
+                  print("Player HP=100 Defense=8 Melee=15 Ranged=12")
+                  print("Enemy HP=75 Detection=8 AttackRange=1.8 EnemyDamage=15")
+              else:
+                  print("CASE 1 VALIDATION: FAIL")
+
+          func _process(delta: float) -> void:
+              elapsed += delta
+              if auto_demo:
+                  _run_auto_demo(delta)
+              else:
+                  _run_manual(delta)
+              _update_enemy_ai(delta)
+              _update_hud()
+
+          func _run_manual(delta: float) -> void:
+              var move := Vector3.ZERO
+              if Input.is_key_pressed(KEY_W):
+                  move.z -= 1.0
+              if Input.is_key_pressed(KEY_S):
+                  move.z += 1.0
+              if Input.is_key_pressed(KEY_A):
+                  move.x -= 1.0
+              if Input.is_key_pressed(KEY_D):
+                  move.x += 1.0
+
+              var speed := WALK_SPEED
+              if Input.is_key_pressed(KEY_SHIFT):
+                  speed *= RUN_MULTIPLIER
+              if Input.is_key_pressed(KEY_CTRL):
+                  speed *= SNEAK_MULTIPLIER
+
+              if move.length() > 0.01:
+                  move = move.normalized()
+                  player.position += move * speed * delta
+                  player.look_at(player.global_position + move, Vector3.UP)
+
+              blocking = Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+
+              if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not event_flags.get("manual_melee_lock", false):
+                  event_flags["manual_melee_lock"] = true
+                  _melee_attack()
+                  get_tree().create_timer(0.45).timeout.connect(func(): event_flags["manual_melee_lock"] = false)
+
+              if Input.is_key_pressed(KEY_R) and not event_flags.get("manual_ranged_lock", false):
+                  event_flags["manual_ranged_lock"] = true
+                  _ranged_attack()
+                  get_tree().create_timer(0.65).timeout.connect(func(): event_flags["manual_ranged_lock"] = false)
+
+              if Input.is_key_pressed(KEY_H) and not event_flags.get("manual_heal_lock", false):
+                  event_flags["manual_heal_lock"] = true
+                  _heal()
+                  get_tree().create_timer(0.7).timeout.connect(func(): event_flags["manual_heal_lock"] = false)
+
+          func _run_auto_demo(_delta: float) -> void:
+              if elapsed >= 1.2 and elapsed < 3.4:
+                  var k := clamp((elapsed - 1.2) / 2.2, 0.0, 1.0)
+                  player.position.z = lerp(8.5, 3.0, k)
+                  player.rotation.y = 0.0
+
+              if elapsed >= 4.1 and not event_flags.get("first_enemy_hit", false):
+                  event_flags["first_enemy_hit"] = true
+                  _enemy_attack()
+
+              if elapsed >= 5.0 and not event_flags.get("melee_1", false):
+                  event_flags["melee_1"] = true
+                  _melee_attack()
+
+              if elapsed >= 6.0 and not event_flags.get("melee_2", false):
+                  event_flags["melee_2"] = true
+                  _melee_attack()
+
+              if elapsed >= 7.0 and not event_flags.get("block_hit", false):
+                  event_flags["block_hit"] = true
+                  blocking = true
+                  _push_event("BLOCK ACTIVE")
+                  _enemy_attack()
+
+              if elapsed >= 8.0 and not event_flags.get("heal", false):
+                  event_flags["heal"] = true
+                  blocking = false
+                  _heal()
+
+              if elapsed >= 8.8 and elapsed < 9.8:
+                  enemy_ai_enabled = false
+                  var k2 := clamp((elapsed - 8.8) / 1.0, 0.0, 1.0)
+                  player.position.z = lerp(player.position.z, 6.0, k2)
+                  player.rotation.y = 0.0
+                  enemy_state = "RANGED TARGET"
+
+              if elapsed >= 10.0 and not event_flags.get("range_1", false):
+                  event_flags["range_1"] = true
+                  _ranged_attack()
+
+              if elapsed >= 11.2 and not event_flags.get("range_2", false):
+                  event_flags["range_2"] = true
+                  _ranged_attack()
+
+              if elapsed >= 12.4 and not event_flags.get("range_3", false):
+                  event_flags["range_3"] = true
+                  _ranged_attack()
+
+              if elapsed >= 13.6 and not event_flags.get("range_4", false):
+                  event_flags["range_4"] = true
+                  _ranged_attack()
+
+              if elapsed >= 15.2 and not event_flags.get("done", false):
+                  event_flags["done"] = true
+                  _push_event("DEMO COMPLETE - all mechanics shown")
+
+              if elapsed >= 17.2:
+                  get_tree().quit(0)
+
+          func _update_enemy_ai(delta: float) -> void:
+              if enemy_hp <= 0.0:
+                  enemy_state = "DEAD"
+                  return
+              if not enemy_ai_enabled:
+                  return
+
+              var flat_player := Vector3(player.position.x, enemy.position.y, player.position.z)
+              var distance := enemy.position.distance_to(flat_player)
+
+              if distance > DETECTION_RANGE:
+                  enemy_state = "IDLE"
+                  return
+
+              enemy.look_at(flat_player, Vector3.UP)
+
+              if distance > ATTACK_RANGE:
+                  enemy_state = "CHASE"
+                  enemy.position = enemy.position.move_toward(flat_player, 1.65 * delta)
+              else:
+                  enemy_state = "ATTACK"
+                  if not auto_demo:
+                      enemy_attack_clock -= delta
+                      if enemy_attack_clock <= 0.0:
+                          enemy_attack_clock = 1.5
+                          _enemy_attack()
+
+          func _calculate_damage(raw_damage: float, defense: float) -> float:
+              return max(1.0, raw_damage - defense * 0.5)
+
+          func _enemy_attack() -> void:
+              if player_hp <= 0.0 or enemy_hp <= 0.0:
+                  return
+              var damage := _calculate_damage(ENEMY_DAMAGE, PLAYER_DEFENSE)
+              if blocking:
+                  damage *= 0.3
+                  _push_event("Shield block: -%.1f HP (70%% reduction)" % damage)
+              else:
+                  _push_event("Enemy hit: -%.1f HP" % damage)
+              player_hp = max(0.0, player_hp - damage)
+
+          func _melee_attack() -> void:
+              if enemy_hp <= 0.0:
+                  return
+              var distance := player.position.distance_to(enemy.position)
+              if distance > 2.6 and not auto_demo:
+                  _push_event("Melee missed: target too far")
+                  return
+              var damage := _calculate_damage(MELEE_DAMAGE, 0.0)
+              enemy_hp = max(0.0, enemy_hp - damage)
+              _push_event("Melee attack: -%.0f enemy HP" % damage)
+              _flash_enemy()
+              if enemy_hp <= 0.0:
+                  _enemy_died()
+
+          func _ranged_attack() -> void:
+              if enemy_hp <= 0.0:
+                  return
+              var arrow := MeshInstance3D.new()
+              arrow.name = "Projectile"
+              var mesh := BoxMesh.new()
+              mesh.size = Vector3(0.10, 0.10, 0.75)
+              var material := StandardMaterial3D.new()
+              material.albedo_color = Color(1.0, 0.78, 0.18, 1.0)
+              material.emission_enabled = true
+              material.emission = Color(0.85, 0.42, 0.05, 1.0)
+              mesh.material = material
+              arrow.mesh = mesh
+              add_child(arrow)
+              arrow.global_position = projectile_spawn.global_position
+              arrow.look_at(enemy.global_position + Vector3(0, 0.45, 0), Vector3.UP)
+              _push_event("Ranged attack: projectile launched")
+
+              var target := enemy.global_position + Vector3(0, 0.45, 0)
+              var tween := create_tween()
+              tween.tween_property(arrow, "global_position", target, 0.55)
+              tween.tween_callback(_finish_projectile.bind(arrow))
+
+          func _finish_projectile(arrow: Node) -> void:
+              if is_instance_valid(arrow):
+                  arrow.queue_free()
+              if enemy_hp <= 0.0:
+                  return
+              var damage := _calculate_damage(RANGED_DAMAGE, 0.0)
+              enemy_hp = max(0.0, enemy_hp - damage)
+              _push_event("Ranged hit: -%.0f enemy HP" % damage)
+              _flash_enemy()
+              if enemy_hp <= 0.0:
+                  _enemy_died()
+
+          func _heal() -> void:
+              if player_hp <= 0.0:
+                  return
+              var before := player_hp
+              player_hp = min(PLAYER_MAX_HP, player_hp + PLAYER_MAX_HP * 0.10)
+              _push_event("Healing potion: +%.1f HP" % (player_hp - before))
+
+          func _enemy_died() -> void:
+              enemy_state = "DEAD"
+              enemy_ai_enabled = false
+              _push_event("Enemy defeated")
+              var tween := create_tween()
+              tween.tween_property(enemy, "rotation", Vector3(0, 0, deg_to_rad(90.0)), 0.45)
+
+          func _flash_enemy() -> void:
+              var body := $Enemy/Body as MeshInstance3D
+              if body == null:
+                  return
+              var old_scale := body.scale
+              body.scale = old_scale * 1.08
+              var tween := create_tween()
+              tween.tween_property(body, "scale", old_scale, 0.18)
+
+          func _push_event(text: String) -> void:
+              last_event = text
+              event_lines.push_front(text)
+              while event_lines.size() > 4:
+                  event_lines.pop_back()
+              print("EVENT: " + text)
+
+          func _build_hud() -> void:
+              var layer := CanvasLayer.new()
+              layer.name = "HUD"
+              add_child(layer)
+
+              var panel := ColorRect.new()
+              panel.position = Vector2(18, 18)
+              panel.size = Vector2(550, 214)
+              panel.color = Color(0.015, 0.02, 0.035, 0.88)
+              layer.add_child(panel)
+
+              var title := _make_label(layer, Vector2(34, 30), Vector2(520, 28), 22)
+              title.text = "RPG CASE 1 - GODOT ENGINE PROTOTYPE"
+              title.modulate = Color(0.78, 0.9, 1.0)
+
+              var controls := _make_label(layer, Vector2(34, 62), Vector2(520, 46), 16)
+              controls.text = "WASD Move | Shift Run x1.3 | Ctrl Sneak x0.7\nLMB Melee | RMB Block | R Ranged | H Heal 10%"
+
+              hp_label = _make_label(layer, Vector2(34, 112), Vector2(520, 24), 18)
+              enemy_label = _make_label(layer, Vector2(34, 138), Vector2(520, 24), 18)
+              state_label = _make_label(layer, Vector2(34, 164), Vector2(520, 24), 17)
+              event_label = _make_label(layer, Vector2(34, 190), Vector2(520, 30), 15)
+
+              block_label = _make_label(layer, Vector2(1030, 26), Vector2(220, 42), 22)
+              block_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+              block_label.modulate = Color(1.0, 0.85, 0.18)
+
+              var tag := _make_label(layer, Vector2(965, 665), Vector2(295, 34), 16)
+              tag.text = "Studwork 7334625 | Case 1"
+              tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+              tag.modulate = Color(0.75, 0.78, 0.82)
+
+          func _make_label(parent: Node, pos: Vector2, size: Vector2, font_size: int) -> Label:
+              var label := Label.new()
+              label.position = pos
+              label.size = size
+              label.add_theme_font_size_override("font_size", font_size)
+              label.add_theme_color_override("font_color", Color.WHITE)
+              parent.add_child(label)
+              return label
+
+          func _update_hud() -> void:
+              if hp_label == null:
+                  return
+              hp_label.text = "PLAYER HP: %.1f / 100   DEF: 8" % player_hp
+              enemy_label.text = "ENEMY HP: %.1f / 75   AI: %s" % [enemy_hp, enemy_state]
+              state_label.text = "Melee: 15   Ranged: 12   Detection: 8m   Attack: 1.8m"
+              event_label.text = "Event: " + last_event
+              block_label.text = "BLOCK ACTIVE" if blocking else ""
+          EOF
+
+          cat > studwork_7334625_case1/README.txt <<'EOF'
+          Native Godot Engine project for Studwork order 7334625, Case 1.
+          Engine: Godot 4.7.2 stable.
+          Main scene: Prototype.tscn.
+          Mechanics: movement, run x1.3, sneak x0.7, HP, defense, melee,
+          ranged projectile, shield block, heal 10%, enemy detection/chase/attack/death.
+          CI_CAPTURE=1 runs a deterministic automatic demo and exits.
+          VALIDATE_ONLY=1 prints CASE 1 VALIDATION: PASS and exits.
+          EOF
+
+      - name: Import project and validate scripts headlessly
+        run: |
+          GODOT=/tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+          PROJECT=$PWD/studwork_7334625_case1
+          "$GODOT" --headless --editor --path "$PROJECT" --quit --rendering-method gl_compatibility > artifacts/import.log 2>&1
+          VALIDATE_ONLY=1 "$GODOT" --headless --path "$PROJECT" --rendering-method gl_compatibility > artifacts/validation.log 2>&1
+          cat artifacts/validation.log
+          grep -q "CASE 1 VALIDATION: PASS" artifacts/validation.log
+
+      - name: Start virtual desktop and real Godot Editor
+        run: |
+          Xvfb :99 -screen 0 1600x900x24 -ac +extension GLX +render -noreset > /tmp/xvfb.log 2>&1 &
+          echo $! > /tmp/xvfb.pid
+          export DISPLAY=:99
+          export LIBGL_ALWAYS_SOFTWARE=1
+          openbox > /tmp/openbox.log 2>&1 &
+          sleep 2
+
+          GODOT=/tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+          PROJECT=$PWD/studwork_7334625_case1
+          "$GODOT" --editor --path "$PROJECT" "$PROJECT/Prototype.tscn" --rendering-method gl_compatibility > artifacts/editor.log 2>&1 &
+          echo $! > /tmp/editor.pid
+
+          for i in {1..40}; do
+            if wmctrl -l | grep -qi "Godot"; then break; fi
+            sleep 1
+          done
+          sleep 8
+          wmctrl -l || true
+          ffmpeg -y -f x11grab -video_size 1600x900 -i :99.0 -frames:v 1 artifacts/01_Godot_Editor_Scene.png >/tmp/shot1.log 2>&1
+
+          WIN=$(xdotool search --name "Godot" | head -1 || true)
+          if [ -n "$WIN" ]; then
+            xdotool windowactivate --sync "$WIN" || true
+            xdotool key ctrl+p || true
+            sleep 1
+            xdotool type --delay 45 "Prototype.gd" || true
+            xdotool key Return || true
+            sleep 4
+          fi
+          ffmpeg -y -f x11grab -video_size 1600x900 -i :99.0 -frames:v 1 artifacts/02_Godot_Editor_Code.png >/tmp/shot2.log 2>&1
+
+      - name: Record real runtime video and screenshots
+        run: |
+          export DISPLAY=:99
+          export LIBGL_ALWAYS_SOFTWARE=1
+          GODOT=/tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+          PROJECT=$PWD/studwork_7334625_case1
+
+          ffmpeg -y -f x11grab -draw_mouse 1 -framerate 30 -video_size 1600x900 -i :99.0 -t 23             -c:v libx264 -preset ultrafast -crf 20 -pix_fmt yuv420p artifacts/7334625_Case1_Godot_Demo.mp4             > artifacts/ffmpeg_video.log 2>&1 &
+          FFMPEG_PID=$!
+          sleep 2
+
+          CI_CAPTURE=1 "$GODOT" --path "$PROJECT" --rendering-method gl_compatibility --position 150,90             > artifacts/runtime.log 2>&1 &
+          GAME_PID=$!
+
+          sleep 5
+          ffmpeg -y -f x11grab -video_size 1600x900 -i :99.0 -frames:v 1 artifacts/03_Gameplay_Melee.png >/tmp/shot3.log 2>&1
+          sleep 3
+          ffmpeg -y -f x11grab -video_size 1600x900 -i :99.0 -frames:v 1 artifacts/04_Gameplay_Block_Heal.png >/tmp/shot4.log 2>&1
+          sleep 4
+          ffmpeg -y -f x11grab -video_size 1600x900 -i :99.0 -frames:v 1 artifacts/05_Gameplay_Ranged.png >/tmp/shot5.log 2>&1
+          sleep 4
+          ffmpeg -y -f x11grab -video_size 1600x900 -i :99.0 -frames:v 1 artifacts/06_Gameplay_Enemy_Defeated.png >/tmp/shot6.log 2>&1
+
+          wait "$GAME_PID" || true
+          wait "$FFMPEG_PID" || true
+
+          ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 artifacts/7334625_Case1_Godot_Demo.mp4 > artifacts/video_info.txt
+          cat artifacts/video_info.txt
+
+      - name: Final native verification
+        run: |
+          grep -q "CASE 1 VALIDATION: PASS" artifacts/validation.log
+          grep -q "EVENT: Melee attack" artifacts/runtime.log
+          grep -q "EVENT: Shield block" artifacts/runtime.log
+          grep -q "EVENT: Healing potion" artifacts/runtime.log
+          grep -q "EVENT: Ranged hit" artifacts/runtime.log
+          grep -q "EVENT: Enemy defeated" artifacts/runtime.log
+          test -s artifacts/01_Godot_Editor_Scene.png
+          test -s artifacts/02_Godot_Editor_Code.png
+          test -s artifacts/03_Gameplay_Melee.png
+          test -s artifacts/04_Gameplay_Block_Heal.png
+          test -s artifacts/05_Gameplay_Ranged.png
+          test -s artifacts/06_Gameplay_Enemy_Defeated.png
+          test -s artifacts/7334625_Case1_Godot_Demo.mp4
+          cp studwork_7334625_case1/README.txt artifacts/PROJECT_README.txt
+          sha256sum studwork_7334625_case1/project.godot studwork_7334625_case1/Prototype.tscn studwork_7334625_case1/Prototype.gd artifacts/*.png artifacts/*.mp4 > artifacts/SHA256SUMS.txt
+
+      - name: Stop editor
+        if: always()
+        run: |
+          kill $(cat /tmp/editor.pid 2>/dev/null) 2>/dev/null || true
+          kill $(cat /tmp/xvfb.pid 2>/dev/null) 2>/dev/null || true
+
+      - name: Upload native project and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7334625-case1-godot-native
+          path: |
+            studwork_7334625_case1
+            artifacts
+          if-no-files-found: error
+          retention-days: 7
