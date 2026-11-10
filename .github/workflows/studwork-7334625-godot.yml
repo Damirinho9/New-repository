@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-capture:
@@ -649,6 +649,30 @@ jobs:
           test -s artifacts/7334625_Case1_Godot_Demo.mp4
           cp studwork_7334625_case1/README.txt artifacts/PROJECT_README.txt
           sha256sum studwork_7334625_case1/project.godot studwork_7334625_case1/Prototype.tscn studwork_7334625_case1/Prototype.gd artifacts/*.png artifacts/*.mp4 > artifacts/SHA256SUMS.txt
+
+      - name: Publish cloud evidence to branch
+        run: |
+          rm -rf native_output
+          mkdir -p native_output/Project native_output/Screenshots
+          cp studwork_7334625_case1/project.godot native_output/Project/
+          cp studwork_7334625_case1/Prototype.tscn native_output/Project/
+          cp studwork_7334625_case1/Prototype.gd native_output/Project/
+          cp studwork_7334625_case1/README.txt native_output/Project/
+          cp artifacts/01_Godot_Editor_Scene.png native_output/Screenshots/
+          cp artifacts/02_Godot_Editor_Code.png native_output/Screenshots/
+          cp artifacts/03_Gameplay_Melee.png native_output/Screenshots/
+          cp artifacts/04_Gameplay_Block_Heal.png native_output/Screenshots/
+          cp artifacts/05_Gameplay_Ranged.png native_output/Screenshots/
+          cp artifacts/06_Gameplay_Enemy_Defeated.png native_output/Screenshots/
+          cp artifacts/7334625_Case1_Godot_Demo.mp4 native_output/
+          cp artifacts/validation.log native_output/
+          cp artifacts/runtime.log native_output/
+          printf '%s\n' 'https://github.com/Damirinho9/New-repository/blob/studwork-7334625-godot-case1/native_output/7334625_Case1_Godot_Demo.mp4' > native_output/VIDEO_LINK.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native_output
+          git commit -m "Publish native Godot evidence for Studwork 7334625 Case 1"
+          git push origin HEAD:studwork-7334625-godot-case1
 
       - name: Stop editor
         if: always()
