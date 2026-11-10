@@ -1,0 +1,65 @@
+name: Studwork 7334625 Case 4 Blender Native 3D v3
+
+on:
+  push:
+    branches:
+      - studwork-7334625-blender-case4
+    paths:
+      - ".github/workflows/studwork-7334625-case4-v3.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender xvfb openbox ffmpeg xdotool wmctrl wget unzip python3-pil python3-numpy
+          blender --version | head -n 2
+          python3 -c "import numpy; print('NUMPY', numpy.__version__)"
+
+      - name: Prepare references and original assets
+        run: |
+          mkdir -p case4/{refs,source,exports,screenshots,engine,logs}
+          wget -q 'https://images.metmuseum.org/CRDImages/cl/original/DP366852.jpg' -O case4/refs/met_chalice.jpg || true
+          wget -q 'https://cdn21.picryl.com/photo/0700/01/01/gold-goblet-da09c2-640.jpg' -O case4/refs/public_domain_goblet.jpg || true
+          wget -q 'https://upload.wikimedia.org/wikipedia/commons/3/3b/Clock_Tower_in_Kotor.JPG' -O case4/refs/clock_tower.jpg || true
+          python3 case4_pipeline/make_refs.py | tee case4/logs/reference_build.log
+          grep -q 'CASE4 REFS: PASS' case4/logs/reference_build.log
+
+      - name: Build Blender assets
+        run: |
+          PYTHONPATH=/usr/lib/python3/dist-packages blender --background --python case4_pipeline/build_goblet.py | tee case4/logs/blender_build.log
+          grep -q 'CASE4 BLENDER BUILD: PASS' case4/logs/blender_build.log
+          grep -q 'CASE4_STATS' case4/logs/blender_build.log
+
+      - name: Capture stages and verify game-engine import
+        run: |
+          bash case4_pipeline/post_build.sh | tee case4/logs/post_build.log
+          grep -q 'CASE 4 VALIDATION: PASS' case4/logs/post_build.log
+
+      - name: Publish evidence to branch
+        run: |
+          rm -rf native_output_case4
+          cp -r case4 native_output_case4
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native_output_case4
+          git commit -m "Publish verified Blender Case 4 asset and evidence"
+          git push origin HEAD:studwork-7334625-blender-case4
+
+      - name: Upload native artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7334625-case4-blender-native-v3
+          path: case4
+          if-no-files-found: error
+          retention-days: 7
