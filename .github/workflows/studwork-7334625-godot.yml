@@ -324,7 +324,7 @@ jobs:
 
           func _run_auto_demo(_delta: float) -> void:
               if elapsed >= 1.2 and elapsed < 3.4:
-                  var k := clamp((elapsed - 1.2) / 2.2, 0.0, 1.0)
+                  var k: float = clampf((elapsed - 1.2) / 2.2, 0.0, 1.0)
                   player.position.z = lerp(8.5, 3.0, k)
                   player.rotation.y = 0.0
 
@@ -353,7 +353,7 @@ jobs:
 
               if elapsed >= 8.8 and elapsed < 9.8:
                   enemy_ai_enabled = false
-                  var k2 := clamp((elapsed - 8.8) / 1.0, 0.0, 1.0)
+                  var k2: float = clampf((elapsed - 8.8) / 1.0, 0.0, 1.0)
                   player.position.z = lerp(player.position.z, 6.0, k2)
                   player.rotation.y = 0.0
                   enemy_state = "RANGED TARGET"
