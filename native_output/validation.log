@@ -1,0 +1,6 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+EVENT: Prototype ready
+CASE 1 VALIDATION: PASS
+Player HP=100 Defense=8 Melee=15 Ranged=12
+Enemy HP=75 Detection=8 AttackRange=1.8 EnemyDamage=15
