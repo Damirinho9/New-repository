@@ -1,0 +1,7 @@
+78098b89c88a74ebe8c20117b8754620
+::res://::1794340516
+goblet_low.glb::PackedScene::6385708258732145387::1794340507::1794340512::1::::<><><>0<>0<>86dddc2642d10c73c36d567a9c0f5d53<>res://.godot/imported/goblet_low.glb-2bd6351263b3eff82ffabd4b34807476.scn::uid://cknd72m533piu::::res://goblet_low_goblet_albedo.png<>uid://bdy6qbrwkxrki::::res://goblet_low_goblet_roughness.png
+goblet_low_goblet_albedo.png::CompressedTexture2D::5501807449022264256::1794340512::1794340521::1::::<><><>0<>0<>2666fd5f11dc132b1bbf2fed5d1aa833<>res://.godot/imported/goblet_low_goblet_albedo.png-6da32294ee86b5ddd9d2b4f63e8e9d6e.s3tc.ctex::
+goblet_low_goblet_roughness.png::CompressedTexture2D::2648443159981763448::1794340512::1794340521::1::::<><><>0<>0<>83569bcf13390af927f6ce60366d4577<>res://.godot/imported/goblet_low_goblet_roughness.png-83ab1db32575191fa0815c7c88952f2e.s3tc.ctex::
+Main.gd::GDScript::6403723773589235472::1794340507::0::1::::<>Node3D<><>0<>0<><>::
+Main.tscn::PackedScene::-1::1794340507::0::1::::<><><>0<>0<><>::res://goblet_low.glb<>res://Main.gd

@@ -1,0 +1,1 @@
+CASE 4 VALIDATION: PASS {'low_vertices': 768, 'low_edges': 1504, 'low_polygons': 736, 'high_vertices': 11520, 'high_edges': 22880, 'high_polygons': 11360, 'high_detail_polygons': 6144, 'height_m': 0.231, 'bowl_diameter_m': 0.166, 'base_diameter_m': 0.132, 'uv_layers': 1, 'material_name': 'Aged_Brass_Patina'}

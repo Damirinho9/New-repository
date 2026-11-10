@@ -1,0 +1,60 @@
+Blender 4.0.2
+Info: Total files 2 | Changed 2 | Failed 0
+Fra:1 Mem:40.35M (Peak 41.43M) | Time:00:01.58 | Syncing Goblet_LOW
+Fra:1 Mem:40.48M (Peak 44.38M) | Time:00:02.52 | Syncing Studio_Floor
+Fra:1 Mem:40.53M (Peak 44.38M) | Time:00:03.00 | Syncing Camera
+Fra:1 Mem:40.53M (Peak 44.38M) | Time:00:03.00 | Syncing Area
+Fra:1 Mem:40.53M (Peak 44.38M) | Time:00:03.00 | Syncing Area.001
+Fra:1 Mem:40.53M (Peak 44.38M) | Time:00:03.00 | Syncing Area.002
+Fra:1 Mem:40.53M (Peak 44.38M) | Time:00:03.01 | Rendering 1 / 64 samples
+Fra:1 Mem:40.44M (Peak 44.38M) | Time:00:10.18 | Rendering 26 / 64 samples
+Fra:1 Mem:40.44M (Peak 44.38M) | Time:00:14.80 | Rendering 51 / 64 samples
+Fra:1 Mem:40.44M (Peak 44.38M) | Time:00:16.88 | Rendering 64 / 64 samples
+Saved: '/home/runner/work/New-repository/New-repository/case4/screenshots/06_Textured_View.png'
+Time: 00:17.37 (Saving: 00:00.30)
+
+Fra:1 Mem:40.42M (Peak 40.42M) | Time:00:00.03 | Syncing Goblet_LOW
+Fra:1 Mem:40.53M (Peak 40.53M) | Time:00:00.03 | Syncing Studio_Floor
+Fra:1 Mem:40.53M (Peak 40.53M) | Time:00:00.03 | Syncing Camera
+Fra:1 Mem:40.53M (Peak 40.53M) | Time:00:00.03 | Syncing Area
+Fra:1 Mem:40.53M (Peak 40.53M) | Time:00:00.03 | Syncing Area.001
+Fra:1 Mem:40.53M (Peak 40.53M) | Time:00:00.03 | Syncing Area.002
+Fra:1 Mem:40.53M (Peak 40.53M) | Time:00:00.05 | Rendering 1 / 64 samples
+Fra:1 Mem:40.44M (Peak 40.53M) | Time:00:04.98 | Rendering 26 / 64 samples
+Fra:1 Mem:40.44M (Peak 40.53M) | Time:00:09.01 | Rendering 51 / 64 samples
+Fra:1 Mem:40.44M (Peak 40.53M) | Time:00:11.09 | Rendering 64 / 64 samples
+Saved: '/home/runner/work/New-repository/New-repository/case4/screenshots/07_Final_Render.png'
+Time: 00:11.43 (Saving: 00:00.15)
+
+Fra:1 Mem:40.83M (Peak 40.83M) | Time:00:00.03 | Syncing Goblet_HIGH
+Fra:1 Mem:42.32M (Peak 42.32M) | Time:00:00.05 | Syncing HIGH_Detail_Ring_022
+Fra:1 Mem:42.53M (Peak 42.53M) | Time:00:00.05 | Syncing HIGH_Detail_Ring_094
+Fra:1 Mem:42.73M (Peak 42.73M) | Time:00:00.05 | Syncing HIGH_Detail_Ring_119
+Fra:1 Mem:42.94M (Peak 42.94M) | Time:00:00.05 | Syncing HIGH_Detail_Ring_213
+Fra:1 Mem:43.15M (Peak 43.15M) | Time:00:00.05 | Syncing Studio_Floor
+Fra:1 Mem:43.15M (Peak 43.15M) | Time:00:00.05 | Syncing Camera
+Fra:1 Mem:43.15M (Peak 43.15M) | Time:00:00.05 | Syncing Area
+Fra:1 Mem:43.15M (Peak 43.15M) | Time:00:00.05 | Syncing Area.001
+Fra:1 Mem:43.15M (Peak 43.15M) | Time:00:00.05 | Syncing Area.002
+Fra:1 Mem:43.15M (Peak 43.15M) | Time:00:00.07 | Rendering 1 / 64 samples
+Fra:1 Mem:41.41M (Peak 43.15M) | Time:00:06.60 | Rendering 26 / 64 samples
+Fra:1 Mem:41.41M (Peak 43.15M) | Time:00:12.20 | Rendering 51 / 64 samples
+Fra:1 Mem:41.41M (Peak 43.15M) | Time:00:15.13 | Rendering 64 / 64 samples
+Saved: '/home/runner/work/New-repository/New-repository/case4/screenshots/04_HighPoly_View.png'
+Time: 00:15.52 (Saving: 00:00.13)
+
+CASE4_STATS {"low_vertices": 768, "low_edges": 1504, "low_polygons": 736, "high_vertices": 11520, "high_edges": 22880, "high_polygons": 11360, "high_detail_polygons": 6144, "height_m": 0.231, "bowl_diameter_m": 0.166, "base_diameter_m": 0.132, "uv_layers": 1, "material_name": "Aged_Brass_Patina"}
+Info: Saved "7334625_Case4_Goblet_Master.blend"
+19:54:02 | ERROR: Draco mesh compression is not available because library could not be found at /usr/bin/4.0/python/lib/python3.12/site-packages/libextern_draco.so
+19:54:03 | INFO: Starting glTF 2.0 export
+19:54:03 | INFO: Extracting primitive: Goblet_LOWMesh
+19:54:03 | INFO: Primitives created: 1
+19:54:03 | INFO: Finished glTF 2.0 export in 0.07553577423095703 s
+
+
+FBX export starting... '/home/runner/work/New-repository/New-repository/case4/exports/7334625_Goblet_LOW.fbx'
+export finished in 0.0053 sec.
+Info: Saved "7334625_Case4_Goblet_RenderScene.blend"
+CASE4 BLENDER BUILD: PASS
+
+Blender quit
