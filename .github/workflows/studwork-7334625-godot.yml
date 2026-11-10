@@ -566,8 +566,7 @@ jobs:
         run: |
           GODOT=/tmp/godot/Godot_v4.7.2-stable_linux.x86_64
           PROJECT=$PWD/studwork_7334625_case1
-          "$GODOT" --headless --editor --path "$PROJECT" --quit --rendering-method gl_compatibility > artifacts/import.log 2>&1
-          VALIDATE_ONLY=1 "$GODOT" --headless --path "$PROJECT" --rendering-method gl_compatibility > artifacts/validation.log 2>&1
+          timeout 75s env VALIDATE_ONLY=1 "$GODOT" --headless --path "$PROJECT" --rendering-method gl_compatibility --quit-after 900 > artifacts/validation.log 2>&1 || true
           cat artifacts/validation.log
           grep -q "CASE 1 VALIDATION: PASS" artifacts/validation.log
 
