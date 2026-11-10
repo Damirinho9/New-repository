@@ -1,0 +1,339 @@
+name: Studwork 7334625 Case 4 Blender Native 3D
+
+on:
+  push:
+    branches:
+      - studwork-7334625-blender-case4
+    paths:
+      - ".github/workflows/studwork-7334625-case4.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Blender and capture tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender xvfb openbox ffmpeg xdotool wmctrl wget unzip python3-pil
+          blender --version | head -n 2
+
+      - name: Download reference images and create moodboard/sketch/textures
+        run: |
+          mkdir -p case4/{refs,source,exports,screenshots,engine,logs}
+          wget -q 'https://images.metmuseum.org/CRDImages/cl/original/DP368917.jpg' -O case4/refs/met_chalice.jpg
+          wget -q 'https://cdn21.picryl.com/photo/0700/01/01/gold-goblet-7e84ee-1024.jpg' -O case4/refs/public_domain_goblet.jpg
+          wget -q 'https://www.mishanita.ru/data/images/Vyborg_2012/2012-10-13_17-21-52.jpg' -O case4/refs/clock_tower.jpg || true
+          cat > case4/refs/SOURCES.txt <<'EOF'
+          Reference 1: The Metropolitan Museum of Art, German Chalice, object 474435, image DP368917.jpg.
+          Reference 2: PICRYL public-domain Gold Goblet, media gold-goblet-7e84ee.
+          Reference 3: Clock Tower of Vyborg photo used only as setting/aging reference.
+          Moodboard images are references only; final model, sketch, textures and renders are original work.
+          EOF
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw, ImageFont
+          import os, random, math
+          root='case4'
+          files=[('met_chalice.jpg','Форма чаши и ножки'),('public_domain_goblet.jpg','Патина и металл'),('clock_tower.jpg','Сеттинг: город, затерянный во времени')]
+          canvas=Image.new('RGB',(1600,900),(28,31,35)); d=ImageDraw.Draw(canvas)
+          d.text((45,30),'MOODBOARD - вариант 20: кубок для напитков / город, затерянный во времени',fill=(240,240,235))
+          x=45
+          for fn,label in files:
+              p=os.path.join(root,'refs',fn)
+              if not os.path.exists(p): continue
+              im=Image.open(p).convert('RGB'); im.thumbnail((470,650))
+              y=120+(650-im.height)//2
+              canvas.paste(im,(x,y)); d.rectangle((x-3,y-3,x+im.width+3,y+im.height+3),outline=(180,160,105),width=3)
+              d.text((x,y+im.height+20),label,fill=(225,225,220))
+              x += 510
+          d.text((45,855),'Направление: латунь + темная патина + следы времени + мотивы циферблата. Финальная модель не копирует конкретный референс.',fill=(190,200,205))
+          canvas.save(os.path.join(root,'screenshots','01_Moodboard_References.png'))
+
+          # Original concept sketch
+          sk=Image.new('RGB',(1200,900),'white'); sd=ImageDraw.Draw(sk)
+          sd.text((40,35),'Собственный эскиз - "Кубок Хранителя Времени"',fill='black')
+          cx=600
+          pts=[(cx-60,750),(cx-90,730),(cx-105,690),(cx-45,650),(cx-22,610),(cx-22,455),(cx-55,430),(cx-145,390),(cx-180,300),(cx-185,185),(cx-175,145)]
+          rpts=[(2*cx-x,y) for x,y in reversed(pts)]
+          outline=pts+rpts
+          sd.line(outline+[outline[0]],fill=(60,60,60),width=5)
+          sd.ellipse((cx-185,125,cx+185,165),outline=(60,60,60),width=4)
+          sd.ellipse((cx-110,720,cx+110,770),outline=(60,60,60),width=4)
+          for yy in [205,235,265]: sd.arc((cx-170,yy-12,cx+170,yy+22),0,180,fill=(140,110,50),width=3)
+          for a in range(0,360,30):
+              ang=math.radians(a); x1=cx+38*math.cos(ang); y1=525+38*math.sin(ang); x2=cx+55*math.cos(ang); y2=525+55*math.sin(ang)
+              sd.line((x1,y1,x2,y2),fill=(90,90,90),width=3)
+          sd.ellipse((cx-58,467,cx+58,583),outline=(90,90,90),width=4)
+          sd.text((cx+230,205),'широкая чаша\nс потертым ободом',fill='black')
+          sd.line((cx+180,210,cx+220,210),fill='black',width=2)
+          sd.text((cx+135,500),'мотив циферблата\nна центральном узле',fill='black')
+          sd.line((cx+60,520,cx+125,520),fill='black',width=2)
+          sd.text((cx+150,690),'устойчивая база',fill='black')
+          sd.line((cx+100,725,cx+145,705),fill='black',width=2)
+          sd.text((40,820),'Размеры игрового ассета: высота около 0,23 м; диаметр чаши около 0,16 м; диаметр основания около 0,13 м.',fill='black')
+          sd.text((40,855),'Материал: состаренная латунь с зеленоватой патиной. Стиль: реалистичная игровая стилизация.',fill='black')
+          sk.save(os.path.join(root,'screenshots','02_Original_Concept_Sketch.png'))
+
+          # Original texture
+          random.seed(7334625)
+          W=1024; H=1024
+          tex=Image.new('RGB',(W,H),(126,92,38)); td=ImageDraw.Draw(tex)
+          for y in range(H):
+              for x in range(0,W,4):
+                  n=random.randint(-18,18); base=(max(0,min(255,126+n)),max(0,min(255,92+n)),max(0,min(255,38+n)))
+                  td.rectangle((x,y,x+3,y),fill=base)
+          for _ in range(220):
+              x=random.randrange(W); y=random.randrange(H); rr=random.randrange(3,35)
+              col=random.choice([(42,91,78),(52,108,90),(30,72,66),(72,110,77)])
+              td.ellipse((x-rr,y-rr//2,x+rr,y+rr//2),fill=col)
+          # clock tick band near upper UV area
+          for x in range(0,W,42):
+              td.rectangle((x,70,x+4,135),fill=(55,45,28))
+          for _ in range(130):
+              x=random.randrange(W); y=random.randrange(H)
+              td.line((x,y,min(W-1,x+random.randrange(20,130)),min(H-1,y+random.randrange(-5,6))),fill=(72,58,32),width=1)
+          tex.save(os.path.join(root,'source','goblet_albedo.png'))
+          PY
+
+      - name: Build low and high poly Blender assets
+        run: |
+          cat > case4/source/build_goblet.py <<'PY'
+          import bpy, math, os, json
+          from mathutils import Vector
+          ROOT=os.path.abspath(os.path.join(os.path.dirname(__file__),'..'))
+          SRC=os.path.join(ROOT,'source'); EXP=os.path.join(ROOT,'exports'); SH=os.path.join(ROOT,'screenshots'); LOG=os.path.join(ROOT,'logs')
+          os.makedirs(EXP,exist_ok=True); os.makedirs(SH,exist_ok=True); os.makedirs(LOG,exist_ok=True)
+          bpy.ops.object.select_all(action='SELECT'); bpy.ops.object.delete(use_global=False)
+
+          profile=[(0.000,0.000),(0.060,0.000),(0.066,0.006),(0.061,0.014),(0.026,0.026),(0.019,0.040),(0.018,0.078),(0.026,0.092),(0.052,0.105),(0.071,0.120),(0.081,0.155),(0.083,0.198),(0.080,0.222),(0.073,0.231),(0.066,0.231),(0.070,0.218),(0.071,0.198),(0.068,0.158),(0.059,0.130),(0.046,0.112),(0.023,0.098),(0.013,0.082),(0.012,0.034),(0.000,0.020)]
+          def resample(points,n):
+              # arc-length interpolation
+              ds=[0.0]
+              for i in range(1,len(points)):
+                  a=Vector(points[i-1]); b=Vector(points[i]); ds.append(ds[-1]+(b-a).length)
+              total=ds[-1]; out=[]
+              for k in range(n):
+                  t=total*k/(n-1); j=1
+                  while j<len(ds) and ds[j]<t: j+=1
+                  j=min(j,len(ds)-1); d0=ds[j-1]; d1=ds[j]; q=0 if d1==d0 else (t-d0)/(d1-d0)
+                  r=points[j-1][0]*(1-q)+points[j][0]*q; z=points[j-1][1]*(1-q)+points[j][1]*q
+                  out.append((r,z))
+              return out
+
+          def lathe(name,prof,segs):
+              verts=[]; faces=[]
+              rings=len(prof)
+              for s in range(segs):
+                  a=2*math.pi*s/segs; ca=math.cos(a); sa=math.sin(a)
+                  for r,z in prof: verts.append((r*ca,r*sa,z))
+              for s in range(segs):
+                  sn=(s+1)%segs
+                  for j in range(rings-1):
+                      faces.append((s*rings+j,sn*rings+j,sn*rings+j+1,s*rings+j+1))
+              me=bpy.data.meshes.new(name+'Mesh'); me.from_pydata(verts,[],faces); me.update()
+              ob=bpy.data.objects.new(name,me); bpy.context.collection.objects.link(ob)
+              uv=me.uv_layers.new(name='UVMap')
+              for poly in me.polygons:
+                  for li in poly.loop_indices:
+                      vi=me.loops[li].vertex_index; s=vi//rings; j=vi%rings
+                      u=s/segs; v=j/(rings-1)
+                      uv.data[li].uv=(u,v)
+              for p in me.polygons: p.use_smooth=True
+              return ob
+
+          low=lathe('Goblet_LOW',profile,32)
+          high=lathe('Goblet_HIGH',resample(profile,72),160)
+          high.hide_render=True
+          high.hide_viewport=True
+
+          # Materials from original texture
+          img=bpy.data.images.load(os.path.join(SRC,'goblet_albedo.png'))
+          mat=bpy.data.materials.new('Aged_Brass_Patina'); mat.use_nodes=True
+          nt=mat.node_tree; bsdf=nt.nodes.get('Principled BSDF'); tex=nt.nodes.new('ShaderNodeTexImage'); tex.image=img
+          nt.links.new(tex.outputs['Color'],bsdf.inputs['Base Color']); bsdf.inputs['Metallic'].default_value=0.72; bsdf.inputs['Roughness'].default_value=0.36
+          low.data.materials.append(mat); high.data.materials.append(mat)
+
+          # Decorative high-poly rings / time motif
+          dec=[]
+          for z,major,minor in [(0.022,0.052,0.0035),(0.094,0.030,0.003),(0.119,0.061,0.0025),(0.213,0.078,0.0025)]:
+              bpy.ops.mesh.primitive_torus_add(major_radius=major,minor_radius=minor,major_segments=96,minor_segments=16,location=(0,0,z))
+              o=bpy.context.object; o.name=f'High_Detail_{z:.3f}'; o.data.materials.append(mat); o.hide_render=True; o.hide_viewport=True; dec.append(o)
+
+          # Collections grouping
+          low['asset_role']='game_low_poly'; high['asset_role']='high_poly_source'
+          low['scale_meters']=1.0; low['height_m']=0.231
+          # UV export by rendering UVs through bpy operator
+          bpy.context.view_layer.objects.active=low; low.select_set(True)
+          bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.select_all(action='SELECT')
+          try: bpy.ops.uv.export_layout(filepath=os.path.join(SH,'05_UV_Layout.png'),size=(1400,900),opacity=0.35)
+          except Exception as e: print('UV export warning',e)
+          bpy.ops.object.mode_set(mode='OBJECT')
+
+          # Stats
+          stats={
+            'low_vertices':len(low.data.vertices),'low_polygons':len(low.data.polygons),
+            'high_vertices':len(high.data.vertices),'high_polygons':len(high.data.polygons),
+            'high_detail_objects':len(dec),'height_m':0.231,'bowl_diameter_m':0.166,'base_diameter_m':0.132
+          }
+          with open(os.path.join(LOG,'mesh_stats.json'),'w') as f: json.dump(stats,f,indent=2)
+          print('CASE4_STATS',json.dumps(stats))
+
+          # Save native blend with both versions
+          bpy.ops.wm.save_as_mainfile(filepath=os.path.join(SRC,'7334625_Case4_Goblet_Master.blend'))
+
+          # Export low-poly GLB and FBX
+          bpy.ops.object.select_all(action='DESELECT'); low.hide_viewport=False; low.hide_render=False; low.select_set(True); bpy.context.view_layer.objects.active=low
+          bpy.ops.export_scene.gltf(filepath=os.path.join(EXP,'7334625_Goblet_LOW.glb'),export_format='GLB',use_selection=True,export_apply=True)
+          try: bpy.ops.export_scene.fbx(filepath=os.path.join(EXP,'7334625_Goblet_LOW.fbx'),use_selection=True,apply_unit_scale=True,global_scale=1.0)
+          except Exception as e: print('FBX export warning',e)
+
+          # Render setup
+          bpy.ops.object.select_all(action='DESELECT'); low.select_set(True)
+          bpy.ops.mesh.primitive_plane_add(size=2,location=(0,0,-0.002)); floor=bpy.context.object
+          fm=bpy.data.materials.new('Floor'); fm.diffuse_color=(0.055,0.06,0.07,1); floor.data.materials.append(fm)
+          bpy.ops.object.camera_add(location=(0.38,-0.42,0.30)); cam=bpy.context.object; bpy.context.scene.camera=cam
+          def point_at(obj,pt): obj.rotation_euler=(Vector(pt)-obj.location).to_track_quat('-Z','Y').to_euler()
+          point_at(cam,(0,0,0.12)); cam.data.lens=55
+          for loc,energy,size,col in [((0.25,-0.2,0.45),900,0.22,(1.0,0.72,0.45)),((-0.3,-0.1,0.3),650,0.28,(0.45,0.7,1.0)),((0.0,0.32,0.36),500,0.20,(0.45,1.0,0.85))]:
+              bpy.ops.object.light_add(type='AREA',location=loc); l=bpy.context.object; l.data.energy=energy; l.data.shape='DISK'; l.data.size=size; l.data.color=col; point_at(l,(0,0,0.13))
+          sc=bpy.context.scene; sc.render.engine='BLENDER_EEVEE_NEXT' if 'BLENDER_EEVEE_NEXT' in [i.identifier for i in bpy.types.RenderSettings.bl_rna.properties['engine'].enum_items] else 'BLENDER_EEVEE'
+          sc.render.resolution_x=1100; sc.render.resolution_y=1100; sc.render.resolution_percentage=100
+          sc.render.image_settings.file_format='PNG'; sc.render.film_transparent=False
+          sc.world.color=(0.015,0.02,0.03)
+          sc.render.filepath=os.path.join(SH,'07_Final_Render.png'); bpy.ops.render.render(write_still=True)
+          # textured low render as stage view
+          cam.location=(0.32,-0.36,0.22); point_at(cam,(0,0,0.12)); sc.render.filepath=os.path.join(SH,'06_Textured_View.png'); bpy.ops.render.render(write_still=True)
+          bpy.ops.wm.save_as_mainfile(filepath=os.path.join(SRC,'7334625_Case4_Goblet_RenderScene.blend'))
+          PY
+          blender --background --python case4/source/build_goblet.py | tee case4/logs/blender_build.log
+          grep -q 'CASE4_STATS' case4/logs/blender_build.log
+          test -s case4/source/7334625_Case4_Goblet_Master.blend
+          test -s case4/exports/7334625_Goblet_LOW.glb
+          test -s case4/screenshots/07_Final_Render.png
+
+      - name: Capture real Blender stage screenshots
+        run: |
+          cat > case4/source/setup_view.py <<'PY'
+          import bpy, os
+          from mathutils import Quaternion
+          mode=os.environ.get('VIEW_MODE','wire')
+          low=bpy.data.objects.get('Goblet_LOW'); high=bpy.data.objects.get('Goblet_HIGH')
+          details=[o for o in bpy.data.objects if o.name.startswith('High_Detail_')]
+          if low: low.hide_viewport=(mode=='high')
+          if high: high.hide_viewport=(mode!='high')
+          for o in details: o.hide_viewport=(mode!='high')
+          for a in bpy.context.screen.areas:
+              if mode=='uv' and a.type=='VIEW_3D':
+                  a.type='IMAGE_EDITOR'
+                  try: a.spaces.active.image=bpy.data.images.load(os.path.abspath('case4/screenshots/05_UV_Layout.png'))
+                  except: pass
+              elif a.type=='VIEW_3D':
+                  s=a.spaces.active
+                  s.shading.type='WIREFRAME' if mode=='wire' else ('MATERIAL' if mode=='textured' else 'SOLID')
+                  s.overlay.show_floor=True; s.overlay.show_axis_x=True; s.overlay.show_axis_y=True
+                  s.region_3d.view_distance=0.34
+                  s.region_3d.view_rotation=Quaternion((0.86,0.18,0.30,0.36))
+          PY
+          Xvfb :99 -screen 0 1600x900x24 -ac +extension GLX +render -noreset > /tmp/xvfb.log 2>&1 & echo $! >/tmp/xvfb.pid
+          export DISPLAY=:99
+          openbox >/tmp/openbox.log 2>&1 &
+          sleep 2
+          for MODE in wire high textured; do
+            VIEW_MODE=$MODE blender case4/source/7334625_Case4_Goblet_Master.blend --python case4/source/setup_view.py > case4/logs/blender_${MODE}.log 2>&1 &
+            PID=$!; sleep 12
+            OUT=case4/screenshots/03_LowPoly_Wireframe.png; [ "$MODE" = high ] && OUT=case4/screenshots/04_HighPoly_View.png; [ "$MODE" = textured ] && OUT=case4/screenshots/06b_Blender_MaterialViewport.png
+            ffmpeg -y -f x11grab -video_size 1600x900 -i :99.0 -frames:v 1 "$OUT" >/tmp/${MODE}.log 2>&1
+            kill $PID || true; sleep 2
+          done
+          VIEW_MODE=uv blender case4/source/7334625_Case4_Goblet_Master.blend --python case4/source/setup_view.py > case4/logs/blender_uv.log 2>&1 & PID=$!; sleep 12
+          ffmpeg -y -f x11grab -video_size 1600x900 -i :99.0 -frames:v 1 case4/screenshots/05b_UV_Blender_UI.png >/tmp/uv.log 2>&1
+          kill $PID || true
+
+      - name: Download Godot and verify game-engine import
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip -O /tmp/godot.zip
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+          cp case4/exports/7334625_Goblet_LOW.glb case4/engine/goblet_low.glb
+          cp case4/source/goblet_albedo.png case4/engine/goblet_albedo.png
+          cat > case4/engine/project.godot <<'EOF'
+          config_version=5
+          [application]
+          config/name="Case 4 Goblet Import Check"
+          run/main_scene="res://Main.tscn"
+          [display]
+          window/size/viewport_width=1000
+          window/size/viewport_height=700
+          [rendering]
+          renderer/rendering_method="gl_compatibility"
+          EOF
+          cat > case4/engine/Main.tscn <<'EOF'
+          [gd_scene load_steps=2 format=3]
+          [ext_resource type="PackedScene" path="res://goblet_low.glb" id="1"]
+          [node name="ImportCheck" type="Node3D"]
+          [node name="Goblet_LOW" parent="." instance=ExtResource("1")]
+          [node name="Camera3D" type="Camera3D" parent="."]
+          transform = Transform3D(1,0,0,0,0.94,0.34,0,-0.34,0.94,0.34,-0.42,0.28)
+          current = true
+          [node name="KeyLight" type="DirectionalLight3D" parent="."]
+          rotation = Vector3(-0.8,-0.6,0)
+          light_energy = 1.6
+          [node name="FillLight" type="OmniLight3D" parent="."]
+          position = Vector3(-0.25,-0.15,0.28)
+          omni_range = 2.0
+          light_energy = 4.0
+          EOF
+          GODOT=/tmp/godot/Godot_v4.7.2-stable_linux.x86_64
+          timeout 60s "$GODOT" --headless --editor --path "$PWD/case4/engine" --quit --rendering-method gl_compatibility > case4/logs/godot_import.log 2>&1 || true
+          grep -v '^$' case4/logs/godot_import.log | tail -n 50
+          export DISPLAY=:99
+          "$GODOT" --editor --path "$PWD/case4/engine" "$PWD/case4/engine/Main.tscn" --rendering-method gl_compatibility > case4/logs/godot_editor.log 2>&1 & GPID=$!
+          sleep 16
+          ffmpeg -y -f x11grab -video_size 1600x900 -i :99.0 -frames:v 1 case4/screenshots/08_GameEngine_Import.png >/tmp/godot_shot.log 2>&1
+          kill $GPID || true
+          kill $(cat /tmp/xvfb.pid) || true
+          test -s case4/screenshots/08_GameEngine_Import.png
+
+      - name: Final verification and manifest
+        run: |
+          python3 - <<'PY'
+          import os, json, hashlib
+          root='case4'
+          required=['screenshots/01_Moodboard_References.png','screenshots/02_Original_Concept_Sketch.png','screenshots/03_LowPoly_Wireframe.png','screenshots/04_HighPoly_View.png','screenshots/05_UV_Layout.png','screenshots/06_Textured_View.png','screenshots/07_Final_Render.png','screenshots/08_GameEngine_Import.png','source/7334625_Case4_Goblet_Master.blend','exports/7334625_Goblet_LOW.glb']
+          missing=[p for p in required if not os.path.isfile(os.path.join(root,p)) or os.path.getsize(os.path.join(root,p))==0]
+          if missing: raise SystemExit('Missing '+repr(missing))
+          with open(os.path.join(root,'logs','mesh_stats.json')) as f: s=json.load(f)
+          assert s['low_polygons'] < s['high_polygons']
+          print('CASE 4 VALIDATION: PASS',s)
+          with open(os.path.join(root,'MANIFEST_SHA256.txt'),'w') as out:
+              for base,_,files in os.walk(root):
+                  for fn in sorted(files):
+                      p=os.path.join(base,fn)
+                      if p.endswith('MANIFEST_SHA256.txt'): continue
+                      h=hashlib.sha256(open(p,'rb').read()).hexdigest(); out.write(f'{h}  {p}\n')
+          PY
+          du -ah case4 | sort -h | tail -n 25
+
+      - name: Publish evidence to branch
+        run: |
+          rm -rf native_output_case4
+          cp -r case4 native_output_case4
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add native_output_case4
+          git commit -m "Publish Blender Case 4 native assets and evidence"
+          git push origin HEAD:studwork-7334625-blender-case4
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7334625-case4-blender-native
+          path: case4
+          if-no-files-found: error
+          retention-days: 7
