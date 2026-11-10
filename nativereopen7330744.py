@@ -126,22 +126,63 @@ def run(name):
     stop()
 
 try:
-    if not TARGET.exists():raise RuntimeError('Input genuine native file absent before GUI launch')
-    open_native();save()
-    subprocess.run(['taskkill','/IM','Multisim.exe','/T','/F'],check=False);time.sleep(2)
+    if not TARGET.exists():
+        raise RuntimeError('Input genuine native file absent before GUI launch')
+
+    # One fresh Windows/Multisim session only. Do not rebuild or restart the design.
     open_native()
-    set_photo('2.107u');run('Multisim_Light.png')
-    set_photo('1.475u');run('Multisim_Threshold_Before.png')
-    set_photo('1.474u');run('Multisim_Threshold.png')
-    set_photo('0.3025u');run('Multisim_Dark.png')
-    set_photo('2.107u');save()
-    subprocess.run(['taskkill','/IM','Multisim.exe','/T','/F'],check=False);time.sleep(2)
-    open_native();run('Multisim_Light.png');save();shot('Multisim_Schematic.png')
-    proof={'source_native_gui_run':42600867145,'source_native_gui_artifact':'7330744-native-live-progress-3','final_filename':TARGET.name,'saved_by_multisim':True,'fully_closed_and_reopened':True,'run_performed_after_reopen':True,'size_bytes':TARGET.stat().st_size,'sha256':hashlib.sha256(TARGET.read_bytes()).hexdigest(),'measurements':'Read actual instrument values from the corresponding native screenshots; not copied from old RAW data.'}
-    (h.OUT/'native_validation.json').write_text(json.dumps(proof,ensure_ascii=False,indent=2),encoding='utf-8')
-    log('SAVE_CLOSE_REOPEN_RUN_COMPLETED')
+
+    # Genuine full-screen capture of the native file immediately after opening.
+    shot('01_Real_Multisim_Schematic.png', False)
+
+    # Light mode.
+    set_photo('2.107u')
+    h.focus(); pg.press('f5'); time.sleep(10)
+    pg.click(*point(69,570)); time.sleep(.5)
+    shot('02_Real_Multisim_Light.png', False)
+    log('Real Light screenshot captured; messages='+repr(h.simulation_messages()))
+    stop()
+
+    # Threshold mode. Use the already verified native photocurrent control.
+    set_photo('1.475u')
+    h.focus(); pg.press('f5'); time.sleep(10)
+    pg.click(*point(69,570)); time.sleep(.5)
+    shot('03_Real_Multisim_Threshold.png', False)
+    log('Real Threshold screenshot captured; messages='+repr(h.simulation_messages()))
+    stop()
+
+    # Dark mode.
+    set_photo('0.3025u')
+    h.focus(); pg.press('f5'); time.sleep(10)
+    pg.click(*point(69,570)); time.sleep(.5)
+    shot('04_Real_Multisim_Dark.png', False)
+    log('Real Dark screenshot captured; messages='+repr(h.simulation_messages()))
+    stop()
+
+    # Restore submitted light-state parameter, but do not close/reopen Multisim.
+    set_photo('2.107u')
+    h.focus(); pg.hotkey('ctrl','s'); time.sleep(3)
+
+    proof={
+        'source_native_recovery_run':42604211249,
+        'source_native_recovery_artifact':'7330744-native-recovery-final',
+        'final_filename':TARGET.name,
+        'single_fresh_multisim_process':True,
+        'project_rebuilt':False,
+        'screenshots_are_full_desktop_captures':True,
+        'light_captured':(h.OUT/'02_Real_Multisim_Light.png').exists(),
+        'threshold_captured':(h.OUT/'03_Real_Multisim_Threshold.png').exists(),
+        'dark_captured':(h.OUT/'04_Real_Multisim_Dark.png').exists(),
+        'size_bytes':TARGET.stat().st_size,
+        'sha256':hashlib.sha256(TARGET.read_bytes()).hexdigest()
+    }
+    (h.OUT/'real_multisim_screenshots_validation.json').write_text(
+        json.dumps(proof,ensure_ascii=False,indent=2),encoding='utf-8')
+    log('ONE_SESSION_REAL_MULTISIM_SCREENSHOTS_COMPLETED')
 except Exception:
     log(traceback.format_exc())
-    try:shot('Native_Recovery_Exception.png',False)
-    except Exception:pass
+    try:
+        shot('Real_Multisim_Exception.png', False)
+    except Exception:
+        pass
     sys.exit(1)
