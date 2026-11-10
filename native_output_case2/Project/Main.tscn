@@ -1,0 +1,36 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://Main.gd" id="1_main"]
+
+[node name="Case2Platformer" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Player_Krosh" type="Node2D" parent="."]
+position = Vector2(100, 600)
+
+[node name="Player_Yozhik" type="Node2D" parent="."]
+position = Vector2(150, 600)
+
+[node name="Collectible_1" type="Node2D" parent="."]
+position = Vector2(300, 470)
+
+[node name="Collectible_2" type="Node2D" parent="."]
+position = Vector2(610, 400)
+
+[node name="Collectible_3" type="Node2D" parent="."]
+position = Vector2(915, 470)
+
+[node name="WindPuff" type="Node2D" parent="."]
+position = Vector2(710, 605)
+
+[node name="FriendshipSwitch_Krosh" type="Node2D" parent="."]
+position = Vector2(845, 625)
+
+[node name="FriendshipSwitch_Yozhik" type="Node2D" parent="."]
+position = Vector2(955, 625)
+
+[node name="FriendshipGate" type="Node2D" parent="."]
+position = Vector2(1065, 545)
+
+[node name="FinishZone" type="Node2D" parent="."]
+position = Vector2(1200, 585)
