@@ -1,0 +1,20 @@
+name: Studwork 7334625 Case 4 Unity CLI editor help
+
+on:
+  push:
+    branches:
+      - studwork-7334625-blender-case4
+    paths:
+      - ".github/workflows/studwork-7334625-case4-unity-cli-help.yml"
+
+jobs:
+  help:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          curl -fsSL https://unity.com/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: |
+          unity install --help
+          unity releases --help || true
+          unity releases list --help || true
