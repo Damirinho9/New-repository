@@ -1,7 +1,6 @@
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using System.IO;
 
 public static class Case4Setup
@@ -21,7 +20,7 @@ public static class Case4Setup
         if (importer == null) throw new System.Exception("FBX ModelImporter not found: " + FbxPath);
         importer.globalScale = 1.0f;
         importer.useFileScale = true;
-        importer.importMaterials = false;
+        importer.materialImportMode = ModelImporterMaterialImportMode.None;
         importer.SaveAndReimport();
 
         var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(FbxPath);
@@ -29,6 +28,7 @@ public static class Case4Setup
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         var goblet = PrefabUtility.InstantiatePrefab(prefab) as GameObject;
+        if (goblet == null) throw new System.Exception("Could not instantiate FBX prefab");
         goblet.name = "Goblet_LOW";
         goblet.transform.position = Vector3.zero;
         goblet.transform.rotation = Quaternion.identity;
@@ -126,7 +126,7 @@ public static class Case4SceneFramer
         EditorApplication.update -= Tick;
         try
         {
-            if (File.Exists("Assets/Case4/Case4_ImportCheck.unity"))
+            if (File.Exists(Path.Combine(Directory.GetCurrentDirectory(), "Assets/Case4/Case4_ImportCheck.unity")))
                 EditorSceneManager.OpenScene("Assets/Case4/Case4_ImportCheck.unity", OpenSceneMode.Single);
             var go = GameObject.Find("Goblet_LOW");
             if (go != null)
