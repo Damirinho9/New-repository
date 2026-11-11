@@ -21,10 +21,8 @@ jobs:
           ref: studwork-7334625-blender-case4
           fetch-depth: 0
 
-      - name: Install system dependencies and Unity CLI
+      - name: Install Unity CLI first
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb openbox ffmpeg wmctrl xdotool libgtk-3-0 libnss3 libasound2t64 libglu1-mesa libxi6 libxrender1 libxtst6 libxrandr2 libxss1
           curl -fsSL https://unity.com/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
@@ -35,7 +33,7 @@ jobs:
           (unity --format json auth login 2>&1 | tee /tmp/unity-auth.log) &
           AUTH_PID=$!
           URL=""
-          for i in $(seq 1 90); do
+          for i in $(seq 1 60); do
             URL=$(grep -oE 'https://services\.api\.unity\.com/[^" ]+' /tmp/unity-auth.log | head -n 1 || true)
             if [ -n "$URL" ]; then break; fi
             sleep 1
@@ -60,6 +58,11 @@ jobs:
           unity --format json license activate --personal --accept-eula | tee unity_personal_activation.json
           unity --format json license status | tee unity_license_status.json
           grep -q '"active": true' unity_license_status.json
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openbox ffmpeg wmctrl xdotool libgtk-3-0 libnss3 libasound2t64 libglu1-mesa libxi6 libxrender1 libxtst6 libxrandr2 libxss1
 
       - name: Select and install latest Unity LTS Editor
         run: |
