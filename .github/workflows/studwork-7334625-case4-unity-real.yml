@@ -1,0 +1,162 @@
+name: Studwork 7334625 Case 4 Real Unity Import
+
+on:
+  push:
+    branches:
+      - studwork-7334625-blender-case4
+    paths:
+      - ".github/workflows/studwork-7334625-case4-unity-real.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unity-import:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: studwork-7334625-blender-case4
+          fetch-depth: 0
+
+      - name: Install system dependencies and Unity CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openbox ffmpeg wmctrl xdotool libgtk-3-0 libnss3 libasound2t64 libglu1-mesa libxi6 libxrender1 libxtst6 libxrandr2 libxss1
+          curl -fsSL https://unity.com/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Start Unity ID sign-in and publish one-time authorization URL
+        run: |
+          set -euo pipefail
+          rm -f unity_auth_url.txt /tmp/unity-auth.log
+          (unity --format json auth login 2>&1 | tee /tmp/unity-auth.log) &
+          AUTH_PID=$!
+          URL=""
+          for i in $(seq 1 90); do
+            URL=$(grep -oE 'https://services\.api\.unity\.com/[^" ]+' /tmp/unity-auth.log | head -n 1 || true)
+            if [ -n "$URL" ]; then break; fi
+            sleep 1
+          done
+          if [ -z "$URL" ]; then
+            cat /tmp/unity-auth.log || true
+            kill "$AUTH_PID" 2>/dev/null || true
+            exit 1
+          fi
+          printf '%s\n' "$URL" > unity_auth_url.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add unity_auth_url.txt
+          git commit -m "Publish one-time Unity authorization URL" || true
+          git push origin HEAD:studwork-7334625-blender-case4
+          echo "UNITY_AUTH_URL_PUBLISHED"
+          wait "$AUTH_PID"
+          echo "UNITY_AUTH_LOGIN_COMPLETE"
+
+      - name: Activate Unity Personal license
+        run: |
+          unity --format json license activate --personal --accept-eula | tee unity_personal_activation.json
+          unity --format json license status | tee unity_license_status.json
+          grep -q '"active": true' unity_license_status.json
+
+      - name: Select and install latest Unity LTS Editor
+        run: |
+          unity --format json releases --lts --limit 1 > unity_releases.json
+          cat unity_releases.json
+          VERSION=$(grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+f[0-9]+' unity_releases.json | head -n 1)
+          if [ -z "$VERSION" ]; then
+            echo "Could not determine latest LTS version"
+            exit 1
+          fi
+          echo "$VERSION" | tee unity_editor_version.txt
+          unity install "$VERSION" --yes --accept-eula
+          unity --format json editors > unity_editors.json
+          cat unity_editors.json
+          EDITOR=$(find "$HOME" /opt -type f -path '*/Editor/Unity' -perm -111 2>/dev/null | head -n 1)
+          if [ -z "$EDITOR" ]; then
+            EDITOR=$(find / -type f -path '*/Editor/Unity' -perm -111 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$EDITOR" ]; then
+            echo "Unity Editor executable not found"
+            exit 1
+          fi
+          printf '%s\n' "$EDITOR" | tee unity_editor_path.txt
+
+      - name: Build real Unity project and import FBX
+        run: |
+          set -euo pipefail
+          EDITOR=$(cat unity_editor_path.txt)
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.log 2>&1 &
+          echo $! >/tmp/xvfb.pid
+          openbox >/tmp/openbox.log 2>&1 &
+          sleep 3
+
+          rm -rf unity_case4
+          "$EDITOR" -batchmode -quit -createProject "$PWD/unity_case4" -logFile "$PWD/unity_create_project.log"
+
+          mkdir -p unity_case4/Assets/Case4 unity_case4/Assets/Editor
+          cp native_output_case4/exports/7334625_Goblet_LOW.fbx unity_case4/Assets/Case4/
+          cp native_output_case4/source/goblet_albedo.png unity_case4/Assets/Case4/
+          cp case4_unity_pipeline/Case4Setup.cs unity_case4/Assets/Editor/
+
+          "$EDITOR" -batchmode -quit -projectPath "$PWD/unity_case4" -executeMethod Case4Setup.BuildScene -logFile "$PWD/unity_import.log"
+          grep -q 'CASE 4 UNITY IMPORT: PASS' unity_import.log
+          test -s unity_case4/UNITY_VALIDATION.txt
+          cat unity_case4/UNITY_VALIDATION.txt
+
+      - name: Launch real Unity Editor and capture interface
+        run: |
+          set -euo pipefail
+          export DISPLAY=:99
+          EDITOR=$(cat unity_editor_path.txt)
+          "$EDITOR" -projectPath "$PWD/unity_case4" -logFile "$PWD/unity_gui.log" &
+          echo $! >/tmp/unity_gui.pid
+          for i in $(seq 1 90); do
+            if wmctrl -l | grep -qi 'Unity'; then break; fi
+            sleep 1
+          done
+          sleep 35
+          wmctrl -r :ACTIVE: -b add,maximized_vert,maximized_horz || true
+          wmctrl -l || true
+          sleep 8
+          mkdir -p unity_evidence
+          ffmpeg -y -f x11grab -video_size 1920x1080 -i :99.0 -frames:v 1 unity_evidence/09_Unity_Editor_Import.png >/tmp/unity_shot.log 2>&1
+          test -s unity_evidence/09_Unity_Editor_Import.png
+          cp unity_case4/UNITY_VALIDATION.txt unity_evidence/UNITY_VALIDATION.txt
+          cp unity_import.log unity_evidence/unity_import.log
+          cp unity_gui.log unity_evidence/unity_gui.log
+          cp unity_editor_version.txt unity_evidence/unity_editor_version.txt
+          kill $(cat /tmp/unity_gui.pid) 2>/dev/null || true
+          kill $(cat /tmp/xvfb.pid) 2>/dev/null || true
+
+      - name: Prepare clean Unity source project
+        run: |
+          rm -rf unity_case4/Library unity_case4/Temp unity_case4/Logs unity_case4/UserSettings unity_case4/obj
+          mkdir -p unity_evidence/Unity_Project
+          cp -r unity_case4/Assets unity_evidence/Unity_Project/
+          cp -r unity_case4/Packages unity_evidence/Unity_Project/
+          cp -r unity_case4/ProjectSettings unity_evidence/Unity_Project/
+          cp unity_case4/UNITY_VALIDATION.txt unity_evidence/Unity_Project/
+          find unity_evidence/Unity_Project -type d \( -name Library -o -name Temp -o -name Logs -o -name obj -o -name bin \) -print -quit | grep -q . && exit 1 || true
+
+      - name: Publish verified Unity evidence to branch
+        run: |
+          rm -rf native_output_case4_unity
+          cp -r unity_evidence native_output_case4_unity
+          rm -f unity_auth_url.txt
+          git add -A unity_auth_url.txt native_output_case4_unity
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Publish real Unity Case 4 import evidence"
+          git push origin HEAD:studwork-7334625-blender-case4
+
+      - name: Upload Unity evidence artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7334625-case4-real-unity-import
+          path: unity_evidence
+          if-no-files-found: error
+          retention-days: 7
