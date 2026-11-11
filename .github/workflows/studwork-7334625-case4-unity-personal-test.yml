@@ -1,0 +1,28 @@
+name: Studwork 7334625 Case 4 Unity Personal activation test
+
+on:
+  push:
+    branches:
+      - studwork-7334625-blender-case4
+    paths:
+      - ".github/workflows/studwork-7334625-case4-unity-personal-test.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Install Unity CLI
+        run: |
+          curl -fsSL https://unity.com/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Test Unity Personal activation with accepted EULA
+        run: |
+          set +e
+          unity --non-interactive --format json license activate --personal --accept-eula > /tmp/activate.json 2>&1
+          CODE=$?
+          cat /tmp/activate.json
+          echo "ACTIVATE_EXIT=$CODE"
+          unity --format json license status || true
+          exit 0
