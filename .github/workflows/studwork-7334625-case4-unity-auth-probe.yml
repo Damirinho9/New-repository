@@ -1,0 +1,31 @@
+name: Studwork 7334625 Case 4 Unity auth probe
+
+on:
+  push:
+    branches:
+      - studwork-7334625-blender-case4
+    paths:
+      - ".github/workflows/studwork-7334625-case4-unity-auth-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Install Unity CLI
+        run: |
+          curl -fsSL https://unity.com/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Print CLI version and auth help
+        run: |
+          unity --version
+          unity auth login --help
+      - name: Probe browser sign-in URL
+        run: |
+          set +e
+          timeout 45s unity --format json auth login > /tmp/unity-auth.json 2>&1
+          CODE=$?
+          cat /tmp/unity-auth.json
+          echo "AUTH_PROBE_EXIT=$CODE"
+          exit 0
