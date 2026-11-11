@@ -14,7 +14,7 @@ permissions:
 jobs:
   unity-import:
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,32 +26,59 @@ jobs:
           curl -fsSL https://unity.com/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Start Unity ID sign-in and publish one-time authorization URL
+      - name: Sign in to Unity ID with automatic URL refresh
         run: |
           set -euo pipefail
-          rm -f unity_auth_url.txt /tmp/unity-auth.log
-          (unity --format json auth login 2>&1 | tee /tmp/unity-auth.log) &
-          AUTH_PID=$!
-          URL=""
-          for i in $(seq 1 60); do
-            URL=$(grep -oE 'https://services\.api\.unity\.com/[^" ]+' /tmp/unity-auth.log | head -n 1 || true)
-            if [ -n "$URL" ]; then break; fi
-            sleep 1
-          done
-          if [ -z "$URL" ]; then
-            cat /tmp/unity-auth.log || true
-            kill "$AUTH_PID" 2>/dev/null || true
-            exit 1
-          fi
-          printf '%s\n' "$URL" > unity_auth_url.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add unity_auth_url.txt
-          git commit -m "Publish one-time Unity authorization URL" || true
-          git push origin HEAD:studwork-7334625-blender-case4
-          echo "UNITY_AUTH_URL_PUBLISHED"
-          wait "$AUTH_PID"
-          echo "UNITY_AUTH_LOGIN_COMPLETE"
+          rm -f unity_auth_url.txt
+
+          AUTH_OK=0
+          for ATTEMPT in 1 2 3 4 5 6; do
+            echo "Starting Unity browser sign-in attempt ${ATTEMPT}/6"
+            LOG="/tmp/unity-auth-${ATTEMPT}.log"
+            rm -f "$LOG"
+            (unity --format json auth login >"$LOG" 2>&1) &
+            AUTH_PID=$!
+
+            URL=""
+            for i in $(seq 1 60); do
+              URL=$(grep -oE 'https://services\.api\.unity\.com/[^" ]+' "$LOG" | head -n 1 || true)
+              if [ -n "$URL" ]; then break; fi
+              if ! kill -0 "$AUTH_PID" 2>/dev/null; then break; fi
+              sleep 1
+            done
+
+            if [ -n "$URL" ]; then
+              printf '%s\n' "$URL" > unity_auth_url.txt
+              git add unity_auth_url.txt
+              git commit -m "Refresh Unity authorization URL attempt ${ATTEMPT}" || true
+              git push origin HEAD:studwork-7334625-blender-case4
+              echo "UNITY_AUTH_URL_PUBLISHED_ATTEMPT=${ATTEMPT}"
+            else
+              echo "Unity CLI did not publish an auth URL on attempt ${ATTEMPT}"
+            fi
+
+            set +e
+            wait "$AUTH_PID"
+            CODE=$?
+            set -e
+            cat "$LOG" || true
+
+            if [ "$CODE" -eq 0 ] && grep -q '"success": true' "$LOG"; then
+              AUTH_OK=1
+              echo "UNITY_AUTH_LOGIN_COMPLETE"
+              break
+            fi
+
+            echo "Unity sign-in attempt ${ATTEMPT} expired or failed; refreshing URL automatically."
+            sleep 2
+          done
+
+          if [ "$AUTH_OK" -ne 1 ]; then
+            echo "Unity sign-in did not complete after six browser sessions."
+            exit 1
+          fi
 
       - name: Activate Unity Personal license
         run: |
