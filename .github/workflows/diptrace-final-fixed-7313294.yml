@@ -1,0 +1,83 @@
+name: DipTrace build FINAL fixed 7313294
+on:
+  push:
+    branches: [diptrace-native-7313294]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  final:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore verified fixed KiCad board
+        shell: pwsh
+        run: |
+          $s='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'
+          $raw=[Convert]::FromBase64String($s)
+          $ms=[IO.MemoryStream]::new($raw)
+          $gz=[IO.Compression.GZipStream]::new($ms,[IO.Compression.CompressionMode]::Decompress)
+          $fs=[IO.File]::Create("$PWD\7313294_variant12_DipTrace_FIXED.kicad_pcb")
+          $gz.CopyTo($fs); $fs.Dispose(); $gz.Dispose(); $ms.Dispose()
+          $sha=(Get-FileHash "$PWD\7313294_variant12_DipTrace_FIXED.kicad_pcb" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $len=(Get-Item "$PWD\7313294_variant12_DipTrace_FIXED.kicad_pcb").Length
+          Write-Host "fixed board size=$len sha=$sha"
+          if ($len -ne 46668 -or $sha -ne "511d7f0b9ab43f4b9cb871d233f3732bd888f19b9c77f91a516cd480b682f744") { throw "fixed PCB payload mismatch" }
+      - name: Install official DipTrace Freeware 5.3.5.1
+        shell: pwsh
+        run: |
+          $installer="$env:RUNNER_TEMP\dipfree.exe"
+          curl.exe --fail --location --retry 3 --max-time 180 https://diptrace.com/downloads/dipfree_en64.exe --output $installer
+          if ($LASTEXITCODE -ne 0) { throw "DipTrace download failed" }
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne "8845d6e6e72f9671ea270ac462bd25c0c7794f68a7f4015b88aece980bfb848c") { throw "installer hash mismatch $hash" }
+          $p=Start-Process $installer -ArgumentList "/silent","/hide" -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "install timeout" }
+          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          if (-not (Test-Path "C:\Program Files\DipTrace\Pcb.exe")) { throw "Pcb.exe missing" }
+      - name: Install UI automation
+        shell: pwsh
+        run: py -m pip install pywinauto pillow
+      - name: Native KiCad import, Save As DIP, close and reopen
+        shell: pwsh
+        env:
+          BOARD_PATH: ${{ github.workspace }}\7313294_variant12_DipTrace_FIXED.kicad_pcb
+          OUTDIR: ${{ github.workspace }}\native-final
+        run: |
+          New-Item -ItemType Directory -Force "$PWD\native-final" | Out-Null
+          py "$PWD\.github\scripts\import_fixed_to_native.py"
+          $dip="$PWD\native-final\7313294_PhotoGas_MQ4_V12.dip"
+          if (-not (Test-Path $dip)) { throw "native DIP missing after import" }
+          $b=[IO.File]::ReadAllBytes($dip)
+          $sig=[Text.Encoding]::ASCII.GetString($b,0,[Math]::Min(16,$b.Length))
+          Write-Host "imported native size=$($b.Length) signature=$sig"
+          if ($b.Length -lt 10000 -or $sig -notmatch "DTBOARD") { throw "native DIP blank or invalid" }
+      - name: Apply rules, save, reopen, native DRC and connectivity
+        shell: pwsh
+        run: |
+          $dip="$PWD\native-final\7313294_PhotoGas_MQ4_V12.dip"
+          New-Item -ItemType Directory -Force "$PWD\native-final\checks" | Out-Null
+          py "$PWD\.github\scripts\finalize_native_dip.py" $dip "$PWD\native-final\checks"
+      - name: Final inventory
+        if: always()
+        shell: pwsh
+        run: |
+          $dip="$PWD\native-final\7313294_PhotoGas_MQ4_V12.dip"
+          if (Test-Path $dip) {
+            $b=[IO.File]::ReadAllBytes($dip)
+            $sig=[Text.Encoding]::ASCII.GetString($b,0,[Math]::Min(16,$b.Length))
+            $sha=(Get-FileHash $dip -Algorithm SHA256).Hash.ToLowerInvariant()
+            "size=$($b.Length)" | Tee-Object "$PWD\native-final\FINAL_SIGNATURE.txt"
+            "signature=$sig" | Tee-Object -Append "$PWD\native-final\FINAL_SIGNATURE.txt"
+            "sha256=$sha" | Tee-Object -Append "$PWD\native-final\FINAL_SIGNATURE.txt"
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7313294-DipTrace-FINAL-FIXED
+          path: |
+            native-final
+            7313294_variant12_DipTrace_FIXED.kicad_pcb
+          if-no-files-found: error
+          retention-days: 10
