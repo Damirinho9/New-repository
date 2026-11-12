@@ -1,0 +1,61 @@
+name: DipTrace inspect native 7313294
+on:
+  push:
+    branches: [diptrace-native-7313294]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified native DIP from run 8
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip="$env:RUNNER_TEMP\\native.zip"
+          $uri="https://api.github.com/repos/Damirinho9/New-repository/actions/artifacts/13979303225/zip"
+          curl.exe --fail --location -H "Authorization: Bearer $env:GH_TOKEN" -H "Accept: application/vnd.github+json" $uri -o $zip
+          if ($LASTEXITCODE -ne 0) { throw "artifact download failed" }
+          Expand-Archive -Force $zip "$PWD\\seed"
+          $src=Get-ChildItem "$PWD\\seed" -Recurse -Filter "7313294_PhotoGas_MQ4_V12.dip" | Select-Object -First 1
+          if (-not $src) { throw "native DIP missing from seed artifact" }
+          Copy-Item $src.FullName "$PWD\\7313294_PhotoGas_MQ4_V12.dip"
+          $b=[IO.File]::ReadAllBytes("$PWD\\7313294_PhotoGas_MQ4_V12.dip")
+          $ascii=[Text.Encoding]::ASCII.GetString($b,0,[Math]::Min(16,$b.Length))
+          $sha=(Get-FileHash "$PWD\\7313294_PhotoGas_MQ4_V12.dip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "size=$($b.Length) signature=$ascii sha=$sha"
+          if ($b.Length -lt 10000 -or $ascii -notmatch "DTBOARD") { throw "seed DIP is not a non-empty native board" }
+          if ($sha -ne "512cc9bb131c0552cf2e60794faa9af5e5e593a589efbb0b85fd8bb6435f5c16") { throw "unexpected seed DIP hash $sha" }
+      - name: Install official DipTrace Freeware 5.3.5.1
+        shell: pwsh
+        run: |
+          $installer="$env:RUNNER_TEMP\\dipfree.exe"
+          curl.exe --fail --location --retry 3 --max-time 180 https://diptrace.com/downloads/dipfree_en64.exe --output $installer
+          if ($LASTEXITCODE -ne 0) { throw "DipTrace download failed" }
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne "8845d6e6e72f9671ea270ac462bd25c0c7794f68a7f4015b88aece980bfb848c") { throw "installer hash mismatch $hash" }
+          $p=Start-Process $installer -ArgumentList "/silent","/hide" -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "install timeout" }
+          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+      - name: Install UI automation
+        shell: pwsh
+        run: py -m pip install pywinauto pillow
+      - name: Inspect Design Rules and Verification map
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$PWD\\native-inspect" | Out-Null
+          py "$PWD\\.github\\scripts\\inspect_native_rules.py" "$PWD\\7313294_PhotoGas_MQ4_V12.dip" "$PWD\\native-inspect"
+          Get-Content "$PWD\\native-inspect\\native_rules_inspection.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7313294-native-rules-inspection
+          path: |
+            7313294_PhotoGas_MQ4_V12.dip
+            native-inspect
+          if-no-files-found: warn
+          retention-days: 10
