@@ -1,7 +1,7 @@
 name: DipTrace direct generated FINAL 7313294
 on:
   push:
-    branches: [diptrace-native-7313294]
+    branches: [diptrace-direct-final-7313294]
   workflow_dispatch:
 permissions:
   contents: read
