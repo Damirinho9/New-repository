@@ -78,6 +78,10 @@ def controls(d):
         try:
             r=c.rectangle();rec["rect"]=[r.left,r.top,r.right,r.bottom]
         except:rec["rect"]=None
+        try:
+            vals=[str(x) for x in c.texts() if str(x).strip()]
+            if vals: rec["texts"]=vals[:200]
+        except: pass
         arr.append(rec)
     return arr
 
@@ -187,17 +191,38 @@ def apply_rules(app,main):
 
 def run_drc(app,main,label):
     invoke(main,7,0)
-    d=wait_dialog(app,main,20)
-    if d is None:raise RuntimeError("DRC produced no result dialog")
+    end=time.time()+45
+    d=None
+    while time.time()<end:
+        ds=visible_dialogs(app,main)
+        # DRC shows TFProgress while calculating. Never close/interpret it.
+        finals=[]
+        for cand in ds:
+            try:
+                title=cand.window_text().strip()
+                cls=cand.class_name()
+                if cls=="TFProgress" or "progress" in title.casefold():
+                    continue
+                if "drc" in title.casefold() or cls=="TFMyMessage" or "error" in title.casefold():
+                    finals.append(cand)
+            except: pass
+        if finals:
+            d=finals[0]; break
+        time.sleep(.2)
+    if d is None:
+        raise RuntimeError("DRC final result dialog did not appear")
     title=d.window_text(); cs=controls(d)
-    texts=[str(x.get("text") or "") for x in cs if x.get("text")]
+    texts=[]
+    for x in cs:
+        if x.get("text"): texts.append(str(x["text"]))
+        texts.extend([str(v) for v in x.get("texts",[]) if str(v).strip()])
     step(label+"_drc",title=title,cls=d.class_name(),texts=texts,controls=cs)
     try:d.capture_as_image().save(OUT/f"{label}_drc.png")
     except:pass
     joined=" ".join(texts).casefold()
     ok=("no errors" in joined) or ("no errors" in title.casefold())
     if not ok and d.class_name()=="TFMyMessage":
-        ok=True
+        ok=("error" not in joined and "violation" not in joined)
     close_dialog(d)
     return ok,title,texts
 
