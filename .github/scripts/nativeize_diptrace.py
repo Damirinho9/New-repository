@@ -227,22 +227,111 @@ def verify(app,main,kind):
     dump_windows(app,kind+" result")
     screenshot(main,kind+"_main.png")
 
+
+def dismiss_getting_started(app, main):
+    for _ in range(5):
+        found=False
+        for w,t,cl,v,en in all_windows(app):
+            if v and cl=="TForm92" and ("gettingstarted" in norm(t) or t=="Getting Started"):
+                found=True
+                log("closing Getting Started")
+                try: w.close()
+                except Exception:
+                    try:
+                        w.set_focus(); w.type_keys("%{F4}")
+                    except Exception: pass
+                time.sleep(.8)
+        if not found: break
+    # Wait until main is enabled again.
+    end=time.time()+5
+    while time.time()<end:
+        try:
+            if main.is_enabled(): return
+        except Exception: pass
+        time.sleep(.2)
+
+def get_file_type_text(dlg):
+    for ch in dlg.children():
+        try:
+            if ch.class_name()=="ComboBox" and ch.control_id()==1136:
+                return clean_for_io(ch.window_text())
+        except Exception: pass
+    return ""
+
+def cancel_dialog(dlg):
+    for ch in dlg.children():
+        try:
+            if ch.class_name() in ("Button","TButton") and ch.control_id()==2:
+                ch.click(); return
+        except Exception: pass
+    try: dlg.close()
+    except Exception: pass
+
+def close_nonmain_visible(app, main):
+    for w,t,cl,v,en in all_windows(app):
+        if not v or int(w.handle)==int(main.handle): continue
+        if cl in ("#32770","TForm92","TFMyMessage") or cl.startswith("T"):
+            log("closing probe window title="+t+" class="+cl)
+            try: w.close()
+            except Exception:
+                try: w.set_focus(); w.type_keys("%{F4}")
+                except Exception: pass
+            time.sleep(.4)
+
+def discover_kicad_import(app, main):
+    arr=menu_tree(main.handle)
+    probe=[]
+    # File -> Import is #0/#8 in this DipTrace build.
+    for pos in range(0,20):
+        item=next((x for x in arr if x["indices"]==[0,8,pos] and x["id"]>=0),None)
+        if not item: continue
+        invoke(main,item)
+        time.sleep(.8)
+        dlg=wait_common_file_dialog(app,main.handle,2.0)
+        if dlg is not None:
+            ftype=get_file_type_text(dlg)
+            rec={"pos":pos,"id":item["id"],"file_type":ftype}
+            probe.append(rec); log("import probe "+json.dumps(rec,ensure_ascii=True))
+            cancel_dialog(dlg); time.sleep(.5)
+            if "kicad" in norm(ftype) or "kicadpcb" in norm(ftype):
+                E["kicad_import_probe"]=probe
+                log("KiCad importer discovered at #0/#8/#"+str(pos)+" id="+str(item["id"])+" type="+ftype)
+                return item
+        else:
+            # Custom import form. Record and close it, then continue.
+            vis=[]
+            for w,t,cl,v,en in all_windows(app):
+                if v and int(w.handle)!=int(main.handle):
+                    vis.append({"title":t,"class":cl})
+            rec={"pos":pos,"id":item["id"],"custom_windows":vis}
+            probe.append(rec); log("import probe "+json.dumps(rec,ensure_ascii=True))
+            close_nonmain_visible(app,main)
+            time.sleep(.5)
+    E["kicad_import_probe"]=probe
+    raise RuntimeError("Could not discover KiCad importer from File->Import filters")
+
+def assert_native_nonempty(path):
+    size=path.stat().st_size
+    with open(path,"rb") as fh: sig=fh.read(8)
+    log("native signature="+repr(sig)+" size="+str(size))
+    if b"DTBOARD" not in sig:
+        raise RuntimeError("Saved file does not have DTBOARD signature")
+    if size < 10000:
+        raise RuntimeError("Native .dip is suspiciously small / likely blank: "+str(size))
+
 def run():
     if not PCB_EXE.exists(): raise RuntimeError("Pcb.exe absent")
     log("input sha256="+sha256(BOARD))
     app=Application(backend="win32").start(cmd_line='"'+str(PCB_EXE)+'"')
     main=wait_main(app)
+    dismiss_getting_started(app,main)
+    focus(main)
     screenshot(main,"00_blank.png")
     dump_menu(main,"blank")
 
-    # DipTrace 5.3.x File -> Import -> KiCAD board is the 9th Import item.
-    # Live native menu tree: #0 -> #8 -> #8, command ID 24.
-    arr=menu_tree(main.handle)
-    m=next((x for x in arr if x["indices"]==[0,8,8] and x["id"]>=0),None)
-    if not m:
-        m=find_menu(main,lambda full,x: "kicad" in full and ("import" in full or "импорт" in full))
-    if not m:
-        raise RuntimeError("KiCad import command #0/#8/#8 absent")
+    # Discover the actual KiCad item from its Windows file-dialog filter.
+    # This is robust to new importers shifting menu indices between DipTrace releases.
+    m=discover_kicad_import(app,main)
     invoke(main,m)
     dlg=wait_common_file_dialog(app,main.handle,12)
     if dlg is None:
@@ -276,6 +365,7 @@ def run():
     time.sleep(2)
     handle_modal_defaults(app,main,8)
     size=wait_file(TARGET,30)
+    assert_native_nonempty(TARGET)
     E["native_size"]=size; E["native_sha256"]=sha256(TARGET)
     log("native created size="+str(size)+" sha256="+E["native_sha256"])
     screenshot(main,"02_saved.png")
@@ -290,6 +380,8 @@ def run():
 
     app2=Application(backend="win32").start(cmd_line='"'+str(PCB_EXE)+'" "'+str(TARGET)+'"')
     main2=wait_main(app2,30)
+    dismiss_getting_started(app2,main2)
+    focus(main2)
     E["reopen_title"]=clean_for_io(main2.window_text())
     log("reopened="+E["reopen_title"])
     screenshot(main2,"03_reopened.png")
