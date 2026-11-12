@@ -1,0 +1,97 @@
+name: DipTrace direct generated FINAL 7313294
+on:
+  push:
+    branches: [diptrace-native-7313294]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore verified fixed board geometry
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip="$env:RUNNER_TEMP\fixed.zip"
+          $uri="https://api.github.com/repos/Damirinho9/New-repository/actions/artifacts/13982000415/zip"
+          curl.exe --fail --location -H "Authorization: Bearer $env:GH_TOKEN" -H "Accept: application/vnd.github+json" $uri -o $zip
+          if ($LASTEXITCODE -ne 0) { throw "fixed artifact download failed" }
+          Expand-Archive -Force $zip "$PWD\fixed-seed"
+          $src=Get-ChildItem "$PWD\fixed-seed" -Recurse -Filter "7313294_variant12_DipTrace_FIXED.kicad_pcb" | Select-Object -First 1
+          if (-not $src) { throw "fixed KiCad source missing" }
+          Copy-Item $src.FullName "$PWD\7313294_variant12_DipTrace_FIXED.kicad_pcb"
+          $sha=(Get-FileHash "$PWD\7313294_variant12_DipTrace_FIXED.kicad_pcb" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $len=(Get-Item "$PWD\7313294_variant12_DipTrace_FIXED.kicad_pcb").Length
+          Write-Host "fixed source size=$len sha=$sha"
+          if ($len -ne 46668 -or $sha -ne "511d7f0b9ab43f4b9cb871d233f3732bd888f19b9c77f91a516cd480b682f744") { throw "fixed source mismatch" }
+
+      - name: Generate direct DipTrace XML
+        shell: pwsh
+        run: |
+          py "$PWD\.github\scripts\generate_direct_dipxml.py" "$PWD\7313294_variant12_DipTrace_FIXED.kicad_pcb" "$PWD\7313294_variant12_DIRECT.dipxml"
+          [xml]$x=Get-Content "$PWD\7313294_variant12_DIRECT.dipxml"
+          if ($x.Source.Type -ne "DipTrace-PCB") { throw "not DipTrace PCB XML" }
+          $len=(Get-Item "$PWD\7313294_variant12_DIRECT.dipxml").Length
+          $sha=(Get-FileHash "$PWD\7313294_variant12_DIRECT.dipxml" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "direct xml size=$len sha=$sha"
+          if ($len -lt 100000) { throw "direct XML unexpectedly small" }
+
+      - name: Install official DipTrace Freeware 5.3.5.1
+        shell: pwsh
+        run: |
+          $installer="$env:RUNNER_TEMP\dipfree.exe"
+          curl.exe --fail --location --retry 3 --max-time 180 https://diptrace.com/downloads/dipfree_en64.exe --output $installer
+          if ($LASTEXITCODE -ne 0) { throw "DipTrace download failed" }
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne "8845d6e6e72f9671ea270ac462bd25c0c7794f68a7f4015b88aece980bfb848c") { throw "installer hash mismatch $hash" }
+          $p=Start-Process $installer -ArgumentList "/silent","/hide" -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "install timeout" }
+          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          if (-not (Test-Path "C:\Program Files\DipTrace\Pcb.exe")) { throw "Pcb.exe missing" }
+
+      - name: Install UI automation
+        shell: pwsh
+        run: py -m pip install pywinauto pillow
+
+      - name: Open direct XML, save binary DIP and reopen
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$PWD\direct-native-final" | Out-Null
+          py "$PWD\.github\scripts\direct_xml_to_dip.py" "$PWD\7313294_variant12_DIRECT.dipxml" "$PWD\direct-native-final\7313294_PhotoGas_MQ4_V12.dip" "$PWD\direct-native-final"
+          Get-Content "$PWD\direct-native-final\native_conversion.json"
+
+      - name: Run native DRC and Net Connectivity
+        shell: pwsh
+        run: |
+          py "$PWD\.github\scripts\verify_direct_native.py" "$PWD\direct-native-final\7313294_PhotoGas_MQ4_V12.dip" "$PWD\direct-native-final"
+          Get-Content "$PWD\direct-native-final\native_checks.json"
+
+      - name: Final inventory
+        if: always()
+        shell: pwsh
+        run: |
+          $dip="$PWD\direct-native-final\7313294_PhotoGas_MQ4_V12.dip"
+          if (Test-Path $dip) {
+            $b=[IO.File]::ReadAllBytes($dip)
+            $sig=[Text.Encoding]::ASCII.GetString($b,0,[Math]::Min(16,$b.Length))
+            $sha=(Get-FileHash $dip -Algorithm SHA256).Hash.ToLowerInvariant()
+            "size=$($b.Length)" | Tee-Object "$PWD\direct-native-final\FINAL_SIGNATURE.txt"
+            "signature=$sig" | Tee-Object -Append "$PWD\direct-native-final\FINAL_SIGNATURE.txt"
+            "sha256=$sha" | Tee-Object -Append "$PWD\direct-native-final\FINAL_SIGNATURE.txt"
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7313294-DipTrace-DIRECT-GENERATED-FINAL
+          path: |
+            7313294_variant12_DIRECT.dipxml
+            direct-native-final
+          if-no-files-found: error
+          retention-days: 10
