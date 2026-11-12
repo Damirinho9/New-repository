@@ -55,15 +55,15 @@ def dialog_snapshot(d):
     return arr
 
 def invoke_menu(main, top, child):
-    menu=main.menu().items()[top].sub_menu()
-    item=menu.items()[child]
-    info=item.item_info()
-    cmd=int(getattr(info,"wID",0) or 0)
-    if cmd>0:
-        if not U32.PostMessageW(int(main.handle),WM_COMMAND,cmd,0):
-            raise RuntimeError("PostMessage failed")
-    else:
-        item.click()
+    root=U32.GetMenu(int(main.handle))
+    sub=U32.GetSubMenu(root,int(top))
+    if not sub:
+        raise RuntimeError(f"top menu {top} has no submenu")
+    cmd=U32.GetMenuItemID(sub,int(child))
+    if cmd in (-1, 0xFFFFFFFF):
+        raise RuntimeError(f"menu {top}/{child} has no command id")
+    if not U32.PostMessageW(int(main.handle),WM_COMMAND,int(cmd),0):
+        raise RuntimeError("PostMessage failed")
 
 def visible_dialogs(app,main):
     out=[]
