@@ -212,6 +212,12 @@ def verify(app,main,kind):
         pred=lambda full,x: ("connectivity" in full or "checknet" in full or ("соедин" in full and ("провер" in full or "контрол" in full)) or ("связ" in full and "провер" in full))
     m=find_menu(main,pred)
     if not m:
+        # Verification menu is top-level #7. In current PCB Layout:
+        # #7/#0 = Check Design Rules, #7/#1 = Check Net Connectivity.
+        wanted=[7,0] if kind=="drc" else [7,1]
+        arr=menu_tree(main.handle)
+        m=next((x for x in arr if x["indices"]==wanted and x["id"]>=0),None)
+    if not m:
         dump_menu(main,"verification-search-"+kind)
         raise RuntimeError("verification menu not found: "+kind)
     invoke(main,m)
@@ -229,9 +235,14 @@ def run():
     screenshot(main,"00_blank.png")
     dump_menu(main,"blank")
 
-    m=find_menu(main,lambda full,x: "kicad" in full and ("import" in full or "импорт" in full))
+    # DipTrace 5.3.x File -> Import -> KiCAD board is the 9th Import item.
+    # Live native menu tree: #0 -> #8 -> #8, command ID 24.
+    arr=menu_tree(main.handle)
+    m=next((x for x in arr if x["indices"]==[0,8,8] and x["id"]>=0),None)
     if not m:
-        raise RuntimeError("KiCad import menu absent")
+        m=find_menu(main,lambda full,x: "kicad" in full and ("import" in full or "импорт" in full))
+    if not m:
+        raise RuntimeError("KiCad import command #0/#8/#8 absent")
     invoke(main,m)
     dlg=wait_common_file_dialog(app,main.handle,12)
     if dlg is None:
