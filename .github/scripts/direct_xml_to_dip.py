@@ -133,6 +133,25 @@ try:
     dlg=wait_dialog(app,main,20,lambda d:d.class_name()=="#32770")
     if dlg is None: raise RuntimeError("Save As dialog not found")
     step("save_as_dialog",title=dlg.window_text(),texts=texts(dlg)[:80])
+    # Explicitly switch Save as type from XML to native binary .dip.
+    combos=[]
+    try:
+        for ctrl in dlg.descendants():
+            if ctrl.class_name().casefold()=="combobox" and ctrl.is_visible():
+                combos.append(ctrl)
+    except: pass
+    selected=False
+    for cb in combos:
+        try:
+            vals=[str(x) for x in cb.texts()]
+            if any("DipTrace Files (*.dip)" in x for x in vals):
+                cb.select("DipTrace Files (*.dip)")
+                selected=True
+                step("save_type_selected",texts=vals)
+                break
+        except Exception: pass
+    if not selected:
+        raise RuntimeError("native DipTrace Files (*.dip) save type not selectable")
     set_filename(dlg,DIP)
     if not click(dlg,{"save","&save","сохранить"}):
         try:dlg.child_window(control_id=1).click()
