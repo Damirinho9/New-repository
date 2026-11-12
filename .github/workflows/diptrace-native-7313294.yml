@@ -49,6 +49,16 @@ jobs:
         shell: pwsh
         run: |
           py "$PWD\import_kicad_to_dip.py" "$PWD\board.kicad_pcb" "$PWD\7313294_PhotoGas_MQ4_V12.dip" "$PWD\native_evidence.json"
+      - name: Inspect native Design Rules and Verification map
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "$PWD\\7313294_PhotoGas_MQ4_V12.dip") {
+            New-Item -ItemType Directory -Force "$PWD\\native-inspect" | Out-Null
+            py "$PWD\\.github\\scripts\\inspect_native_rules.py" "$PWD\\7313294_PhotoGas_MQ4_V12.dip" "$PWD\\native-inspect"
+          } else {
+            Write-Host "Native .dip not present, inspection skipped"
+          }
       - name: Verify native output
         if: always()
         shell: pwsh
@@ -72,5 +82,5 @@ jobs:
             native_evidence.png
             native_signature.txt
             board.kicad_pcb
-          if-no-files-found: warn
+            native-inspect\n          if-no-files-found: warn
           retention-days: 10
