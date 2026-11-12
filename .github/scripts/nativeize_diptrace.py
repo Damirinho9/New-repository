@@ -11,7 +11,9 @@ LOG = OUTDIR / "nativeize.log"
 E = {"board": str(BOARD), "target": str(TARGET), "steps": [], "menus": [], "windows": []}
 
 def log(s):
-    s=str(s)\n    safe=s.encode("ascii","backslashreplace").decode("ascii")\n    print(safe, flush=True)
+    s=str(s)
+    safe=s.encode("ascii","backslashreplace").decode("ascii")
+    print(safe, flush=True)
     with LOG.open("a", encoding="utf-8") as f: f.write(s+"\n")
     E["steps"].append(s)
 
