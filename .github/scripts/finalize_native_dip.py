@@ -141,13 +141,47 @@ def apply_rules(app,main):
     if not d or "design rules" not in d.window_text().casefold():
         raise RuntimeError(f"Design Rules dialog not found: {[x.window_text() for x in visible_dialogs(app,main)]}")
     step("design_rules_open",controls=controls(d))
-    checkbox_set(d,67890,True)  # Check Clearances
-    checkbox_set(d,67888,False) # Check Sizes off
-    checkbox_set(d,67748,True)  # Show No Errors
-    for cid in CLEARANCE_IDS:set_edit(d,cid,GENERAL_IN)
-    for cid in BOARD_IDS:set_edit(d,cid,BOARD_IN)
+
+    # DipTrace regenerates Win32 control IDs between builds/processes. The
+    # clearance matrix geometry is stable, so identify enabled numeric fields
+    # by their row coordinates instead of fragile IDs.
+    changed=[]
+    try:
+        desc=d.descendants()
+    except Exception:
+        desc=[]
+    for ctrl in desc:
+        try:
+            if ctrl.class_name()!="TEdit" or not ctrl.is_visible() or not ctrl.is_enabled():
+                continue
+            r=ctrl.rectangle()
+            cy=(r.top+r.bottom)/2
+            # Matrix rows: Trace/Via/Pad/SMD/Copper/Drill ~= 280..400 px.
+            # Board row ~= 424 px. Same-net fields start around 483 px.
+            if 260 <= cy <= 410:
+                val=GENERAL_IN
+            elif 410 < cy <= 445:
+                val=BOARD_IN
+            else:
+                continue
+            before=ctrl.window_text().strip()
+            ctrl.set_edit_text(val)
+            after=ctrl.window_text().strip()
+            if after!=val:
+                raise RuntimeError(f"rule field at {list(r)} expected {val} got {after}")
+            changed.append({"rect":[r.left,r.top,r.right,r.bottom],"before":before,"after":after})
+        except Exception as exc:
+            if isinstance(exc, RuntimeError):
+                raise
+    if len(changed) < 20:
+        raise RuntimeError(f"too few clearance fields changed: {len(changed)}")
+    step("rules_changed",count=len(changed),fields=changed,
+         general_in=GENERAL_IN,board_in=BOARD_IN,
+         general_mm=0.249936,board_mm=0.500126)
+
     d.capture_as_image().save(OUT/"01_rules_set.png")
-    if not click_named(d,{"ok","&ok","ок"}):raise RuntimeError("Design Rules OK button not found")
+    if not click_named(d,{"ok","&ok","ок"}):
+        raise RuntimeError("Design Rules OK button not found")
     time.sleep(1)
     save_native(main)
 
