@@ -270,7 +270,11 @@ def cancel_dialog(dlg):
 def close_nonmain_visible(app, main):
     for w,t,cl,v,en in all_windows(app):
         if not v or int(w.handle)==int(main.handle): continue
-        if cl in ("#32770","TForm92","TFMyMessage") or cl.startswith("T"):
+        # TApplication is DipTrace's service/application window. Closing it kills
+        # the PCB host, so it must never be treated as an importer dialog.
+        if cl == "TApplication":
+            continue
+        if cl in ("#32770","TForm92","TFMyMessage") or cl.startswith("TForm"):
             log("closing probe window title="+t+" class="+cl)
             try: w.close()
             except Exception:
