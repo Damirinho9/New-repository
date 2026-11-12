@@ -1,0 +1,63 @@
+name: tmp-diptrace-native-7313294
+
+on:
+  push:
+    branches:
+      - tmp-diptrace-native-7313294
+
+permissions:
+  contents: read
+
+jobs:
+  nativeize:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and install official DipTrace Freeware
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://diptrace.com/downloads/dipfree_en64.exe"
+          Invoke-WebRequest -Uri $url -OutFile dipfree_en64.exe
+          $hash = (Get-FileHash .\dipfree_en64.exe -Algorithm SHA256).Hash.ToLower()
+          Write-Host "DipTrace installer SHA256=$hash"
+          if ($hash -ne "8845d6e6e72f9671ea270ac462bd25c0c7794f68a7f4015b88aece980bfb848c") {
+            throw "Unexpected DipTrace installer SHA256: $hash"
+          }
+          Start-Process -FilePath .\dipfree_en64.exe -ArgumentList "/silent","/hide" -Wait
+          if (!(Test-Path "C:\Program Files\DipTrace\Pcb.exe")) { throw "Pcb.exe not installed" }
+
+      - name: Install UI automation
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pywinauto pillow
+
+      - name: Native import, save, reopen and verify
+        shell: pwsh
+        env:
+          BOARD_PATH: ${{ github.workspace }}\7313294_variant12_routed_DRC_PASS.kicad_pcb
+          OUTDIR: ${{ github.workspace }}\native-output
+        run: |
+          python .github\scripts\nativeize_diptrace.py
+
+      - name: Inventory native output
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force native-output | Out-Null
+          Get-ChildItem native-output -Recurse | Format-List FullName,Length,LastWriteTime
+          if (Test-Path native-output\7313294_variant12_NATIVE.dip) {
+            $h=(Get-FileHash native-output\7313294_variant12_NATIVE.dip -Algorithm SHA256).Hash.ToLower()
+            "native_dip_sha256=$h" | Out-File native-output\artifact_hash.txt -Encoding utf8
+          }
+
+      - name: Upload native DipTrace evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7313294-diptrace-native
+          path: native-output
+          if-no-files-found: warn
+          retention-days: 7
