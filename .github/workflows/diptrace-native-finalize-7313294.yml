@@ -1,0 +1,72 @@
+name: DipTrace finalize native 7313294
+on:
+  push:
+    branches: [diptrace-native-7313294]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  finalize:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore verified non-empty native DIP
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip="$env:RUNNER_TEMP\\native.zip"
+          $uri="https://api.github.com/repos/Damirinho9/New-repository/actions/artifacts/13979303225/zip"
+          curl.exe --fail --location -H "Authorization: Bearer $env:GH_TOKEN" -H "Accept: application/vnd.github+json" $uri -o $zip
+          if ($LASTEXITCODE -ne 0) { throw "artifact download failed" }
+          Expand-Archive -Force $zip "$PWD\\seed"
+          $src=Get-ChildItem "$PWD\\seed" -Recurse -Filter "7313294_PhotoGas_MQ4_V12.dip" | Select-Object -First 1
+          if (-not $src) { throw "seed native DIP missing" }
+          Copy-Item $src.FullName "$PWD\\7313294_PhotoGas_MQ4_V12.dip"
+          $sha=(Get-FileHash "$PWD\\7313294_PhotoGas_MQ4_V12.dip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $len=(Get-Item "$PWD\\7313294_PhotoGas_MQ4_V12.dip").Length
+          Write-Host "seed size=$len sha=$sha"
+          if ($len -ne 123234 -or $sha -ne "512cc9bb131c0552cf2e60794faa9af5e5e593a589efbb0b85fd8bb6435f5c16") { throw "seed mismatch" }
+      - name: Install official DipTrace Freeware 5.3.5.1
+        shell: pwsh
+        run: |
+          $installer="$env:RUNNER_TEMP\\dipfree.exe"
+          curl.exe --fail --location --retry 3 --max-time 180 https://diptrace.com/downloads/dipfree_en64.exe --output $installer
+          if ($LASTEXITCODE -ne 0) { throw "DipTrace download failed" }
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne "8845d6e6e72f9671ea270ac462bd25c0c7794f68a7f4015b88aece980bfb848c") { throw "installer hash mismatch $hash" }
+          $p=Start-Process $installer -ArgumentList "/silent","/hide" -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "install timeout" }
+          if ($p.ExitCode -ne 0) { throw "installer exit $($p.ExitCode)" }
+          if (-not (Test-Path "C:\Program Files\DipTrace\Pcb.exe")) { throw "Pcb.exe missing" }
+      - name: Install UI automation
+        shell: pwsh
+        run: py -m pip install pywinauto pillow
+      - name: Apply PCB rules, save, reopen, run native DRC and connectivity
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$PWD\\final-native-evidence" | Out-Null
+          py "$PWD\\.github\\scripts\\finalize_native_dip.py" "$PWD\\7313294_PhotoGas_MQ4_V12.dip" "$PWD\\final-native-evidence"
+          Get-Content "$PWD\\final-native-evidence\\final_native_evidence.json"
+      - name: Inventory final native file
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "$PWD\\7313294_PhotoGas_MQ4_V12.dip") {
+            $b=[IO.File]::ReadAllBytes("$PWD\\7313294_PhotoGas_MQ4_V12.dip")
+            $sig=[Text.Encoding]::ASCII.GetString($b,0,[Math]::Min(16,$b.Length))
+            $sha=(Get-FileHash "$PWD\\7313294_PhotoGas_MQ4_V12.dip" -Algorithm SHA256).Hash.ToLowerInvariant()
+            "size=$($b.Length)" | Tee-Object "$PWD\\final-native-evidence\\final_signature.txt"
+            "signature=$sig" | Tee-Object -Append "$PWD\\final-native-evidence\\final_signature.txt"
+            "sha256=$sha" | Tee-Object -Append "$PWD\\final-native-evidence\\final_signature.txt"
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7313294-diptrace-native-final
+          path: |
+            7313294_PhotoGas_MQ4_V12.dip
+            final-native-evidence
+          if-no-files-found: error
+          retention-days: 10
