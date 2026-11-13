@@ -107,7 +107,11 @@ jobs:
 
           def open_word(path):
               p=subprocess.Popen([exe,"/q",str(path)])
-              w=word_window(p.pid); dismiss(w); return p,w
+              w=word_window(p.pid)
+              dismiss(w)
+              time.sleep(4)
+              dismiss(w)
+              return p,w
           def document(w):
               ds=w.descendants(control_type="Document")
               if not ds: raise RuntimeError("No document UIA")
@@ -169,10 +173,7 @@ jobs:
           body=[x for x in d.descendants(control_type="Edit") if x.element_info.automation_id=="Body"]
           if body:
               body[0].click_input()
-              keyboard.send_keys("%{F9}"); time.sleep(1)
-              ImageGrab.grab(all_screens=True).save(ev/"53-date-field-code.png")
-              keyboard.send_keys("%{F9}"); time.sleep(.5)
-              keyboard.send_keys("^a{F9}"); time.sleep(1)
+              time.sleep(.5)
 
           org=next((x for x in document(w).descendants(control_type="Edit")
                     if x.window_text()=="\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043e\u0440\u0433\u0430\u043d\u0438\u0437\u0430\u0446\u0438\u044e"),None)
@@ -231,6 +232,14 @@ jobs:
           print("SPR_REOPEN_EDITS="+json.dumps([x.window_text() for x in d.descendants(control_type="Edit") if x.element_info.automation_id!="Body"],ensure_ascii=False),flush=True)
           print("SPR_REOPEN_CHECKS="+json.dumps([x.get_toggle_state() for x in d.descendants(control_type="CheckBox")]),flush=True)
           ImageGrab.grab(all_screens=True).save(ev/"52-spravka-reopen.png")
+          body=[x for x in d.descendants(control_type="Edit") if x.element_info.automation_id=="Body"]
+          if body:
+              body[0].click_input()
+              keyboard.send_keys("%{F9}"); time.sleep(1)
+              ImageGrab.grab(all_screens=True).save(ev/"53-date-field-code.png")
+              keyboard.send_keys("%{F9}"); time.sleep(.5)
+              keyboard.send_keys("^a{F9}"); time.sleep(1)
+              print("SPR_DATE_AFTER_NATIVE_F9="+str("13.11.2026" in document(w).window_text()),flush=True)
           close(w,p)
           print("NATIVE_WORD_CERTIFICATE_PASS",flush=True)
           '@ | Set-Content "$env:RUNNER_TEMP\remaining.py" -Encoding UTF8
