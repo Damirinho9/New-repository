@@ -83,16 +83,49 @@ jobs:
                   if w: break
                   time.sleep(.5)
               if not w: raise RuntimeError("Word window not found")
-              for x in w.descendants():
+              def modal_titles():
+                  out=[]
                   try:
-                      if x.element_info.control_type=="Window" and x.window_text()=="Your privacy matters":
-                          for b in x.descendants(control_type="Button"):
-                              if b.window_text()=="Close":
-                                  try:b.invoke()
-                                  except:b.click_input()
-                                  time.sleep(2)
-                                  break
+                      for x in w.descendants():
+                          try:
+                              if x.element_info.control_type=="Window" and x.window_text():
+                                  out.append(x.window_text())
+                          except: pass
                   except: pass
+                  return out
+              for _ in range(8):
+                  acted=False
+                  dialogs=[]
+                  try:
+                      dialogs=[x for x in w.descendants() if x.element_info.control_type=="Window"]
+                  except: dialogs=[]
+                  # Foreground settings dialog first.
+                  for title,button_name in [("Privacy Settings","Cancel"),("Your privacy matters","Close")]:
+                      for dlg in dialogs:
+                          try:
+                              if dlg.window_text()!=title: continue
+                              for b in dlg.descendants(control_type="Button"):
+                                  if b.window_text()==button_name:
+                                      try:b.click_input()
+                                      except:
+                                          try:b.invoke()
+                                          except: pass
+                                      time.sleep(1)
+                                      acted=True
+                                      break
+                              if acted: break
+                          except: pass
+                      if acted: break
+                  if not acted:
+                      break
+              remaining=modal_titles()
+              print("PRIVACY_REMAINING="+json.dumps(remaining,ensure_ascii=False),flush=True)
+              if any(t in ("Privacy Settings","Your privacy matters") for t in remaining):
+                  w.set_focus()
+                  keyboard.send_keys("{ESC}{ESC}")
+                  time.sleep(2)
+                  remaining=modal_titles()
+                  print("PRIVACY_AFTER_ESC="+json.dumps(remaining,ensure_ascii=False),flush=True)
               w.set_focus()
               return p,w
 
@@ -122,22 +155,21 @@ jobs:
           print("ANK_COUNTS",len(edits),len(combos),len(checks),flush=True)
           surname=next(e for e in edits if e.window_text()=="\u0422\u0435\u0441\u0442\u043e\u0432")
           surname.click_input()
-          keyboard.send_keys("^a")
+          time.sleep(.4)
+          print("SURNAME_FOCUS="+str(surname.has_keyboard_focus()),flush=True)
+          keyboard.send_keys("{HOME}+{END}")
           keyboard.send_keys("ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890", pause=.025)
           firstname=next(e for e in edits if e.window_text()=="\u0418\u0432\u0430\u043d")
           firstname.click_input()
           time.sleep(1)
-          try:
-              combos[0].select("\u043c\u0443\u0436")
-          except Exception:
-              combos[0].click_input()
-              keyboard.send_keys("%{DOWN}{DOWN}{ENTER}")
-          try:
-              combos[1].select("\u0432\u044b\u0441\u0448\u0435\u0435")
-          except Exception:
-              combos[1].click_input()
-              keyboard.send_keys("%{DOWN}{DOWN}{DOWN}{ENTER}")
+          combos[0].click_input()
+          keyboard.send_keys("%{DOWN}{HOME}{DOWN}{ENTER}")
+          time.sleep(.7)
+          combos[1].click_input()
+          keyboard.send_keys("%{DOWN}{HOME}{DOWN}{DOWN}{DOWN}{ENTER}")
+          time.sleep(.7)
           checks[0].click_input()
+          time.sleep(.7)
           print("ANK_EDIT_NOW="+surname.window_text(),flush=True)
           def cv(c):
               try:return c.selected_text()
