@@ -1,36 +1,28 @@
-name: Native Word probe 7338963
+name: Native Word UI diagnostic 7338963
 on:
   push:
     branches: [word-native-test-7338963]
-  workflow_dispatch:
 
 jobs:
-  probe:
+  ui:
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
-      - name: Download Office Deployment Tool
+      - uses: actions/checkout@v4
+
+      - name: Install Word LTSC 2024
         shell: powershell
         run: |
           Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20430-20146.exe" -OutFile "$env:RUNNER_TEMP\odt.exe"
           Start-Process "$env:RUNNER_TEMP\odt.exe" -ArgumentList "/quiet /extract:$env:RUNNER_TEMP\odt" -Wait
-      - name: Install Word LTSC 2024
-        shell: powershell
-        run: |
           @'
           <Configuration>
             <Add OfficeClientEdition="64" Channel="PerpetualVL2024">
               <Product ID="ProPlus2024Volume">
                 <Language ID="en-us" />
-                <ExcludeApp ID="Access" />
-                <ExcludeApp ID="Excel" />
-                <ExcludeApp ID="Groove" />
-                <ExcludeApp ID="Lync" />
-                <ExcludeApp ID="OneDrive" />
-                <ExcludeApp ID="OneNote" />
-                <ExcludeApp ID="Outlook" />
-                <ExcludeApp ID="PowerPoint" />
-                <ExcludeApp ID="Publisher" />
+                <ExcludeApp ID="Access" /><ExcludeApp ID="Excel" /><ExcludeApp ID="Groove" />
+                <ExcludeApp ID="Lync" /><ExcludeApp ID="OneDrive" /><ExcludeApp ID="OneNote" />
+                <ExcludeApp ID="Outlook" /><ExcludeApp ID="PowerPoint" /><ExcludeApp ID="Publisher" />
                 <ExcludeApp ID="Teams" />
               </Product>
             </Add>
@@ -39,39 +31,95 @@ jobs:
           </Configuration>
           '@ | Set-Content "$env:RUNNER_TEMP\odt\config.xml" -Encoding UTF8
           & "$env:RUNNER_TEMP\odt\setup.exe" /configure "$env:RUNNER_TEMP\odt\config.xml"
-          $wordExe = Get-ChildItem "C:\Program Files\Microsoft Office" -Filter WINWORD.EXE -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $wordExe) { throw "WINWORD.EXE not found after LTSC installation" }
-          Write-Host "WINWORD=$($wordExe.FullName)"
-          $ospp=Get-ChildItem "C:\Program Files\Microsoft Office" -Filter OSPP.VBS -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if($ospp){ cscript.exe //nologo $ospp.FullName /dstatus }
-      - name: Suppress first-run UI
-        shell: powershell
-        run: |
+          $word = Get-ChildItem "C:\Program Files\Microsoft Office" -Filter WINWORD.EXE -Recurse | Select-Object -First 1
+          if(!$word){ throw "WINWORD missing" }
+          "WORD_EXE=$($word.FullName)" | Out-File $env:GITHUB_ENV -Append
           New-Item -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Force | Out-Null
-          New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Name "ShownFirstRunOptin" -Value 1 -PropertyType DWord -Force | Out-Null
-          New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Name "DisableFirstRunMovie" -Value 1 -PropertyType DWord -Force | Out-Null
-          New-Item -Path "HKCU:\Software\Microsoft\Office\16.0\Common\Privacy" -Force | Out-Null
-          New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\Privacy" -Name "OptInDisable" -Value 1 -PropertyType DWord -Force | Out-Null
-      - name: Probe Word COM
-        timeout-minutes: 3
+          New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Name ShownFirstRunOptin -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Name DisableFirstRunMovie -Value 1 -PropertyType DWord -Force | Out-Null
+
+      - name: Session diagnostic
         shell: powershell
         run: |
-          $ErrorActionPreference='Stop'
-          $word = New-Object -ComObject Word.Application
-          try {
-            $word.Visible=$false
-            $word.DisplayAlerts=0
-            Write-Host "WORD_VERSION=$($word.Version)"
-            Write-Host "WORD_BUILD=$($word.Build)"
-            $doc=$word.Documents.Add()
-            $doc.Content.Text="Native Word COM test 7338963"
-            $path=Join-Path $env:RUNNER_TEMP "native-word-probe.docx"
-            $doc.SaveAs2($path,16)
-            $doc.Close(0)
-            $doc=$word.Documents.Open($path,$false,$true)
-            Write-Host "REOPEN_TEXT=$($doc.Content.Text.Trim())"
-            $doc.Close(0)
-            Write-Host "NATIVE_WORD_COM_PASS"
-          } finally {
-            if($word){ $word.Quit() }
-          }
+          whoami
+          query session
+          Get-Process explorer,winlogon -ErrorAction SilentlyContinue | Format-Table Id,SessionId,ProcessName
+          Get-CimInstance Win32_ComputerSystem | Select-Object UserName
+
+      - name: Extract sanitized native forms
+        shell: powershell
+        run: |
+          Expand-Archive "$env:GITHUB_WORKSPACE\word-native-test\native_forms.zip" "$env:RUNNER_TEMP\forms" -Force
+          Get-ChildItem "$env:RUNNER_TEMP\forms" | Format-Table Name,Length
+
+      - name: Install UI automation
+        shell: powershell
+        run: |
+          python -m pip install --disable-pip-version-check pywinauto pillow pywin32
+
+      - name: Launch Word and inspect UIA
+        timeout-minutes: 4
+        shell: powershell
+        run: |
+          @'
+          import os, time, subprocess, json, traceback
+          from pathlib import Path
+          from pywinauto import Desktop
+          from PIL import ImageGrab
+          exe=os.environ["WORD_EXE"]
+          forms=Path(os.environ["RUNNER_TEMP"])/"forms"
+          doc=next(forms.glob("*TEST-000.docx"))
+          print("DOC",doc,flush=True)
+          p=subprocess.Popen([exe,"/q",str(doc)])
+          print("PID",p.pid,flush=True)
+          time.sleep(15)
+          wins=[]
+          for w in Desktop(backend="uia").windows():
+              try:
+                  info={"title":w.window_text(),"class":w.class_name(),"pid":w.process_id(),"type":w.element_info.control_type}
+                  if info["pid"]==p.pid or "Word" in info["title"] or "Анкета" in info["title"]:
+                      wins.append(info)
+              except Exception:
+                  pass
+          print("WORD_WINDOWS="+json.dumps(wins,ensure_ascii=False),flush=True)
+          target=None
+          for w in Desktop(backend="uia").windows():
+              try:
+                  if w.process_id()==p.pid and w.is_visible():
+                      target=w; break
+              except Exception: pass
+          if not target:
+              raise RuntimeError("No visible Word UIA window in runner session")
+          print("TARGET_TITLE="+target.window_text(),flush=True)
+          desc=[]
+          for x in target.descendants():
+              try:
+                  if len(desc)>=160: break
+                  name=x.window_text()
+                  typ=x.element_info.control_type
+                  auto=x.element_info.automation_id
+                  if name or typ in ("Edit","ComboBox","CheckBox","Document"):
+                      desc.append({"type":typ,"name":name[:140],"id":auto})
+              except Exception: pass
+          print("UIA_DESC="+json.dumps(desc,ensure_ascii=False),flush=True)
+          try:
+              img=ImageGrab.grab(all_screens=True)
+              out=Path(os.environ["RUNNER_TEMP"])/"word-screen.png"
+              img.save(out)
+              print("SCREENSHOT="+str(out),flush=True)
+          except Exception:
+              traceback.print_exc()
+          p.terminate()
+          try: p.wait(10)
+          except: p.kill()
+          print("NATIVE_WORD_UIA_PASS",flush=True)
+          '@ | Set-Content "$env:RUNNER_TEMP\uia.py" -Encoding UTF8
+          python "$env:RUNNER_TEMP\uia.py"
+
+      - name: Upload UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7338963-native-word-ui-evidence
+          path: |
+            ${{ runner.temp }}\word-screen.png
