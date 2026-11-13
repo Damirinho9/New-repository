@@ -14,13 +14,13 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20430-20146.exe" -OutFile "$env:RUNNER_TEMP\odt.exe"
           Start-Process "$env:RUNNER_TEMP\odt.exe" -ArgumentList "/quiet /extract:$env:RUNNER_TEMP\odt" -Wait
-      - name: Install Word only
+      - name: Install Word LTSC 2024
         shell: powershell
         run: |
           @'
           <Configuration>
-            <Add OfficeClientEdition="64" Channel="Current" >
-              <Product ID="O365ProPlusRetail">
+            <Add OfficeClientEdition="64" Channel="PerpetualVL2024">
+              <Product ID="ProPlus2024Volume">
                 <Language ID="en-us" />
                 <ExcludeApp ID="Access" />
                 <ExcludeApp ID="Excel" />
@@ -39,27 +39,39 @@ jobs:
           </Configuration>
           '@ | Set-Content "$env:RUNNER_TEMP\odt\config.xml" -Encoding UTF8
           & "$env:RUNNER_TEMP\odt\setup.exe" /configure "$env:RUNNER_TEMP\odt\config.xml"
-          $word = Get-ChildItem "C:\Program Files\Microsoft Office" -Filter WINWORD.EXE -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $word) { throw "WINWORD.EXE not found after installation" }
-          Write-Host "WINWORD=$($word.FullName)"
+          $wordExe = Get-ChildItem "C:\Program Files\Microsoft Office" -Filter WINWORD.EXE -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $wordExe) { throw "WINWORD.EXE not found after LTSC installation" }
+          Write-Host "WINWORD=$($wordExe.FullName)"
+          $ospp=Get-ChildItem "C:\Program Files\Microsoft Office" -Filter OSPP.VBS -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if($ospp){ cscript.exe //nologo $ospp.FullName /dstatus }
+      - name: Suppress first-run UI
+        shell: powershell
+        run: |
+          New-Item -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Force | Out-Null
+          New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Name "ShownFirstRunOptin" -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Name "DisableFirstRunMovie" -Value 1 -PropertyType DWord -Force | Out-Null
+          New-Item -Path "HKCU:\Software\Microsoft\Office\16.0\Common\Privacy" -Force | Out-Null
+          New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\Privacy" -Name "OptInDisable" -Value 1 -PropertyType DWord -Force | Out-Null
       - name: Probe Word COM
+        timeout-minutes: 3
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
           $word = New-Object -ComObject Word.Application
           try {
             $word.Visible=$false
+            $word.DisplayAlerts=0
             Write-Host "WORD_VERSION=$($word.Version)"
             Write-Host "WORD_BUILD=$($word.Build)"
             $doc=$word.Documents.Add()
             $doc.Content.Text="Native Word COM test 7338963"
             $path=Join-Path $env:RUNNER_TEMP "native-word-probe.docx"
             $doc.SaveAs2($path,16)
-            $doc.Close()
+            $doc.Close(0)
             $doc=$word.Documents.Open($path,$false,$true)
             Write-Host "REOPEN_TEXT=$($doc.Content.Text.Trim())"
-            $doc.Close()
+            $doc.Close(0)
             Write-Host "NATIVE_WORD_COM_PASS"
           } finally {
-            $word.Quit()
+            if($word){ $word.Quit() }
           }
