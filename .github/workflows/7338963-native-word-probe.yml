@@ -185,9 +185,9 @@ jobs:
           edits=[x for x in document(w).descendants(control_type="Edit") if x.element_info.automation_id!="Body"]
           edits[4].click_input(); keyboard.send_keys("%{DOWN}{HOME}{DOWN}{DOWN}{ENTER}"); time.sleep(.7)
           edits=[x for x in document(w).descendants(control_type="Edit") if x.element_info.automation_id!="Body"]
-          edits[5].click_input(); keyboard.send_keys("%{DOWN}{HOME}{DOWN}{DOWN}{DOWN}{ENTER}"); time.sleep(.7)
+          edits[5].click_input(); keyboard.send_keys("%{DOWN}{HOME}{DOWN}{DOWN}{ENTER}"); time.sleep(.7)
           edits=[x for x in document(w).descendants(control_type="Edit") if x.element_info.automation_id!="Body"]
-          edits[8].click_input(); keyboard.send_keys("%{DOWN}{HOME}{DOWN}{DOWN}{ENTER}"); time.sleep(.7)
+          edits[8].click_input(); keyboard.send_keys("%{DOWN}{HOME}{DOWN}{ENTER}"); time.sleep(.7)
 
           checks=document(w).descendants(control_type="CheckBox")
           if checks:
@@ -203,8 +203,13 @@ jobs:
 
           # Read persistence directly from the DOCX that native Word saved.
           with zipfile.ZipFile(spr) as z: root=ET.fromstring(z.read("word/document.xml"))
-          fld=next(root.iter(q("fldSimple")))
-          print("DATE_AFTER_DIRTY="+str(fld.get(q("dirty")))+" TEXT="+''.join((x.text or '') for x in fld.iter(q("t"))),flush=True)
+          fld=next(root.iter(q("fldSimple")),None)
+          if fld is not None:
+              print("DATE_AFTER_KIND=fldSimple DIRTY="+str(fld.get(q("dirty")))+" TEXT="+''.join((x.text or '') for x in fld.iter(q("t"))),flush=True)
+          else:
+              instr=''.join((x.text or '') for x in root.iter(q("instrText")))
+              alltext=''.join((x.text or '') for x in root.iter(q("t")))
+              print("DATE_AFTER_KIND=complex INSTR="+instr+" HAS_CURRENT="+str("13.11.2026" in alltext),flush=True)
 
           sdt_data=[]
           for sdt in root.iter(q("sdt")):
