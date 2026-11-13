@@ -1,0 +1,65 @@
+name: Native Word probe 7338963
+on:
+  push:
+    branches: [word-native-test-7338963]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Download Office Deployment Tool
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20430-20146.exe" -OutFile "$env:RUNNER_TEMP\odt.exe"
+          Start-Process "$env:RUNNER_TEMP\odt.exe" -ArgumentList "/quiet /extract:$env:RUNNER_TEMP\odt" -Wait
+      - name: Install Word only
+        shell: powershell
+        run: |
+          @'
+          <Configuration>
+            <Add OfficeClientEdition="64" Channel="Current" >
+              <Product ID="O365ProPlusRetail">
+                <Language ID="en-us" />
+                <ExcludeApp ID="Access" />
+                <ExcludeApp ID="Excel" />
+                <ExcludeApp ID="Groove" />
+                <ExcludeApp ID="Lync" />
+                <ExcludeApp ID="OneDrive" />
+                <ExcludeApp ID="OneNote" />
+                <ExcludeApp ID="Outlook" />
+                <ExcludeApp ID="PowerPoint" />
+                <ExcludeApp ID="Publisher" />
+                <ExcludeApp ID="Teams" />
+              </Product>
+            </Add>
+            <Display Level="None" AcceptEULA="TRUE" />
+            <Updates Enabled="FALSE" />
+          </Configuration>
+          '@ | Set-Content "$env:RUNNER_TEMP\odt\config.xml" -Encoding UTF8
+          & "$env:RUNNER_TEMP\odt\setup.exe" /configure "$env:RUNNER_TEMP\odt\config.xml"
+          $word = Get-ChildItem "C:\Program Files\Microsoft Office" -Filter WINWORD.EXE -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $word) { throw "WINWORD.EXE not found after installation" }
+          Write-Host "WINWORD=$($word.FullName)"
+      - name: Probe Word COM
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $word = New-Object -ComObject Word.Application
+          try {
+            $word.Visible=$false
+            Write-Host "WORD_VERSION=$($word.Version)"
+            Write-Host "WORD_BUILD=$($word.Build)"
+            $doc=$word.Documents.Add()
+            $doc.Content.Text="Native Word COM test 7338963"
+            $path=Join-Path $env:RUNNER_TEMP "native-word-probe.docx"
+            $doc.SaveAs2($path,16)
+            $doc.Close()
+            $doc=$word.Documents.Open($path,$false,$true)
+            Write-Host "REOPEN_TEXT=$($doc.Content.Text.Trim())"
+            $doc.Close()
+            Write-Host "NATIVE_WORD_COM_PASS"
+          } finally {
+            $word.Quit()
+          }
