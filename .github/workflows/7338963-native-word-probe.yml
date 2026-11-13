@@ -65,7 +65,7 @@ jobs:
           from pathlib import Path
           from pywinauto import Desktop, keyboard
           from PIL import ImageGrab
-          from lxml import etree
+          import xml.etree.ElementTree as ET
 
           exe=os.environ["WORD_EXE"]
           forms=Path(os.environ["RUNNER_TEMP"])/"forms"
@@ -137,22 +137,29 @@ jobs:
           W="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
           ns={"w":W}
           with zipfile.ZipFile(doc) as z:
-              root=etree.fromstring(z.read("word/document.xml"))
+              root=ET.fromstring(z.read("word/document.xml"))
           vals={}
-          for fld in root.xpath(".//w:ffData",namespaces=ns):
-              n=fld.find("w:name",ns)
+          q=lambda name: "{"+W+"}"+name
+          for fld in root.iter(q("ffData")):
+              n=fld.find(q("name"))
               if n is None: continue
-              name=n.get("{%s}val"%W)
-              begin=fld.getparent().getparent()
-              # capture visible field result from following runs until fldChar end, best effort
+              name=n.get(q("val"))
+              cb=fld.find(q("checkBox"))
+              checked=None
+              if cb is not None:
+                  c=cb.find(q("checked"))
+                  checked = None if c is None else c.get(q("val"),"1")
               vals[name]={
-                  "textInput": fld.find("w:textInput",ns) is not None,
-                  "checkBox": fld.find("w:checkBox",ns) is not None,
-                  "ddList": fld.find("w:ddList",ns) is not None
+                  "textInput": fld.find(q("textInput")) is not None,
+                  "checkBox": cb is not None,
+                  "checked": checked,
+                  "ddList": fld.find(q("ddList")) is not None
               }
-          body_text="".join(root.xpath(".//w:t/text()",namespaces=ns))
+          body_text="".join((t.text or "") for t in root.iter(q("t")))
           print("POSTSAVE_BODY_TEXT="+body_text,flush=True)
           print("FORM_FIELDS="+json.dumps(vals,ensure_ascii=False),flush=True)
+          expected="abcdefghijklmnopqrstuvwxy"
+          print("MAX25_LOWERCASE_PRESENT="+str(expected in body_text),flush=True)
           print("NATIVE_WORD_UI_KEYBOARD_SAVE_PASS",flush=True)
           '@ | Set-Content "$env:RUNNER_TEMP\native_ui_test.py" -Encoding UTF8
           python "$env:RUNNER_TEMP\native_ui_test.py"
