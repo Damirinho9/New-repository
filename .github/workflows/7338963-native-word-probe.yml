@@ -168,24 +168,36 @@ jobs:
           # Update all fields through Word UI.
           body=[x for x in d.descendants(control_type="Edit") if x.element_info.automation_id=="Body"]
           if body:
-              body[0].click_input(); keyboard.send_keys("^a{F9}"); time.sleep(2)
+              body[0].click_input()
+              keyboard.send_keys("%{F9}"); time.sleep(1)
+              ImageGrab.grab(all_screens=True).save(ev/"53-date-field-code.png")
+              keyboard.send_keys("%{F9}"); time.sleep(.5)
+              keyboard.send_keys("^a{F9}"); time.sleep(1)
 
           org=next((x for x in document(w).descendants(control_type="Edit")
                     if x.window_text()=="\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043e\u0440\u0433\u0430\u043d\u0438\u0437\u0430\u0446\u0438\u044e"),None)
           if org:
-              org.click_input(); keyboard.send_keys("{HOME}+{END}NATIVE ORGANIZATION",with_spaces=True); time.sleep(.7)
+              org.click_input()
+              keyboard.send_keys("NATIVE ORGANIZATION",with_spaces=True,pause=.03)
+              time.sleep(.7)
 
-          combos=document(w).descendants(control_type="ComboBox")
-          targets=["\u044d\u043a\u043e\u043d\u043e\u043c\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e","3","TEST 000","\u043f\u0430\u0441\u043f\u043e\u0440\u0442"]
-          for i,(c,val) in enumerate(zip(combos,targets)):
-              try:
-                  c.select(val)
-              except:
-                  c.click_input(); keyboard.send_keys("{HOME}"+("{DOWN}"*(2 if i in (0,3) else (3 if i==1 else 1)))+"{ENTER}")
-              time.sleep(.5)
+          # Word exposes dropdown content controls as Edit surfaces in UIA.
+          edits=[x for x in document(w).descendants(control_type="Edit") if x.element_info.automation_id!="Body"]
+          edits[4].click_input(); keyboard.send_keys("%{DOWN}{HOME}{DOWN}{DOWN}{ENTER}"); time.sleep(.7)
+          edits=[x for x in document(w).descendants(control_type="Edit") if x.element_info.automation_id!="Body"]
+          edits[5].click_input(); keyboard.send_keys("%{DOWN}{HOME}{DOWN}{DOWN}{DOWN}{ENTER}"); time.sleep(.7)
+          edits=[x for x in document(w).descendants(control_type="Edit") if x.element_info.automation_id!="Body"]
+          edits[8].click_input(); keyboard.send_keys("%{DOWN}{HOME}{DOWN}{DOWN}{ENTER}"); time.sleep(.7)
 
           checks=document(w).descendants(control_type="CheckBox")
-          if checks: checks[0].click_input(); time.sleep(.7)
+          if checks:
+              before=checks[0].get_toggle_state()
+              checks[0].click_input(); time.sleep(.3)
+              checks=document(w).descendants(control_type="CheckBox")
+              if checks[0].get_toggle_state()==before:
+                  checks[0].click_input(); keyboard.send_keys(" "); time.sleep(.5)
+          print("SPR_UI_EDITS_AFTER="+json.dumps([x.window_text() for x in document(w).descendants(control_type="Edit") if x.element_info.automation_id!="Body"],ensure_ascii=False),flush=True)
+          print("SPR_UI_CHECKS_AFTER="+json.dumps([x.get_toggle_state() for x in document(w).descendants(control_type="CheckBox")]),flush=True)
           ImageGrab.grab(all_screens=True).save(ev/"51-spravka-edited.png")
           save(w); close(w,p)
 
@@ -211,7 +223,7 @@ jobs:
 
           p,w=open_word(spr); d=document(w)
           print("SPR_REOPEN_TEXT="+d.window_text(),flush=True)
-          print("SPR_REOPEN_COMBOS="+json.dumps([cv(x) for x in d.descendants(control_type="ComboBox")],ensure_ascii=False),flush=True)
+          print("SPR_REOPEN_EDITS="+json.dumps([x.window_text() for x in d.descendants(control_type="Edit") if x.element_info.automation_id!="Body"],ensure_ascii=False),flush=True)
           print("SPR_REOPEN_CHECKS="+json.dumps([x.get_toggle_state() for x in d.descendants(control_type="CheckBox")]),flush=True)
           ImageGrab.grab(all_screens=True).save(ev/"52-spravka-reopen.png")
           close(w,p)
