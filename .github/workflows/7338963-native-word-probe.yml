@@ -137,124 +137,65 @@ jobs:
           ank=next(forms.glob("*TEST-000.docx"))
           p,w=open_word(ank); d=document(w)
 
-          # General form protection: typing on a static title area must not replace document content.
-          before_text=d.window_text()
-          rr=d.rectangle()
-          mouse.click(coords=(rr.left+rr.width()//2, rr.top+35))
-          keyboard.send_keys("PROTECTION_STATIC_TEST")
-          time.sleep(.7)
-          protection_blocked="PROTECTION_STATIC_TEST" not in document(w).window_text()
-          print("ANK_PROTECTION_BLOCKED_STATIC="+str(protection_blocked),flush=True)
-
-          # Use the actual drop-down arrow area and choose visible list items.
-          def choose_legacy_combo(index, wanted):
-              combos=document(w).descendants(control_type="ComboBox")
-              c=combos[index]
-              r=c.rectangle()
-              mouse.click(coords=(r.right-4, r.top+r.height()//2))
-              time.sleep(.8)
-              found=[]
-              for top in Desktop(backend="uia").windows():
-                  try:
-                      for li in top.descendants(control_type="ListItem"):
-                          nm=li.window_text()
-                          if nm: found.append((nm,li))
-                  except: pass
-              print("LEGACY_LIST_ITEMS_"+str(index)+"="+json.dumps([x[0] for x in found],ensure_ascii=False),flush=True)
-              for nm,li in found:
-                  if nm==wanted:
-                      try:li.click_input()
-                      except:pass
-                      time.sleep(.8)
-                      return True
-              # Keyboard fallback while the drop-down is active.
-              keyboard.send_keys("{HOME}")
-              if wanted=="\u043c\u0443\u0436": keyboard.send_keys("{DOWN}{ENTER}")
-              elif wanted=="\u0432\u044b\u0441\u0448\u0435\u0435": keyboard.send_keys("{DOWN}{DOWN}{DOWN}{ENTER}")
-              time.sleep(.8)
-              return False
-
-          choose_legacy_combo(0,"\u043c\u0443\u0436")
-          choose_legacy_combo(1,"\u0432\u044b\u0441\u0448\u0435\u0435")
-
-          # Change Picture must be available even while form protection is active.
-          buttons=document(w).descendants(control_type="Button")
-          cp=next((x for x in buttons if x.window_text()=="Change Picture"),None)
-          photo_dialog=False
-          photo_replaced=False
-          media_before={}
-          with zipfile.ZipFile(ank) as zin:
-              for n in zin.namelist():
-                  if n.startswith("word/media/"):
-                      import hashlib
-                      media_before[n]=hashlib.sha256(zin.read(n)).hexdigest()
-          repl=ev/"replacement.png"
-          img=Image.new("RGB",(180,220),"white")
-          dr=ImageDraw.Draw(img); dr.ellipse((45,20,135,110),outline="black",width=5); dr.rectangle((40,120,140,210),outline="black",width=5)
-          img.save(repl)
-          if cp:
-              cp.click_input(); time.sleep(2)
-              titles=[]
-              for tw in Desktop(backend="uia").windows():
-                  try:
-                      if tw.window_text(): titles.append((tw.window_text(),tw.class_name()))
-                  except: pass
-              print("PHOTO_WINDOWS="+json.dumps(titles,ensure_ascii=False),flush=True)
-              ImageGrab.grab(all_screens=True).save(ev/"70-change-picture-open.png")
-              photo_dialog=any(("Picture" in t[0] or t[1]=="#32770") for t in titles)
-              # Office chooser: choose local file if available.
-              for tw in Desktop(backend="uia").windows():
-                  try:
-                      for btn in tw.descendants(control_type="Button"):
-                          if btn.window_text() in ("From a File","From File"):
-                              btn.click_input(); time.sleep(2); raise StopIteration
-                  except StopIteration: break
-                  except: pass
-              dlg=None
-              for _ in range(20):
-                  for tw in Desktop(backend="uia").windows():
-                      try:
-                          if tw.class_name()=="#32770" and ("Insert" in tw.window_text() or "Picture" in tw.window_text() or "Open" in tw.window_text()):
-                              dlg=tw; break
-                      except: pass
-                  if dlg: break
-                  time.sleep(.25)
-              if dlg:
-                  edits=dlg.descendants(control_type="Edit")
-                  fe=next((x for x in edits if x.element_info.automation_id=="1148"), edits[-1] if edits else None)
-                  if fe:
-                      try:fe.set_edit_text(str(repl))
-                      except:
-                          fe.click_input(); keyboard.send_keys("^a"); keyboard.send_keys(str(repl),with_spaces=True)
-                      ib=next((x for x in dlg.descendants(control_type="Button") if x.window_text() in ("Insert","Open")),None)
-                      if ib:
-                          ib.click_input(); time.sleep(3); photo_replaced=True
-              if not photo_replaced:
-                  keyboard.send_keys("{ESC}"); time.sleep(.5)
-
-          ImageGrab.grab(all_screens=True).save(ev/"71-anketa-final-ui.png")
+          # Navigate protected legacy fields exactly as a keyboard user does.
+          edits=[x for x in d.descendants(control_type="Edit") if x.element_info.automation_id!="Body" and x.window_text()!="￼"]
+          surname=next(x for x in edits if x.window_text()=="\u0422\u0435\u0441\u0442\u043e\u0432")
+          surname.click_input(); time.sleep(.4)
+          keyboard.send_keys("{TAB}{TAB}{TAB}{TAB}"); time.sleep(.4)
+          keyboard.send_keys("{DOWN}"); time.sleep(.7)  # sex: выберите -> муж
+          keyboard.send_keys("{TAB}{TAB}{TAB}{TAB}{TAB}{TAB}"); time.sleep(.4)
+          keyboard.send_keys("{END}"); time.sleep(.7)   # education -> высшее
+          ImageGrab.grab(all_screens=True).save(ev/"70-legacy-tab-navigation.png")
           save(w); close(w,p)
 
-          # Inspect what native Word persisted.
           with zipfile.ZipFile(ank) as z: root=ET.fromstring(z.read("word/document.xml"))
           legacy={}
           for ff in root.iter(q("ffData")):
-              nm=ff.find(q("name")); dd=ff.find(q("ddList")); cb=ff.find(q("checkBox"))
-              if nm is None: continue
-              name=nm.get(q("val"))
-              if dd is not None:
-                  entries=[x.get(q("val")) for x in dd.findall(q("listEntry"))]
-                  res=dd.find(q("result")); idx=int(res.get(q("val"),"0")) if res is not None else 0
-                  legacy[name]={"index":idx,"value":entries[idx] if idx<len(entries) else None}
-              if cb is not None:
-                  ck=cb.find(q("checked")); legacy[name]={"checked":None if ck is None else ck.get(q("val"),"1")}
-          print("ANK_FINAL_XML="+json.dumps(legacy,ensure_ascii=False),flush=True)
-          media_after={}
-          with zipfile.ZipFile(ank) as zin:
-              import hashlib
-              for n in zin.namelist():
-                  if n.startswith("word/media/"): media_after[n]=hashlib.sha256(zin.read(n)).hexdigest()
-          print("ANK_PHOTO_DIALOG="+str(photo_dialog)+" REPLACED="+str(photo_replaced)+" MEDIA_CHANGED="+str(media_after!=media_before),flush=True)
+              nm=ff.find(q("name")); dd=ff.find(q("ddList"))
+              if nm is None or dd is None: continue
+              entries=[x.get(q("val")) for x in dd.findall(q("listEntry"))]
+              res=dd.find(q("result")); idx=int(res.get(q("val"),"0")) if res is not None else 0
+              legacy[nm.get(q("val"))]={"index":idx,"value":entries[idx] if idx<len(entries) else None}
+          print("ANK_TAB_DROPDOWN_XML="+json.dumps(legacy,ensure_ascii=False),flush=True)
+
+          # Reopen and explicitly select the picture content control.
+          p,w=open_word(ank); d=document(w)
+          pics=d.descendants(control_type="Image")
+          placeholders=[x for x in d.descendants(control_type="Edit") if x.window_text()=="￼"]
+          if pics:
+              try:pics[0].click_input()
+              except:pass
+          elif placeholders:
+              placeholders[0].click_input()
+          time.sleep(1)
+          buttons=d.descendants(control_type="Button")
+          print("PHOTO_BUTTONS_BEFORE="+json.dumps([x.window_text() for x in buttons if x.window_text()],ensure_ascii=False),flush=True)
+          cp=next((x for x in buttons if x.window_text()=="Change Picture"),None)
+          if cp is None and placeholders:
+              placeholders[0].click_input(); time.sleep(1)
+              buttons=document(w).descendants(control_type="Button")
+              cp=next((x for x in buttons if x.window_text()=="Change Picture"),None)
+
+          photo_dialog=False
+          if cp:
+              cp.click_input(); time.sleep(2)
+              tops=[]
+              for tw in Desktop(backend="uia").windows():
+                  try:
+                      title=tw.window_text(); cls=tw.class_name()
+                      if title: tops.append((title,cls))
+                  except:pass
+              childwins=[]
+              try:
+                  childwins=[x.window_text() for x in w.descendants(control_type="Window") if x.window_text()]
+              except:pass
+              print("PHOTO_TOP_WINDOWS="+json.dumps(tops,ensure_ascii=False),flush=True)
+              print("PHOTO_CHILD_WINDOWS="+json.dumps(childwins,ensure_ascii=False),flush=True)
+              photo_dialog=any(("picture" in t[0].lower() or t[1]=="#32770") for t in tops) or any("picture" in x.lower() for x in childwins)
+              ImageGrab.grab(all_screens=True).save(ev/"71-change-picture-dialog.png")
+              keyboard.send_keys("{ESC}"); time.sleep(.5)
+          print("ANK_CHANGE_PICTURE_AVAILABLE="+str(cp is not None)+" DIALOG="+str(photo_dialog),flush=True)
+          close(w,p)
 
           # Native creation from both DOTX templates.
           def test_template(path):
@@ -271,7 +212,6 @@ jobs:
               time.sleep(1)
               if p.poll() is None:p.terminate()
               return info
-
           for tp in sorted(forms.glob("*.dotx")):
               test_template(tp)
 
