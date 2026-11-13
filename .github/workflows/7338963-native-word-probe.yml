@@ -54,115 +54,97 @@ jobs:
           Get-ChildItem "$env:RUNNER_TEMP\forms" | Format-Table Name,Length
           python -m pip install --disable-pip-version-check pywinauto pillow pywin32
 
-      - name: Native Word UIA and keyboard test
-        timeout-minutes: 5
+      - name: Native Word UI direct controls
+        timeout-minutes: 6
         shell: powershell
         env:
           PYTHONIOENCODING: utf-8
         run: |
           @'
-          import os,time,subprocess,json,zipfile,traceback
+          import os,time,subprocess,json
           from pathlib import Path
           from pywinauto import Desktop, keyboard
           from PIL import ImageGrab
-          import xml.etree.ElementTree as ET
 
           exe=os.environ["WORD_EXE"]
           forms=Path(os.environ["RUNNER_TEMP"])/"forms"
-          out=Path(os.environ["RUNNER_TEMP"])/"evidence"
-          out.mkdir(exist_ok=True)
-          doc=next(forms.glob("*TEST-000.docx"))
-          print("OPENING",doc,flush=True)
-          p=subprocess.Popen([exe,"/q",str(doc)])
-          print("WORD_PID",p.pid,flush=True)
-          time.sleep(12)
+          ev=Path(os.environ["RUNNER_TEMP"])/"evidence"
+          ev.mkdir(exist_ok=True)
 
-          desktop=Desktop(backend="uia")
-          wins=[]
-          target=None
-          for w in desktop.windows():
-              try:
-                  d={"title":w.window_text(),"class":w.class_name(),"pid":w.process_id(),"type":w.element_info.control_type}
-                  if d["pid"]==p.pid or "Word" in d["title"] or "Анкета" in d["title"]:
-                      wins.append(d)
-                  if d["pid"]==p.pid and w.is_visible() and d["class"]=="OpusApp":
-                      target=w
-              except Exception:
-                  pass
-          print("WORD_WINDOWS="+json.dumps(wins,ensure_ascii=False),flush=True)
-          ImageGrab.grab(all_screens=True).save(out/"01-open.png")
-          if target is None:
-              raise RuntimeError("No visible OpusApp Word window")
+          def open_word(path):
+              p=subprocess.Popen([exe,"/q",str(path)])
+              w=None
+              for _ in range(60):
+                  for x in Desktop(backend="uia").windows():
+                      try:
+                          if x.process_id()==p.pid and x.class_name()=="OpusApp" and x.is_visible():
+                              w=x; break
+                      except: pass
+                  if w: break
+                  time.sleep(.5)
+              if not w: raise RuntimeError("Word window not found")
+              for x in w.descendants():
+                  try:
+                      if x.element_info.control_type=="Window" and x.window_text()=="Your privacy matters":
+                          for b in x.descendants(control_type="Button"):
+                              if b.window_text()=="Close":
+                                  try:b.invoke()
+                                  except:b.click_input()
+                                  time.sleep(2)
+                                  break
+                  except: pass
+              w.set_focus()
+              return p,w
 
-          print("TARGET="+target.window_text(),flush=True)
-          items=[]
-          for x in target.descendants():
-              try:
-                  typ=x.element_info.control_type
-                  name=x.window_text()
-                  aid=x.element_info.automation_id
-                  if name or typ in ("Document","Edit","ComboBox","CheckBox","Button"):
-                      items.append({"type":typ,"name":name[:120],"id":aid})
-                      if len(items)>=250: break
-              except Exception: pass
-          print("UIA_TREE="+json.dumps(items,ensure_ascii=False),flush=True)
+          def doc_of(w):
+              d=w.descendants(control_type="Document")
+              if not d: raise RuntimeError("Document UIA element missing")
+              return d[0]
 
-          target.set_focus()
-          time.sleep(1)
-          # Direct keyboard interaction with the protected legacy form.
-          keyboard.send_keys("^{HOME}")
-          time.sleep(.5)
-          keyboard.send_keys("ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",pause=.03)
-          time.sleep(.5)
-          # Exit first field so Lowercase/maxLength formatting can apply.
-          keyboard.send_keys("{TAB}")
-          time.sleep(.5)
-          # From the second field, 12 more TABs reach criminal_no.
-          for _ in range(12):
-              keyboard.send_keys("{TAB}")
-              time.sleep(.08)
-          keyboard.send_keys(" ")
-          time.sleep(.5)
-          keyboard.send_keys("^s")
-          time.sleep(6)
-          ImageGrab.grab(all_screens=True).save(out/"02-after-edit-save.png")
-          keyboard.send_keys("%{F4}")
-          time.sleep(6)
-          if p.poll() is None:
-              p.terminate()
-              try:p.wait(5)
-              except: p.kill()
+          def save(w):
+              try:w.child_window(auto_id="FileSave",control_type="Button").wrapper_object().click_input()
+              except:keyboard.send_keys("^s")
+              time.sleep(4)
 
-          # Read back the file bytes written by native Word.
-          W="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-          ns={"w":W}
-          with zipfile.ZipFile(doc) as z:
-              root=ET.fromstring(z.read("word/document.xml"))
-          vals={}
-          q=lambda name: "{"+W+"}"+name
-          for fld in root.iter(q("ffData")):
-              n=fld.find(q("name"))
-              if n is None: continue
-              name=n.get(q("val"))
-              cb=fld.find(q("checkBox"))
-              checked=None
-              if cb is not None:
-                  c=cb.find(q("checked"))
-                  checked = None if c is None else c.get(q("val"),"1")
-              vals[name]={
-                  "textInput": fld.find(q("textInput")) is not None,
-                  "checkBox": cb is not None,
-                  "checked": checked,
-                  "ddList": fld.find(q("ddList")) is not None
-              }
-          body_text="".join((t.text or "") for t in root.iter(q("t")))
-          print("POSTSAVE_BODY_TEXT="+body_text,flush=True)
-          print("FORM_FIELDS="+json.dumps(vals,ensure_ascii=False),flush=True)
-          expected="abcdefghijklmnopqrstuvwxy"
-          print("MAX25_LOWERCASE_PRESENT="+str(expected in body_text),flush=True)
-          print("NATIVE_WORD_UI_KEYBOARD_SAVE_PASS",flush=True)
-          '@ | Set-Content "$env:RUNNER_TEMP\native_ui_test.py" -Encoding UTF8
-          python "$env:RUNNER_TEMP\native_ui_test.py"
+          def close(w,p):
+              try:w.close()
+              except:keyboard.send_keys("%{F4}")
+              time.sleep(3)
+              if p.poll() is None:p.terminate()
+
+          ank=next(forms.glob("*TEST-000.docx"))
+          p,w=open_word(ank)
+          d=doc_of(w)
+          ImageGrab.grab(all_screens=True).save(ev/"30-anketa-ready.png")
+          edits=[e for e in d.descendants(control_type="Edit") if e.element_info.automation_id!="Body" and e.window_text()!="￼"]
+          combos=d.descendants(control_type="ComboBox")
+          checks=d.descendants(control_type="CheckBox")
+          print("ANK_COUNTS",len(edits),len(combos),len(checks),flush=True)
+          surname=next(e for e in edits if e.window_text()=="Тестов")
+          surname.set_edit_text("nativefieldtest")
+          combos[0].select("муж")
+          combos[1].select("высшее")
+          checks[0].click_input()
+          print("ANK_EDIT_NOW="+surname.window_text(),flush=True)
+          print("ANK_COMBO_NOW="+combos[0].selected_text()+"|"+combos[1].selected_text(),flush=True)
+          print("ANK_CHECK_NOW="+str(checks[0].get_toggle_state()),flush=True)
+          save(w)
+          ImageGrab.grab(all_screens=True).save(ev/"31-anketa-saved.png")
+          close(w,p)
+
+          p,w=open_word(ank)
+          d=doc_of(w)
+          edits=[e for e in d.descendants(control_type="Edit") if e.element_info.automation_id!="Body" and e.window_text()!="￼"]
+          combos=d.descendants(control_type="ComboBox")
+          checks=d.descendants(control_type="CheckBox")
+          print("ANK_REOPEN_EDITS="+json.dumps([e.window_text() for e in edits],ensure_ascii=False),flush=True)
+          print("ANK_REOPEN_COMBOS="+json.dumps([c.selected_text() for c in combos],ensure_ascii=False),flush=True)
+          print("ANK_REOPEN_CHECKS="+json.dumps([c.get_toggle_state() for c in checks]),flush=True)
+          ImageGrab.grab(all_screens=True).save(ev/"32-anketa-reopen.png")
+          close(w,p)
+          print("NATIVE_ANKETA_UI_PASS",flush=True)
+          '@ | Set-Content "$env:RUNNER_TEMP\direct_ui.py" -Encoding UTF8
+          python "$env:RUNNER_TEMP\direct_ui.py"
 
       - name: Upload native Word evidence
         if: always()
