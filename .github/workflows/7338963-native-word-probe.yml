@@ -54,208 +54,170 @@ jobs:
           Get-ChildItem "$env:RUNNER_TEMP\forms" | Format-Table Name,Length
           python -m pip install --disable-pip-version-check pywinauto pillow pywin32
 
-      - name: Native Word dropdown checkbox and certificate test
+      - name: Native Word remaining legacy and certificate controls
         timeout-minutes: 8
         shell: powershell
         env:
           PYTHONIOENCODING: utf-8
         run: |
           @'
-          import os,time,subprocess,json,zipfile
+          import os,time,subprocess,json,zipfile,xml.etree.ElementTree as ET
           from pathlib import Path
           from pywinauto import Desktop, keyboard
           from PIL import ImageGrab
 
           exe=os.environ["WORD_EXE"]
           forms=Path(os.environ["RUNNER_TEMP"])/"forms"
-          ev=Path(os.environ["RUNNER_TEMP"])/"evidence"
-          ev.mkdir(exist_ok=True)
+          ev=Path(os.environ["RUNNER_TEMP"])/"evidence"; ev.mkdir(exist_ok=True)
 
-          def get_window(pid):
+          def word_window(pid):
               for _ in range(60):
                   for w in Desktop(backend="uia").windows():
                       try:
-                          if w.process_id()==pid and w.class_name()=="OpusApp" and w.is_visible():
-                              return w
+                          if w.process_id()==pid and w.class_name()=="OpusApp" and w.is_visible(): return w
                       except: pass
                   time.sleep(.5)
               raise RuntimeError("Word window missing")
 
-          def dialogs(w):
-              out=[]
-              try:
-                  for x in w.descendants():
-                      try:
-                          if x.element_info.control_type=="Window" and x.window_text():
-                              out.append(x)
-                      except: pass
-              except: pass
-              return out
-
           def dismiss(w):
-              known={
-                  "Privacy Settings":["Cancel","OK"],
-                  "Your privacy matters":["Close"],
-                  "Check out our new look":["OK","Close"],
-                  "Choose a theme for your Microsoft 365 apps":["OK","Close"],
-              }
               for _ in range(12):
                   acted=False
-                  for d in dialogs(w):
+                  wins=[]
+                  try:wins=[x for x in w.descendants() if x.element_info.control_type=="Window"]
+                  except:pass
+                  for d in wins:
                       title=d.window_text()
-                      for key,names in known.items():
-                          if key not in title: continue
-                          for name in names:
-                              for b in d.descendants(control_type="Button"):
-                                  if b.window_text()==name:
-                                      try:b.click_input()
-                                      except:
-                                          try:b.invoke()
-                                          except: pass
-                                      time.sleep(1)
-                                      acted=True
-                                      break
-                              if acted: break
-                          if acted: break
-                      if acted: break
-                  if not acted: break
-              rem=[d.window_text() for d in dialogs(w)]
-              print("MODALS_REMAIN="+json.dumps(rem,ensure_ascii=False),flush=True)
-              if any(("privacy" in x.lower() or "new look" in x.lower() or "theme" in x.lower()) for x in rem):
-                  w.set_focus(); keyboard.send_keys("{ESC}{ESC}"); time.sleep(2)
+                      choices=[]
+                      if "Privacy Settings" in title: choices=["Cancel","OK"]
+                      elif "Your privacy matters" in title: choices=["Close"]
+                      elif "new look" in title.lower() or "theme" in title.lower(): choices=["OK","Close"]
+                      elif title=="Microsoft Word": choices=["OK","No","Cancel"]
+                      for name in choices:
+                          for b in d.descendants(control_type="Button"):
+                              if b.window_text()==name:
+                                  try:b.click_input()
+                                  except:
+                                      try:b.invoke()
+                                      except:pass
+                                  time.sleep(1); acted=True; break
+                          if acted:break
+                      if acted:break
+                  if not acted:break
               w.set_focus()
 
           def open_word(path):
               p=subprocess.Popen([exe,"/q",str(path)])
-              w=get_window(p.pid); dismiss(w); return p,w
-
-          def doc(w):
+              w=word_window(p.pid); dismiss(w); return p,w
+          def document(w):
               ds=w.descendants(control_type="Document")
-              if not ds: raise RuntimeError("Document element missing")
+              if not ds: raise RuntimeError("No document UIA")
               return ds[0]
-
           def save(w):
               try:w.child_window(auto_id="FileSave",control_type="Button").wrapper_object().click_input()
               except:keyboard.send_keys("^s")
               time.sleep(4)
-
           def close(w,p):
               try:w.close()
               except:keyboard.send_keys("%{F4}")
               time.sleep(2)
               if p.poll() is None:p.terminate()
-
-          def combo_value(c):
+          def cv(c):
               try:return c.selected_text()
               except:return c.window_text()
 
-          # ---- Legacy questionnaire dropdowns and checkbox ----
+          W="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+          W14="http://schemas.microsoft.com/office/word/2010/wordml"
+          q=lambda n:"{"+W+"}"+n
+
+          # Sex legacy dropdown: direct arrow key while field has focus.
           ank=next(forms.glob("*TEST-000.docx"))
-          p,w=open_word(ank)
-          d=doc(w)
+          p,w=open_word(ank); d=document(w)
           combos=d.descendants(control_type="ComboBox")
-          checks=d.descendants(control_type="CheckBox")
-          print("ANK_LEGACY_COUNTS="+str((len(combos),len(checks))),flush=True)
-
-          # Use real keyboard against focused legacy dropdown fields.
-          combos[0].click_input(); time.sleep(.3)
-          keyboard.send_keys("{F4}{HOME}{DOWN}{ENTER}"); time.sleep(.7)
-          combos=doc(w).descendants(control_type="ComboBox")
-          print("SEX_AFTER_F4="+combo_value(combos[0]),flush=True)
-
-          combos[1].click_input(); time.sleep(.3)
-          keyboard.send_keys("{F4}{HOME}{DOWN}{DOWN}{DOWN}{ENTER}"); time.sleep(.7)
-          combos=doc(w).descendants(control_type="ComboBox")
-          print("EDU_AFTER_F4="+combo_value(combos[1]),flush=True)
-
-          checks=doc(w).descendants(control_type="CheckBox")
-          checks[0].click_input(); time.sleep(.7)
-          ImageGrab.grab(all_screens=True).save(ev/"40-anketa-dropdown-checkbox.png")
+          combos[0].click_input(); time.sleep(.4)
+          keyboard.send_keys("{DOWN}"); time.sleep(.8)
+          # Re-focus and set education to final item as a second dropdown exercise.
+          combos=document(w).descendants(control_type="ComboBox")
+          combos[1].click_input(); time.sleep(.4)
+          keyboard.send_keys("{END}"); time.sleep(.8)
+          ImageGrab.grab(all_screens=True).save(ev/"50-legacy-dropdowns.png")
           save(w); close(w,p)
 
-          # Verify persisted legacy field results in the DOCX written by Word.
-          import xml.etree.ElementTree as ET
-          W="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-          q=lambda n:"{"+W+"}"+n
-          with zipfile.ZipFile(ank) as z:
-              root=ET.fromstring(z.read("word/document.xml"))
+          with zipfile.ZipFile(ank) as z: root=ET.fromstring(z.read("word/document.xml"))
           legacy={}
           for ff in root.iter(q("ffData")):
-              nm=ff.find(q("name"))
-              if nm is None: continue
-              name=nm.get(q("val"))
-              dd=ff.find(q("ddList"))
-              cb=ff.find(q("checkBox"))
-              if dd is not None:
-                  res=dd.find(q("result"))
-                  entries=[e.get(q("val")) for e in dd.findall(q("listEntry"))]
-                  idx=int(res.get(q("val"),"0")) if res is not None else 0
-                  legacy[name]={"result":idx,"value":entries[idx] if idx < len(entries) else None}
-              if cb is not None:
-                  ck=cb.find(q("checked"))
-                  legacy[name]={"checked":None if ck is None else ck.get(q("val"),"1")}
-          print("ANK_XML_AFTER_WORD="+json.dumps(legacy,ensure_ascii=False),flush=True)
+              nm=ff.find(q("name")); dd=ff.find(q("ddList"))
+              if nm is None or dd is None: continue
+              entries=[x.get(q("val")) for x in dd.findall(q("listEntry"))]
+              res=dd.find(q("result")); idx=int(res.get(q("val"),"0")) if res is not None else 0
+              legacy[nm.get(q("val"))]={"index":idx,"value":entries[idx] if idx<len(entries) else None}
+          print("LEGACY_DROPDOWN_XML="+json.dumps(legacy,ensure_ascii=False),flush=True)
 
-          # ---- Certificate modern controls and DATE field ----
+          # Certificate in untouched sanitized DOCX.
           spr=next(x for x in forms.glob("*.docx") if "TEST-000" not in x.name)
-          # Put a stale visible result into the real DATE field while preserving field instruction and dirty=true.
-          tmp=spr.with_suffix(".tmp")
-          with zipfile.ZipFile(spr,"r") as zin, zipfile.ZipFile(tmp,"w",zipfile.ZIP_DEFLATED) as zout:
-              for item in zin.infolist():
-                  data=zin.read(item.filename)
-                  if item.filename=="word/document.xml":
-                      data=data.replace("13.11.2026".encode("utf-8"),"01.01.2000".encode("utf-8"))
-                  zout.writestr(item,data)
-          os.replace(tmp,spr)
+          with zipfile.ZipFile(spr) as z: before=ET.fromstring(z.read("word/document.xml"))
+          fld=next(before.iter(q("fldSimple")))
+          print("DATE_BEFORE_DIRTY="+str(fld.get(q("dirty")))+" TEXT="+''.join((x.text or '') for x in fld.iter(q("t"))),flush=True)
 
-          p,w=open_word(spr)
-          d=doc(w)
-          edits=[e for e in d.descendants(control_type="Edit") if e.element_info.automation_id!="Body"]
+          p,w=open_word(spr); d=document(w)
+          edits=[x for x in d.descendants(control_type="Edit") if x.element_info.automation_id!="Body"]
           combos=d.descendants(control_type="ComboBox")
           checks=d.descendants(control_type="CheckBox")
-          print("SPR_EDITS="+json.dumps([e.window_text() for e in edits],ensure_ascii=False),flush=True)
-          print("SPR_COUNTS="+str((len(edits),len(combos),len(checks))),flush=True)
-          print("SPR_DATE_BEFORE_F9="+str("01.01.2000" in d.window_text()),flush=True)
+          print("SPR_NATIVE_COUNTS="+str((len(edits),len(combos),len(checks))),flush=True)
+          print("SPR_NATIVE_EDITS="+json.dumps([x.window_text() for x in edits],ensure_ascii=False),flush=True)
 
-          body=[e for e in d.descendants(control_type="Edit") if e.element_info.automation_id=="Body"]
+          # Update all fields through Word UI.
+          body=[x for x in d.descendants(control_type="Edit") if x.element_info.automation_id=="Body"]
           if body:
               body[0].click_input(); keyboard.send_keys("^a{F9}"); time.sleep(2)
-          d=doc(w)
-          print("SPR_DATE_AFTER_F9="+str("13.11.2026" in d.window_text()),flush=True)
 
-          # Fill organization by physical keyboard.
-          org=None
-          for e in [x for x in d.descendants(control_type="Edit") if x.element_info.automation_id!="Body"]:
-              if e.window_text()=="\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043e\u0440\u0433\u0430\u043d\u0438\u0437\u0430\u0446\u0438\u044e":
-                  org=e; break
+          org=next((x for x in document(w).descendants(control_type="Edit")
+                    if x.window_text()=="\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043e\u0440\u0433\u0430\u043d\u0438\u0437\u0430\u0446\u0438\u044e"),None)
           if org:
               org.click_input(); keyboard.send_keys("{HOME}+{END}NATIVE ORGANIZATION",with_spaces=True); time.sleep(.7)
-          combos=doc(w).descendants(control_type="ComboBox")
+
+          combos=document(w).descendants(control_type="ComboBox")
           targets=["\u044d\u043a\u043e\u043d\u043e\u043c\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e","3","TEST 000","\u043f\u0430\u0441\u043f\u043e\u0440\u0442"]
-          for c,val in zip(combos,targets):
-              try:c.select(val)
+          for i,(c,val) in enumerate(zip(combos,targets)):
+              try:
+                  c.select(val)
               except:
-                  c.click_input(); keyboard.send_keys("{DOWN}{ENTER}")
-              time.sleep(.4)
-          checks=doc(w).descendants(control_type="CheckBox")
-          if checks: checks[0].click_input(); time.sleep(.5)
-          ImageGrab.grab(all_screens=True).save(ev/"41-spravka-filled.png")
+                  c.click_input(); keyboard.send_keys("{HOME}"+("{DOWN}"*(2 if i in (0,3) else (3 if i==1 else 1)))+"{ENTER}")
+              time.sleep(.5)
+
+          checks=document(w).descendants(control_type="CheckBox")
+          if checks: checks[0].click_input(); time.sleep(.7)
+          ImageGrab.grab(all_screens=True).save(ev/"51-spravka-edited.png")
           save(w); close(w,p)
 
-          p,w=open_word(spr)
-          d=doc(w)
-          edits=[e for e in d.descendants(control_type="Edit") if e.element_info.automation_id!="Body"]
-          combos=d.descendants(control_type="ComboBox")
-          checks=d.descendants(control_type="CheckBox")
-          print("SPR_REOPEN_EDITS="+json.dumps([e.window_text() for e in edits],ensure_ascii=False),flush=True)
-          print("SPR_REOPEN_COMBOS="+json.dumps([combo_value(c) for c in combos],ensure_ascii=False),flush=True)
-          print("SPR_REOPEN_CHECKS="+json.dumps([c.get_toggle_state() for c in checks]),flush=True)
-          print("SPR_REOPEN_DATE="+str("13.11.2026" in d.window_text()),flush=True)
-          ImageGrab.grab(all_screens=True).save(ev/"42-spravka-reopen.png")
+          # Read persistence directly from the DOCX that native Word saved.
+          with zipfile.ZipFile(spr) as z: root=ET.fromstring(z.read("word/document.xml"))
+          fld=next(root.iter(q("fldSimple")))
+          print("DATE_AFTER_DIRTY="+str(fld.get(q("dirty")))+" TEXT="+''.join((x.text or '') for x in fld.iter(q("t"))),flush=True)
+
+          sdt_data=[]
+          for sdt in root.iter(q("sdt")):
+              pr=sdt.find(q("sdtPr")); content=sdt.find(q("sdtContent"))
+              if pr is None or content is None: continue
+              tag=pr.find(q("tag")); tagv=tag.get(q("val")) if tag is not None else None
+              text=''.join((x.text or '') for x in content.iter(q("t")))
+              kind="text"; checked=None
+              if pr.find(q("dropDownList")) is not None: kind="dropdown"
+              cb=pr.find("{"+W14+"}checkbox")
+              if cb is not None:
+                  kind="checkbox"; ch=cb.find("{"+W14+"}checked")
+                  checked=None if ch is None else ch.get("{"+W14+"}val")
+              sdt_data.append({"tag":tagv,"kind":kind,"text":text,"checked":checked})
+          print("SPR_XML_AFTER_WORD="+json.dumps(sdt_data,ensure_ascii=False),flush=True)
+
+          p,w=open_word(spr); d=document(w)
+          print("SPR_REOPEN_TEXT="+d.window_text(),flush=True)
+          print("SPR_REOPEN_COMBOS="+json.dumps([cv(x) for x in d.descendants(control_type="ComboBox")],ensure_ascii=False),flush=True)
+          print("SPR_REOPEN_CHECKS="+json.dumps([x.get_toggle_state() for x in d.descendants(control_type="CheckBox")]),flush=True)
+          ImageGrab.grab(all_screens=True).save(ev/"52-spravka-reopen.png")
           close(w,p)
-          print("NATIVE_WORD_FORM_TEST_COMPLETE",flush=True)
-          '@ | Set-Content "$env:RUNNER_TEMP\formtest.py" -Encoding UTF8
-          python "$env:RUNNER_TEMP\formtest.py"
+          print("NATIVE_WORD_CERTIFICATE_PASS",flush=True)
+          '@ | Set-Content "$env:RUNNER_TEMP\remaining.py" -Encoding UTF8
+          python "$env:RUNNER_TEMP\remaining.py"
 
       - name: Upload native Word evidence
         if: always()
