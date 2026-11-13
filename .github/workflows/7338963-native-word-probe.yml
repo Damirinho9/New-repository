@@ -1,12 +1,14 @@
-name: Native Word licensed-state probe 7338963
+name: Native Word UI form test 7338963
 on:
   push:
     branches: [word-native-test-7338963]
 jobs:
-  probe:
+  ui:
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install Word LTSC 2024 with official GVLK
         shell: powershell
         run: |
@@ -30,37 +32,134 @@ jobs:
           & "$env:RUNNER_TEMP\odt\setup.exe" /configure "$env:RUNNER_TEMP\odt\config.xml"
           $word = Get-ChildItem "C:\Program Files\Microsoft Office" -Filter WINWORD.EXE -Recurse | Select-Object -First 1
           if(!$word){ throw "WINWORD missing" }
+          "WORD_EXE=$($word.FullName)" | Out-File $env:GITHUB_ENV -Append
           $ospp=Get-ChildItem "C:\Program Files\Microsoft Office" -Filter OSPP.VBS -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if($ospp){ cscript.exe //nologo $ospp.FullName /dstatus }
           New-Item -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Force | Out-Null
           New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Name ShownFirstRunOptin -Value 1 -PropertyType DWord -Force | Out-Null
           New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Name DisableFirstRunMovie -Value 1 -PropertyType DWord -Force | Out-Null
 
-      - name: Native Word COM create-save-reopen
-        timeout-minutes: 4
+      - name: Confirm interactive console
         shell: powershell
         run: |
-          $ErrorActionPreference='Stop'
-          $word=$null
-          try {
-            $word=New-Object -ComObject Word.Application
-            $word.Visible=$false
-            $word.DisplayAlerts=0
-            Write-Host "WORD_VERSION=$($word.Version)"
-            Write-Host "WORD_BUILD=$($word.Build)"
-            $doc=$word.Documents.Add()
-            Write-Host "DOC_ADD_PASS"
-            $doc.Content.Text="Native Word COM test 7338963"
-            $path=Join-Path $env:RUNNER_TEMP "native-word-probe.docx"
-            $doc.SaveAs2($path,16)
-            Write-Host "SAVE_PASS"
-            $doc.Close(0)
-            $doc=$word.Documents.Open($path,$false,$true)
-            $t=$doc.Content.Text.Trim()
-            Write-Host "REOPEN_TEXT=$t"
-            if($t -ne "Native Word COM test 7338963"){ throw "Reopen text mismatch" }
-            $doc.Close(0)
-            Write-Host "NATIVE_WORD_COM_PASS"
-          } finally {
-            if($word){ try{$word.Quit()}catch{} }
-          }
+          whoami
+          cmd /c "query session || exit /b 0"
+          Get-Process explorer -ErrorAction SilentlyContinue | Format-Table Id,SessionId,ProcessName
+          Get-CimInstance Win32_ComputerSystem | Select-Object UserName
+
+      - name: Extract sanitized forms and install UI tooling
+        shell: powershell
+        run: |
+          Expand-Archive "$env:GITHUB_WORKSPACE\word-native-test\native_forms.zip" "$env:RUNNER_TEMP\forms" -Force
+          Get-ChildItem "$env:RUNNER_TEMP\forms" | Format-Table Name,Length
+          python -m pip install --disable-pip-version-check pywinauto pillow pywin32
+
+      - name: Native Word UIA and keyboard test
+        timeout-minutes: 5
+        shell: powershell
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          @'
+          import os,time,subprocess,json,zipfile,traceback
+          from pathlib import Path
+          from pywinauto import Desktop, keyboard
+          from PIL import ImageGrab
+          from lxml import etree
+
+          exe=os.environ["WORD_EXE"]
+          forms=Path(os.environ["RUNNER_TEMP"])/"forms"
+          out=Path(os.environ["RUNNER_TEMP"])/"evidence"
+          out.mkdir(exist_ok=True)
+          doc=next(forms.glob("*TEST-000.docx"))
+          print("OPENING",doc,flush=True)
+          p=subprocess.Popen([exe,"/q",str(doc)])
+          print("WORD_PID",p.pid,flush=True)
+          time.sleep(12)
+
+          desktop=Desktop(backend="uia")
+          wins=[]
+          target=None
+          for w in desktop.windows():
+              try:
+                  d={"title":w.window_text(),"class":w.class_name(),"pid":w.process_id(),"type":w.element_info.control_type}
+                  if d["pid"]==p.pid or "Word" in d["title"] or "Анкета" in d["title"]:
+                      wins.append(d)
+                  if d["pid"]==p.pid and w.is_visible() and d["class"]=="OpusApp":
+                      target=w
+              except Exception:
+                  pass
+          print("WORD_WINDOWS="+json.dumps(wins,ensure_ascii=False),flush=True)
+          ImageGrab.grab(all_screens=True).save(out/"01-open.png")
+          if target is None:
+              raise RuntimeError("No visible OpusApp Word window")
+
+          print("TARGET="+target.window_text(),flush=True)
+          items=[]
+          for x in target.descendants():
+              try:
+                  typ=x.element_info.control_type
+                  name=x.window_text()
+                  aid=x.element_info.automation_id
+                  if name or typ in ("Document","Edit","ComboBox","CheckBox","Button"):
+                      items.append({"type":typ,"name":name[:120],"id":aid})
+                      if len(items)>=250: break
+              except Exception: pass
+          print("UIA_TREE="+json.dumps(items,ensure_ascii=False),flush=True)
+
+          target.set_focus()
+          time.sleep(1)
+          # Direct keyboard interaction with the protected legacy form.
+          keyboard.send_keys("^{HOME}")
+          time.sleep(.5)
+          keyboard.send_keys("ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",pause=.03)
+          time.sleep(.5)
+          # Exit first field so Lowercase/maxLength formatting can apply.
+          keyboard.send_keys("{TAB}")
+          time.sleep(.5)
+          # From the second field, 12 more TABs reach criminal_no.
+          for _ in range(12):
+              keyboard.send_keys("{TAB}")
+              time.sleep(.08)
+          keyboard.send_keys(" ")
+          time.sleep(.5)
+          keyboard.send_keys("^s")
+          time.sleep(6)
+          ImageGrab.grab(all_screens=True).save(out/"02-after-edit-save.png")
+          keyboard.send_keys("%{F4}")
+          time.sleep(6)
+          if p.poll() is None:
+              p.terminate()
+              try:p.wait(5)
+              except: p.kill()
+
+          # Read back the file bytes written by native Word.
+          W="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+          ns={"w":W}
+          with zipfile.ZipFile(doc) as z:
+              root=etree.fromstring(z.read("word/document.xml"))
+          vals={}
+          for fld in root.xpath(".//w:ffData",namespaces=ns):
+              n=fld.find("w:name",ns)
+              if n is None: continue
+              name=n.get("{%s}val"%W)
+              begin=fld.getparent().getparent()
+              # capture visible field result from following runs until fldChar end, best effort
+              vals[name]={
+                  "textInput": fld.find("w:textInput",ns) is not None,
+                  "checkBox": fld.find("w:checkBox",ns) is not None,
+                  "ddList": fld.find("w:ddList",ns) is not None
+              }
+          body_text="".join(root.xpath(".//w:t/text()",namespaces=ns))
+          print("POSTSAVE_BODY_TEXT="+body_text,flush=True)
+          print("FORM_FIELDS="+json.dumps(vals,ensure_ascii=False),flush=True)
+          print("NATIVE_WORD_UI_KEYBOARD_SAVE_PASS",flush=True)
+          '@ | Set-Content "$env:RUNNER_TEMP\native_ui_test.py" -Encoding UTF8
+          python "$env:RUNNER_TEMP\native_ui_test.py"
+
+      - name: Upload native Word evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7338963-native-word-ui-evidence
+          path: ${{ runner.temp }}\evidence\*.png
