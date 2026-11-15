@@ -1,4 +1,4 @@
-name: KOMPAS native Work1 minimal
+name: KOMPAS native Work1 no-actions
 
 on:
   push:
@@ -6,7 +6,6 @@ on:
       - kompas-7335493-native-work1
     paths:
       - '.github/workflows/kompas-linux-native.yml'
-      - 'kompas-linux/**'
 
 jobs:
   build:
@@ -14,16 +13,31 @@ jobs:
     container: alt:p11
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - name: Run
+      - name: Native build without Node actions
         shell: bash
-        run: bash kompas-linux/run_pro.sh
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas-native-work1
-          if-no-files-found: ignore
-          path: |
-            kompas-linux/Работа_1_параметрическая.frw
-            kompas-linux/verification.txt
-            kompas-linux/logs/**
+        run: |
+          set -u
+          mkdir -p /work/kompas-linux
+          cd /work
+          apt-get update
+          apt-get install -y wget ca-certificates
+          wget -O kompas-linux/run_pro.sh 'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/run_pro.sh'
+          wget -O kompas-linux/build_native.py 'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/build_native.py'
+          chmod +x kompas-linux/run_pro.sh
+          set +e
+          bash kompas-linux/run_pro.sh
+          rc=$?
+          set -e
+          echo "=== RUN_RC=$rc ==="
+          if [ -s "kompas-linux/Работа_1_параметрическая.frw" ]; then
+            echo "=== FRW_SHA256 ==="
+            sha256sum "kompas-linux/Работа_1_параметрическая.frw"
+            echo "=== FRW_BASE64_BEGIN ==="
+            base64 -w 76 "kompas-linux/Работа_1_параметрическая.frw"
+            echo "=== FRW_BASE64_END ==="
+          fi
+          echo "=== VERIFICATION ==="
+          cat kompas-linux/verification.txt 2>/dev/null || true
+          echo "=== KOMPAS_LOG ==="
+          tail -300 kompas-linux/logs/kompas.log 2>/dev/null || true
+          exit $rc
