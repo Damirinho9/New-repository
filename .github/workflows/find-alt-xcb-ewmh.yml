@@ -1,0 +1,19 @@
+name: Find ALT package for libxcb-ewmh
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths: ['.github/workflows/find-alt-xcb-ewmh.yml']
+  workflow_dispatch:
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    container: { image: alt:p11 }
+    steps:
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          apt-get update
+          echo '=== apt-cache search ==='
+          apt-cache search xcb | grep -Eai 'ewmh|icccm|window-manager|xcbutil' | head -200 || true
+          echo '=== repo package names from apt cache ==='
+          grep -Ril 'libxcb-ewmh\.so\.2' /var/lib/apt/lists 2>/dev/null | head -20 || true
