@@ -1,0 +1,56 @@
+name: Inspect parametric FRW template
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/frw-param-template.yml'
+
+jobs:
+  inspect-param:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch parametric FRW fixture
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import urllib.request
+          url='https://raw.githubusercontent.com/SergeySklyarov/Kompas3D-MCP/523b6bc7162fddb1290d00a2dfd52f03110dd6a2/tests/Unit/KompasMcp.Unit/Data/g2-reference-contour.frw'
+          urllib.request.urlretrieve(url,'parametric.frw')
+          PY
+          mkdir -p param_unpacked
+          python3 - <<'PY'
+          import zipfile, pathlib, hashlib, zlib
+          p=pathlib.Path('parametric.frw')
+          print('size',p.stat().st_size,'sha256',hashlib.sha256(p.read_bytes()).hexdigest())
+          with zipfile.ZipFile(p) as z:
+              print('\n'.join(f'{i.filename}\t{i.file_size}\t{i.compress_size}' for i in z.infolist()))
+              z.extractall('param_unpacked')
+          b=pathlib.Path('param_unpacked/Contents').read_bytes()
+          poss=[i for i in range(len(b)) if b.startswith(b'\x78\x9c',i)]
+          out=[]
+          for j,pos in enumerate(poss):
+              try:
+                  d=zlib.decompressobj(); raw=d.decompress(b[pos:])
+                  used=len(b[pos:])-len(d.unused_data)
+                  pathlib.Path(f'param_unpacked/chunk_{j:02d}_{pos}_{used}.bin').write_bytes(raw)
+                  out.append(f'{j}\t{pos}\t{used}\t{len(raw)}')
+              except Exception as e:
+                  out.append(f'{j}\t{pos}\tERR\t{e}')
+          pathlib.Path('chunks.tsv').write_text('\n'.join(out))
+          PY
+          find param_unpacked -maxdepth 1 -type f -printf '%f\t%s\n' | sort > files.tsv
+          for f in param_unpacked/chunk_*.bin; do echo "==== $f"; strings -el "$f" | head -300; done > utf16_strings.txt || true
+          for f in param_unpacked/chunk_*.bin; do echo "==== $f"; strings -a -n 4 "$f" | head -300; done > ascii_strings.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parametric-frw-template
+          path: |
+            parametric.frw
+            param_unpacked/**
+            chunks.tsv
+            files.tsv
+            utf16_strings.txt
+            ascii_strings.txt
