@@ -48,7 +48,21 @@ jobs:
               std::printf("DOCS_PTR=%p\n", (void*)docs.Get());
               if (!docs) return 20;
 
-              auto doc = docs->Add(ksDocumentFragment, false);
+              ksapi::IKompasDocumentPtr doc;
+              doc = docs->Add(ksDocumentFragment, false);
+              std::printf("ADD_PTR=%p\n", (void*)doc.Get());
+              if (!doc) {
+                doc = docs->AddWithDefaultSettings(ksDocumentFragment, false);
+                std::printf("ADD_DEFAULT_PTR=%p\n", (void*)doc.Get());
+              }
+              if (!doc) {
+                doc = docs->AddNewDocumentFromTemplate(L"/tmp/template.frw", false);
+                std::printf("TEMPLATE_PTR=%p\n", (void*)doc.Get());
+              }
+              if (!doc) {
+                doc = docs->Open(L"/tmp/template.frw", false, false);
+                std::printf("OPEN_PTR=%p\n", (void*)doc.Get());
+              }
               std::printf("DOC_PTR=%p\n", (void*)doc.Get());
               if (!doc) return 21;
 
@@ -121,6 +135,8 @@ jobs:
           sleep 12
           echo "KOMPAS_PID=$KP"
           ps -eo pid,ppid,comm,args | grep -E '[k]Home|[k]Kompas' || true
+          cp "/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw" /tmp/template.frw
+          ls -l /tmp/template.frw
           cd /tmp
           timeout 120s ./probe 2>&1 | tee /tmp/probe.log
           rc=${PIPESTATUS[0]}
@@ -146,3 +162,5 @@ jobs:
           exit $rc
 
 # pipefix-2026-11-15T20:04:31.831Z
+
+# template-create-fallback-2026-11-15T20:10:01.515Z
