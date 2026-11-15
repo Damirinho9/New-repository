@@ -1,0 +1,66 @@
+name: Extract official KOMPAS native samples
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/extract-official-kompas-samples.yml'
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install RPM extraction tools
+        run: sudo apt-get update && sudo apt-get install -y rpm2cpio cpio
+
+      - name: Download official ASCON v24 sample and SDK packages
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BASE='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main'
+          curl -fL --retry 3 -O "$BASE/ascon-kompas-libsamples-v24-24.1.0.161-0.x86_64.rpm"
+          curl -fL --retry 3 -O "$BASE/ascon-kompas-sdk-v24-24.1.0.161-0.x86_64.rpm"
+          sha256sum *.rpm
+          echo 'Expected libsamples: aabad0249d4f3c5b7d2e8b4cb6d19d705ff701403b5a25719aa474cb5d377556'
+          echo 'Expected sdk:        b0111b90ceb87f29c02feca44f62c0be8c3d2c84d8d1442e641134d087fb9eb4'
+
+      - name: Extract packages
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir libsamples sdk
+          (cd libsamples && rpm2cpio ../ascon-kompas-libsamples-v24-24.1.0.161-0.x86_64.rpm | cpio -idm --quiet)
+          (cd sdk && rpm2cpio ../ascon-kompas-sdk-v24-24.1.0.161-0.x86_64.rpm | cpio -idm --quiet)
+          echo '===== FRW FILES ====='
+          find libsamples sdk -type f \( -iname '*.frw' -o -iname '*.cdw' \) -printf '%p %s\n' | sort | tee native-files.txt
+          echo '===== PARAMETERIZATION RELATED FILES ====='
+          find libsamples sdk -type f | grep -Eai 'param|variable|constraint|fragment|parametr|перемен|парамет|огранич|фрагмент' | head -1000 | tee param-related-files.txt || true
+          echo '===== SDK TEXT REFERENCES ====='
+          grep -RIlE 'Parametric|Parameterization|Constraint|Variable|ksC[A-Za-z]+|NewConstraint|RebuildDocument' sdk 2>/dev/null | head -1000 | tee sdk-param-files.txt || true
+          echo "Counts:"
+          wc -l native-files.txt param-related-files.txt sdk-param-files.txt
+
+      - name: Collect FRW samples and useful SDK text
+        shell: bash
+        run: |
+          mkdir -p out/frw out/sdk
+          while IFS= read -r line; do
+            f="${line% *}"
+            [ -f "$f" ] || continue
+            cp --parents "$f" out/frw/
+          done < native-files.txt
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            case "$f" in
+              *.h|*.hpp|*.cpp|*.c|*.py|*.txt|*.md|*.html|*.htm|*.xml|*.pas|*.cs)
+                cp --parents "$f" out/sdk/ || true ;;
+            esac
+          done < sdk-param-files.txt
+          cp native-files.txt param-related-files.txt sdk-param-files.txt out/
+
+      - name: Upload extracted native samples
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-kompas-v24-native-samples
+          path: out/**
