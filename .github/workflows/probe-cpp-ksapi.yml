@@ -105,7 +105,7 @@ jobs:
           BIN=/opt/ascon/kompas3d-v25/Bin
           clang++-18 -std=c++20 -stdlib=libc++ -I"$INC" /tmp/probe.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/probe
           file /tmp/probe
-          ldd /tmp/probe | head -100
+          ldd /tmp/probe | head -100 || true
 
       - name: Start KOMPAS and run official API probe
         shell: bash
@@ -144,3 +144,5 @@ jobs:
           echo "=== KOMPAS LOG TAIL ==="
           tail -150 /tmp/kompas.log || true
           exit $rc
+
+# pipefix-2026-11-15T20:04:31.831Z
