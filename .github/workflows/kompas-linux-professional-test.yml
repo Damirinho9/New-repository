@@ -9,10 +9,10 @@ on:
 jobs:
   kompas:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Install minimal KOMPAS professional packages
+      - name: Install KOMPAS professional + SDK
         shell: bash
         run: |
           set -euxo pipefail
@@ -20,56 +20,75 @@ jobs:
           sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
-          # ASCON script uses the host distro codename. On GitHub Ubuntu that becomes
-          # "resolute", while the ASCON deb repo publishes the Astra-compatible suite.
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
           sudo apt-get update
-          apt-cache policy ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25 | tee policy.txt
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
-          find /opt/ascon/kompas3d-v25 -maxdepth 2 -type f | head -200 | tee files.txt
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           dpkg -l 'ascon-kompas*' | tee installed.txt
-      - name: Launch KOMPAS and inspect API
+
+      - name: Probe ksinvisible and Python API
         shell: bash
         run: |
-          set -euxo pipefail
-          Xvfb :99 -screen 0 1920x1080x24 -ac >xvfb.log 2>&1 &
-          export DISPLAY=:99
-          openbox >openbox.log 2>&1 &
-          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
-          exe=$(find /opt/ascon/kompas3d-v25 -type f \( -name kKompas -o -name KOMPAS -o -name kompas \) -perm -111 | head -1 || true)
-          echo "EXE=$exe" | tee launch.txt
-          if [ -z "$exe" ]; then
-            find /opt/ascon/kompas3d-v25 -type f -perm -111 | sort | tee executables.txt
-            exit 2
-          fi
-          "$exe" >kompas.stdout 2>kompas.stderr &
-          echo $! > kompas.pid
-          for i in $(seq 1 60); do
-            ps -fp $(cat kompas.pid) || true
-            ss -ltnp | tee sockets.txt || true
-            if grep -Eq 'kKompas|KOMPAS' sockets.txt; then break; fi
-            sleep 2
+          set -uxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          KSI=$BIN/ksinvisible
+          file "$KSI" | tee ksi-file.txt
+          ldd "$KSI" | tee ksi-ldd.txt || true
+          strings -a "$KSI" | grep -Ei 'usage|help|automation|enable|license|licen|key|signature|rtw|plugin|command' | head -300 | tee ksi-strings.txt || true
+
+          export PYTHONPATH="$BIN"
+          python3 - <<'PY' | tee ksapi-probe.txt
+          import inspect, ksapi
+          print('ksapi=', ksapi.__file__)
+          for n in ['GetKompas','OpenKompas','IApplication','KompasObject']:
+              o=getattr(ksapi,n,None)
+              print('\n###',n,o)
+              try: print(inspect.getsource(o))
+              except Exception as e: print('source unavailable',repr(e))
+          PY
+
+          for args in "--help" "-h" "-automation" ""; do
+            echo "===== RUN: ksinvisible $args =====" | tee -a ksi-runs.txt
+            timeout 8s "$KSI" $args >>ksi-runs.txt 2>&1
+            echo "exit=$?" >>ksi-runs.txt
           done
-          cat kompas.stdout || true
-          cat kompas.stderr || true
-          ss -ltnp | tee sockets-final.txt || true
-          pgrep -a -f 'kKompas|KOMPAS|kompas' || true
+
+          # Start one instance and see whether ksapi can discover a port.
+          "$KSI" -automation >ksi-live.out 2>ksi-live.err &
+          echo $! > ksi.pid
+          sleep 3
+          ps -fp $(cat ksi.pid) | tee ksi-ps.txt || true
+          ss -ltnp | tee ksi-sockets.txt || true
+          python3 - <<'PY' | tee ksi-api-live.txt
+          import ksapi
+          try:
+              print('GetKompas=', ksapi.GetKompas())
+          except Exception as e:
+              print('GetKompas ERROR',repr(e))
+          try:
+              print('OpenKompas=', ksapi.OpenKompas())
+          except Exception as e:
+              print('OpenKompas ERROR',repr(e))
+          PY
+          kill $(cat ksi.pid) 2>/dev/null || true
+          cat ksi-live.out || true
+          cat ksi-live.err || true
+
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kompas-linux-professional-diagnostics
           path: |
-            policy.txt
-            files.txt
             installed.txt
-            launch.txt
-            executables.txt
-            xvfb.log
-            openbox.log
-            kompas.stdout
-            kompas.stderr
-            sockets.txt
-            sockets-final.txt
-            kompas.pid
+            ksi-file.txt
+            ksi-ldd.txt
+            ksi-strings.txt
+            ksapi-probe.txt
+            ksi-runs.txt
+            ksi.pid
+            ksi-ps.txt
+            ksi-sockets.txt
+            ksi-api-live.txt
+            ksi-live.out
+            ksi-live.err
           if-no-files-found: ignore
