@@ -10,7 +10,7 @@ bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
 apt-get update
 
 echo "=== install locale and XCB dependencies first ==="
-apt-get install -y glibc-i18ndata libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv || true
+apt-get install -y glibc-i18ndata libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
 
 echo "=== install KOMPAS professional payload ==="
 set +e
