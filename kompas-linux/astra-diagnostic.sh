@@ -10,7 +10,7 @@ docker exec kompas-astra bash -lc '
   set -euxo pipefail
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y wget curl gnupg lsb-release procps iproute2 python3 unzip locales     xvfb xserver-xephyr openbox dbus-x11 x11-xkb-utils desktop-file-utils scrot
+  apt-get install -y wget curl gnupg lsb-release procps iproute2 python3 unzip locales     xvfb xserver-xephyr openbox dbus-x11 x11-xkb-utils desktop-file-utils x11-apps
   touch /etc/locale.gen
   grep -q "^ru_RU.CP1251 CP1251" /etc/locale.gen || echo "ru_RU.CP1251 CP1251" >> /etc/locale.gen
   locale-gen || true
@@ -58,7 +58,7 @@ docker exec kompas-astra bash -lc '
     fi
     sleep 2
   done
-  DISPLAY=:5 scrot /work/kompas-diagnostic/screen.png || true
+  DISPLAY=:5 xwd -root -silent -out /work/kompas-diagnostic/screen.xwd || true
   ps aux | grep -E "[k]Study|[k]Kompas|[k]Home" > /work/kompas-diagnostic/processes.txt || true
   ss -ltnp | grep -E "kStudy|kKompas|kHome" > /work/kompas-diagnostic/sockets.txt || true
   cp /tmp/kompas.log /work/kompas-diagnostic/kompas.log || true
@@ -75,7 +75,7 @@ docker exec kompas-astra bash -lc '
   cd /opt/ascon/kompas3d-v25/Bin
   timeout 25s env DISPLAY=:5 QT_QPA_PLATFORM=xcb python3 - <<PY
 import os,sys,time
-sys.path.insert(0,'.')
+sys.path.insert(0,".")
 import ksapi
 from constants import constants as c
 app=None
