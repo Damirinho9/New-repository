@@ -45,6 +45,7 @@ jobs:
       - name: Build standalone writer probe
         shell: bash
         run: |
+          cp "/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw" /tmp/template.frw
           cat > /tmp/probe.cpp <<'CPP'
           #include <dlfcn.h>
           #include <locale.h>
@@ -79,7 +80,7 @@ jobs:
             std::printf("symbols ctor=%p create=%p write=%p\n", (void*)ctor,(void*)create,(void*)write);
             if (!ctor || !create || !write) return 11;
 
-            const wchar_t* src = L"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw";
+            const wchar_t* src = L"/tmp/template.frw";
             const wchar_t* dst = L"/tmp/standalone-copy.frw";
             std::vector<unsigned char> storage(4096);
             std::memset(storage.data(), 0, storage.size());
@@ -137,3 +138,5 @@ jobs:
             /tmp/standalone-copy.frw
 
 # trigger-standalone-2026-11-15T19:47:53.244Z
+
+# ascii-path-fix-2026-11-15T19:50:42.615Z
