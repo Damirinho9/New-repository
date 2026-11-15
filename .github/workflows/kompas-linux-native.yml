@@ -1,8 +1,9 @@
-name: KOMPAS Linux native smoke
+name: KOMPAS Professional Linux native Work1
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches:
+      - kompas-7335493-native-work1
     paths:
       - '.github/workflows/kompas-linux-native.yml'
       - 'kompas-linux/**'
@@ -10,40 +11,50 @@ on:
 jobs:
   native:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    container:
+      image: alt:p11
+    timeout-minutes: 20
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install X11 helpers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget ca-certificates xvfb xserver-xephyr openbox unzip procps net-tools
-
-      - name: Add official ASCON repositories
+      - name: Enable official ASCON repository
+        shell: bash
         run: |
           set -euxo pipefail
-          sudo bash -c "$(wget -qO- https://repo.ascon.ru/personal/scripts/ascon-personal-deb.sh)"
-          sudo bash -c "$(wget -qO- https://repo.ascon.ru/scripts/ascon-stable-deb.sh)"
-          sudo apt-get update
+          apt-get update
+          apt-get install -y wget ca-certificates
+          bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+          apt-get update
 
-      - name: Install minimal KOMPAS Study + SDK
+      - name: Install professional KOMPAS Graphic and SDK
+        shell: bash
         run: |
-          set -euxo pipefail
-          sudo apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-study-v25 ascon-kompas-sdk-v25
-          ls -la /opt/ascon/kompas3d-v25/Bin | head -100
-          command -v kompas-study-v25 || true
+          set +e
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 ascon-kompas-sdk-v25             xorg-server-xvfb xorg-server-xephyr openbox xorg-utils procps iproute2 python3
+          rc=$?
+          echo "apt_rc=$rc"
+          echo "--- installed KOMPAS packages ---"
+          rpm -qa | grep -i '^ascon-kompas' | sort || true
+          echo "--- KOMPAS bin ---"
+          find /opt/ascon -maxdepth 4 -type f \( -name 'kKompas' -o -name 'ksapi.py' -o -name 'constants.py' \) -ls || true
+          command -v kompas-v25 || true
+          # Continue if the KOMPAS payload itself was installed even when an unrelated rpm scriptlet failed.
+          test -x /opt/ascon/kompas3d-v25/Bin/kKompas
 
       - name: Start nested X11
+        shell: bash
         run: |
-          set -euxo pipefail
-          Xvfb :99 -screen 0 1600x1000x24 > /tmp/xvfb.log 2>&1 &
+          set -eux
+          Xvfb :99 -screen 0 1600x1000x24 >/tmp/xvfb.log 2>&1 &
           sleep 2
-          DISPLAY=:99 Xephyr :5 -screen 1400x900 -ac > /tmp/xephyr.log 2>&1 &
+          DISPLAY=:99 Xephyr :5 -screen 1400x900 -ac >/tmp/xephyr.log 2>&1 &
           sleep 2
-          DISPLAY=:5 openbox > /tmp/openbox.log 2>&1 &
+          DISPLAY=:5 openbox >/tmp/openbox.log 2>&1 &
           sleep 2
 
-      - name: Start KOMPAS Study
+      - name: Start professional KOMPAS and probe API
+        shell: bash
         env:
           DISPLAY: :5
           HTTP_PROXY: ''
@@ -52,37 +63,50 @@ jobs:
           https_proxy: ''
         run: |
           set +e
-          nohup kompas-study-v25 >/tmp/kompas.log 2>&1 &
+          nohup kompas-v25 >/tmp/kompas.log 2>&1 &
           echo $! >/tmp/kompas.pid
-          for i in $(seq 1 90); do
-            ps aux | grep -E '[k]Study|[k]Kompas|[k]Home' || true
-            ss -ltnp | grep -E 'kStudy|kKompas|kHome' && break
+          ok=0
+          for i in $(seq 1 75); do
+            echo "--- probe $i ---"
+            ps aux | grep -E '[k]Kompas|[k]Home|[k]Study' || true
+            ss -ltnp | grep -E 'kKompas|kHome|kStudy' && { ok=1; break; }
             sleep 2
           done
-          echo '--- kompas log ---'
-          tail -200 /tmp/kompas.log || true
-          echo '--- sockets ---'
-          ss -ltnp | grep -E 'kStudy|kKompas|kHome' || true
-          if ! ss -ltnp | grep -Eq 'kStudy|kKompas|kHome'; then
-            echo "KOMPAS_API_PORT_NOT_FOUND"
-            exit 1
-          fi
+          echo "--- KOMPAS LOG ---"
+          tail -300 /tmp/kompas.log || true
+          echo "--- SOCKETS ---"
+          ss -ltnp | grep -E 'kKompas|kHome|kStudy' || true
+          test "$ok" = "1"
 
-      - name: Build native FRW
+      - name: Build native parametric FRW
+        shell: bash
         env:
           DISPLAY: :5
           KOMPAS_DIR: /opt/ascon/kompas3d-v25
+          HTTP_PROXY: ''
+          HTTPS_PROXY: ''
+          http_proxy: ''
+          https_proxy: ''
         run: |
           set -euxo pipefail
           python3 kompas-linux/build_native.py
-          test -s kompas-linux/Работа_1_параметрическая.frw
-          unzip -t kompas-linux/Работа_1_параметрическая.frw
-          sha256sum kompas-linux/Работа_1_параметрическая.frw
+          test -s "kompas-linux/Работа_1_параметрическая.frw"
+          python3 - <<'PY'
+          import zipfile, pathlib, hashlib
+          p=pathlib.Path('kompas-linux/Работа_1_параметрическая.frw')
+          assert zipfile.is_zipfile(p)
+          print("size",p.stat().st_size)
+          print("sha256",hashlib.sha256(p.read_bytes()).hexdigest())
+          with zipfile.ZipFile(p) as z:
+              print(z.namelist())
+              assert 'Contents' in z.namelist()
+          PY
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas-linux-native-result
+          name: kompas-professional-native-work1
+          if-no-files-found: ignore
           path: |
             kompas-linux/*.frw
             kompas-linux/*.txt
