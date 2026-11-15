@@ -1,0 +1,19 @@
+name: KOMPAS Astra Xorg native smoke
+on:
+  push:
+    branches:
+      - kompas-astra-xorg
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run KOMPAS on real Xorg dummy server
+        run: bash kompas-linux/astra-xorg.sh
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-astra-xorg
+          path: kompas-xorg/**
