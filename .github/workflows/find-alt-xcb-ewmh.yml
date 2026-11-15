@@ -15,5 +15,10 @@ jobs:
           apt-get update
           echo '=== apt-cache search ==='
           apt-cache search xcb | grep -Eai 'ewmh|icccm|window-manager|xcbutil' | head -200 || true
+          echo '=== install likely split package and list files ==='
+          apt-get install -y libxcbutil-icccm
+          rpm -ql libxcbutil-icccm | sort
+          echo '=== provides ==='
+          rpm -q --provides libxcbutil-icccm | sort
           echo '=== repo package names from apt cache ==='
           grep -Ril 'libxcb-ewmh\.so\.2' /var/lib/apt/lists 2>/dev/null | head -20 || true
