@@ -14,15 +14,28 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start host X11
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1600x1000x24 >/tmp/xvfb.log 2>&1 &
+          sleep 2
+          test -S /tmp/.X11-unix/X99
+
       - name: Run KOMPAS inside ALT Linux container
         shell: bash
         run: |
           docker pull alt:p11
           docker run --rm \
+            -e DISPLAY=:99 \
+            -v /tmp/.X11-unix:/tmp/.X11-unix \
             -v "$GITHUB_WORKSPACE:/work" \
             -w /work \
             alt:p11 \
             bash /work/kompas-linux/run_pro.sh
+
       - name: Upload result and logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -33,3 +46,4 @@ jobs:
             kompas-linux/*.frw
             kompas-linux/*.txt
             kompas-linux/logs/**
+            /tmp/xvfb.log
