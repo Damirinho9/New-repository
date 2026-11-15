@@ -12,12 +12,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
       - name: Install KOMPAS professional + SDK
         shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2             libxcb-res0 libxcb-dri2-0 libxcb-xkb1
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
@@ -25,73 +26,88 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           dpkg -l 'ascon-kompas*' | tee installed.txt
 
-      - name: Probe ksinvisible and Python API
+      - name: Start ksinvisible under Xvfb and create native smoke FRW
         shell: bash
         run: |
-          set -uxo pipefail
+          set -euxo pipefail
           BIN=/opt/ascon/kompas3d-v25/Bin
           KSI=$BIN/ksinvisible
-          file "$KSI" | tee ksi-file.txt
-          ldd "$KSI" | tee ksi-ldd.txt || true
-          strings -a "$KSI" | grep -Ei 'usage|help|automation|enable|license|licen|key|signature|rtw|plugin|command' | head -300 | tee ksi-strings.txt || true
-
           export PYTHONPATH="$BIN"
-          python3 - <<'PY' | tee ksapi-probe.txt
-          import inspect, ksapi
-          print('ksapi=', ksapi.__file__)
-          for n in ['GetKompas','OpenKompas','IApplication','KompasObject']:
-              o=getattr(ksapi,n,None)
-              print('\n###',n,o)
-              try: print(inspect.getsource(o))
-              except Exception as e: print('source unavailable',repr(e))
-          PY
 
-          for args in "--help" "-h" "-automation" ""; do
-            echo "===== RUN: ksinvisible $args =====" | tee -a ksi-runs.txt
-            set +e
-            timeout 8s "$KSI" $args >>ksi-runs.txt 2>&1
-            code=$?
-            set -e
-            echo "exit=$code" >>ksi-runs.txt
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             "$KSI" -automation >ksi-live.out 2>ksi-live.err &
+          WRAPPER_PID=$!
+          echo "$WRAPPER_PID" > ksi-wrapper.pid
+
+          PORT=""
+          for i in $(seq 1 30); do
+            sleep 1
+            ss -ltnp > ksi-sockets.txt || true
+            PORT=$(python3 - <<'PY'
+          import re
+          txt=open('ksi-sockets.txt',errors='ignore').read()
+          for line in txt.splitlines():
+              if 'ksinvisible' in line.lower():
+                  m=re.search(r':(\d+)\s+', line)
+                  if m:
+                      print(m.group(1)); break
+          PY
+            )
+            if [ -n "$PORT" ]; then break; fi
+            if ! kill -0 "$WRAPPER_PID" 2>/dev/null; then break; fi
           done
 
-          # Start one instance and see whether ksapi can discover a port.
-          "$KSI" -automation >ksi-live.out 2>ksi-live.err &
-          echo $! > ksi.pid
-          sleep 3
-          ps -fp $(cat ksi.pid) | tee ksi-ps.txt || true
-          ss -ltnp | tee ksi-sockets.txt || true
-          python3 - <<'PY' | tee ksi-api-live.txt
-          import ksapi
-          try:
-              print('GetKompas=', ksapi.GetKompas())
-          except Exception as e:
-              print('GetKompas ERROR',repr(e))
-          try:
-              print('OpenKompas=', ksapi.OpenKompas())
-          except Exception as e:
-              print('OpenKompas ERROR',repr(e))
-          PY
-          kill $(cat ksi.pid) 2>/dev/null || true
-          cat ksi-live.out || true
+          echo "PORT=$PORT" | tee ksi-port.txt
+          cat ksi-sockets.txt || true
           cat ksi-live.err || true
+          cat ksi-live.out || true
 
-      - name: Upload diagnostics
+          if [ -z "$PORT" ]; then
+            echo "No ksinvisible API port found" >&2
+            exit 3
+          fi
+
+          KOMPAS_PORT="$PORT" python3 - <<'PY'
+          import os, pathlib, hashlib
+          import ksapi
+          from constants import constants as c
+
+          port=int(os.environ['KOMPAS_PORT'])
+          app=ksapi.IApplication(port)
+          print('APP=', app.GetApplicationName(True))
+          print('BUILD=', app.GetBuildNumber())
+
+          doc=app.GetDocuments().Add(c.ksDocumentFragment, True)
+          d2=ksapi.IKompasDocument2D(doc)
+          view=d2.GetViewsAndLayersManager().GetViews().GetActiveView()
+          dc=ksapi.IDrawingContainer(view)
+
+          s=dc.GetLineSegments().Add()
+          s.SetX1(0.0); s.SetY1(0.0); s.SetX2(15.0); s.SetY2(0.0)
+          s.SetStyle(c.ksCSNormal); s.Update()
+
+          out=str(pathlib.Path('smoke_native.frw').resolve())
+          ok=doc.SaveAs(out)
+          print('SAVE=',ok,out)
+          p=pathlib.Path(out)
+          if not p.exists() or p.stat().st_size < 1000:
+              raise SystemExit('native FRW not created')
+          print('SIZE=',p.stat().st_size)
+          print('SHA256=',hashlib.sha256(p.read_bytes()).hexdigest())
+          print('HEAD=',p.read_bytes()[:4])
+          PY
+
+          kill "$WRAPPER_PID" 2>/dev/null || true
+
+      - name: Upload native smoke test
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kompas-linux-professional-diagnostics
+          name: kompas-native-smoke
           path: |
+            smoke_native.frw
             installed.txt
-            ksi-file.txt
-            ksi-ldd.txt
-            ksi-strings.txt
-            ksapi-probe.txt
-            ksi-runs.txt
-            ksi.pid
-            ksi-ps.txt
-            ksi-sockets.txt
-            ksi-api-live.txt
             ksi-live.out
             ksi-live.err
+            ksi-sockets.txt
+            ksi-port.txt
           if-no-files-found: ignore
