@@ -9,6 +9,9 @@ apt-get install -y wget ca-certificates
 bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
 apt-get update
 
+echo "=== install locale and XCB dependencies first ==="
+apt-get install -y glibc-locales libxcbutil-wm libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util || true
+
 echo "=== install KOMPAS professional payload ==="
 set +e
 apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 ascon-kompas-sdk-v25
