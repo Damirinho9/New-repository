@@ -1,0 +1,55 @@
+name: Inspect real KOMPAS FRW format
+
+on:
+  push:
+    branches:
+      - kompas-7335493-native-work1
+    paths:
+      - '.github/workflows/inspect-frw-format.yml'
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public real FRW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import urllib.request
+          url = 'https://raw.githubusercontent.com/MagicalBlade/KompasTools/master/Resources/Sundry/Welding/DataWeld/%D0%A1%D1%82%D1%8B%D0%BA%D0%BE%D0%B2%D0%BE%D0%B5.frw'
+          urllib.request.urlretrieve(url, 'sample.frw')
+          PY
+          ls -l sample.frw
+          file sample.frw
+          sha256sum sample.frw
+          xxd -l 128 sample.frw
+      - name: Inspect ZIP container
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -t sample.frw
+          unzip -l sample.frw
+          mkdir extracted
+          unzip -q sample.frw -d extracted
+          find extracted -maxdepth 5 -type f -printf '%p %s bytes\n' | sort
+          echo '--- FILE TYPES ---'
+          find extracted -type f -exec file {} \;
+          echo '--- FIRST 1000 STRINGS ---'
+          strings -a -el sample.frw | head -1000 || true
+          strings -a sample.frw | head -1000 || true
+          echo '--- TEXTUAL CONTENT ---'
+          while IFS= read -r f; do
+            if file "$f" | grep -Eqi 'text|xml|json|ascii|utf'; then
+              echo "===== $f ====="
+              sed -n '1,300p' "$f" || true
+            fi
+          done < <(find extracted -type f)
+      - name: Archive extracted sample
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-frw-format-sample
+          path: |
+            sample.frw
+            extracted/**
