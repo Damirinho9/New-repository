@@ -24,7 +24,7 @@ jobs:
           # "resolute", while the ASCON deb repo publishes the Astra-compatible suite.
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
           sudo apt-get update
-          apt-cache policy ascon-kompas-graphic-v25 ascon-kompas-sdk-v25 | tee policy.txt
+          apt-cache policy ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25 | tee policy.txt
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-graphic-v25 ascon-kompas-sdk-v25
           find /opt/ascon/kompas3d-v25 -maxdepth 2 -type f | head -200 | tee files.txt
           dpkg -l 'ascon-kompas*' | tee installed.txt
