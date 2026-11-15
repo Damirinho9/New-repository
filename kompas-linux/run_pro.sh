@@ -25,10 +25,15 @@ test -x /opt/ascon/kompas3d-v25/Bin/kKompas
 
 echo "=== install small runtime helpers separately ==="
 set +e
-apt-get install -y procps iproute2 python3
+apt-get install -y procps iproute2 python3 xorg-server-xvfb openbox
 set -e
 
-echo "=== X11 passed from host ==="
+echo "=== start local X11 ==="
+export DISPLAY=:99
+Xvfb :99 -screen 0 1600x1000x24 >kompas-linux/logs/xvfb.log 2>&1 &
+sleep 3
+openbox >kompas-linux/logs/openbox.log 2>&1 &
+sleep 2
 echo "DISPLAY=$DISPLAY"
 ls -la /tmp/.X11-unix || true
 
