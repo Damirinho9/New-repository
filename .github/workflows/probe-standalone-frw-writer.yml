@@ -31,9 +31,13 @@ jobs:
           # even after KOMPAS RPMs have been installed. Treat filesystem presence
           # as the hard gate for this probe.
           apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 gcc-c++ binutils file || true
+          # The KOMPAS RPM currently misses several transitive XCB packages in
+          # this minimal container. libxcb-ewmh.so.2 is provided by xcb-util-wm.
+          apt-get install -y libxcbutil-wm libxcbutil-icccm libxcbutil-keysyms libxcb-render-util || true
           test -f /opt/ascon/kompas3d-v25/Bin/libk2DDoc.so
           test -f /opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw
           command -v g++
+          ldconfig -p 2>/dev/null | grep -E 'libxcb-ewmh\.so|libxcb-icccm\.so' || true
           echo "KOMPAS runtime and compiler are present"
 
       - name: Build standalone writer probe
