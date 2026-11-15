@@ -1,0 +1,13 @@
+name: KOMPAS Linux minimal smoke
+on:
+  push:
+    branches:
+      - kompas-linux-probe-run
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe KOMPAS Linux
+        run: bash kompas-linux/probe.sh
