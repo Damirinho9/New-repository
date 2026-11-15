@@ -1,0 +1,56 @@
+name: Scan official KOMPAS v25 graphic package for FRW
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/scan-kompas-v25-graphic-frw.yml'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: sudo apt-get update && sudo apt-get install -y rpm2cpio cpio
+      - name: Download official graphic package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          curl -fL --retry 5 --retry-delay 2 -o graphic.rpm "$URL"
+          ls -lh graphic.rpm
+          sha256sum graphic.rpm
+      - name: Extract only candidate files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir root
+          (cd root && rpm2cpio ../graphic.rpm | cpio -idm --quiet)
+          find root -type f -printf '%p %s\n' | sort > all-files.txt
+          grep -Eai '\.(frw|lfr|cdw) ' all-files.txt > native2d.txt || true
+          grep -Eai 'param|variable|constraint|fragment|parametr|перемен|парамет|огранич|фрагмент' all-files.txt > paramnames.txt || true
+          echo "2D native count=$(wc -l < native2d.txt)"
+          echo "param-name count=$(wc -l < paramnames.txt)"
+          cat native2d.txt
+          echo '=== PARAM NAMES ==='
+          head -1000 paramnames.txt
+      - name: Collect FRW and LFR only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          while IFS= read -r line; do
+            f="${line% *}"
+            [ -f "$f" ] || continue
+            case "$f" in
+              *.frw|*.FRW|*.lfr|*.LFR) cp --parents "$f" out/ ;;
+            esac
+          done < native2d.txt
+          cp native2d.txt paramnames.txt all-files.txt out/
+          du -sh out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: official-kompas-v25-graphic-frw
+          path: out/**
+          compression-level: 6
