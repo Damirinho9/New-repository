@@ -1,0 +1,19 @@
+name: KOMPAS Astra diagnostic
+on:
+  push:
+    branches:
+      - kompas-astra-diagnostic
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Diagnose native KOMPAS
+        run: bash kompas-linux/astra-diagnostic.sh
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-astra-diagnostics
+          path: kompas-diagnostic/**
