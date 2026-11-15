@@ -58,6 +58,9 @@ jobs:
             using Writer=int(*)(void*,const wchar_t*,int,int);
             using Ed2Ctor=void(*)(void*,void*,bool);
             using GetViews=void*(*)(void*,bool,bool);
+            using GetIface=void*(*)(void*);
+            using ManagerCtor=void(*)(void*,void*);
+            using ManagerGetViews=void*(*)(void*);
             using GetActive=void*(*)(void*);
             using GetObjects=void*(*)(void*);
             using AddObject=void*(*)(void*,int);
@@ -70,6 +73,9 @@ jobs:
             auto write=sym<Writer>(h2,"_ZN16GrDocumentEditor11WriteToFileEPKwii");
             auto ed2Ctor=sym<Ed2Ctor>(ha,"_ZN13LtDocEditor2DC1EP16GrDocumentEditorb");
             auto getViews=sym<GetViews>(ha,"_ZN13LtDocEditor2D16GetDocumentViewsEbb");
+            auto getEdIface=sym<GetIface>(ha,"_ZN13LtDocEditor2D17GetILtDocEditor2DEv");
+            auto managerCtor=sym<ManagerCtor>(ha,"_ZN23LtViewsAndLayersManagerC1EP14ILtDocEditor2D");
+            auto managerGetViews=sym<ManagerGetViews>(ha,"_ZN23LtViewsAndLayersManager8GetViewsEv");
             // Returned pointers are interface subobjects; use ABI adjustment thunks.
             auto getActive=sym<GetActive>(ha,"_ZThn160_N7LtViews13GetActiveViewEv");
             auto getObjects=sym<GetObjects>(ha,"_ZThn208_N6LtView19GetObjectsContainerEv");
@@ -89,7 +95,15 @@ jobs:
             std::vector<unsigned char> ed2(65536); std::memset(ed2.data(),0,ed2.size());
             ed2Ctor(ed2.data(),editor,false);
             void* views=getViews(ed2.data(),false,false);
-            std::printf("VIEWS_IF=%p\n",views); if(!views)return 13;
+            std::printf("DIRECT_VIEWS_IF=%p\n",views);
+            if(!views){
+              void* ediface=getEdIface(ed2.data());
+              std::printf("ED2_IF=%p\n",ediface); if(!ediface)return 13;
+              std::vector<unsigned char> mgrbuf(16384); std::memset(mgrbuf.data(),0,mgrbuf.size());
+              managerCtor(mgrbuf.data(),ediface);
+              views=managerGetViews(mgrbuf.data());
+              std::printf("MANAGER_VIEWS_IF=%p\n",views); if(!views)return 18;
+            }
             void* view=getActive(views);
             std::printf("VIEW_IF=%p\n",view); if(!view)return 14;
             void* objs=getObjects(view);
