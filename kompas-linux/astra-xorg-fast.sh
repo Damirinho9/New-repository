@@ -12,7 +12,7 @@ timeout 420s docker exec kompas-astra bash -lc '
   export DEBIAN_FRONTEND=noninteractive
   timeout 120s apt-get update
   timeout 180s apt-get install -y wget curl gnupg lsb-release procps iproute2 python3 unzip locales \
-    xserver-xorg-core xserver-xorg-video-dummy openbox dbus-x11 x11-xkb-utils \
+    xserver-xorg-core xserver-xorg-video-dummy xserver-xephyr openbox dbus-x11 x11-xkb-utils \
     desktop-file-utils x11-apps libatomic1 libxcb-res0 libgl1-mesa-dri
   touch /etc/locale.gen
   grep -q "^ru_RU.CP1251 CP1251" /etc/locale.gen || echo "ru_RU.CP1251 CP1251" >> /etc/locale.gen
