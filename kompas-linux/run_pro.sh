@@ -47,41 +47,25 @@ KP=$!
 popd >/dev/null
 echo "$KP" >kompas-linux/logs/kompas.pid
 
-OK=0
-for i in $(seq 1 75); do
-  echo "probe=$i"
-  ps -eo pid,ppid,comm,args | grep -Ei '[k]Kompas|[k]Home|[k]Study|[K]OMPAS' || true
-  python3 - <<'PY' || true
+echo "=== process/API initial probe ==="
+sleep 10
+ps -eo pid,ppid,comm,args | grep -Ei '[k]Kompas|[k]Home|[k]Study|[K]OMPAS' || true
+ss -ltnp || true
+python3 - <<'PY' || true
 import sys
 sys.path.insert(0, "/opt/ascon/kompas3d-v25/Bin")
 import ksapi
 try:
-    print("KSAPI_GETKOMPAS=", ksapi.GetKompas())
+    app=ksapi.GetKompas()
+    print("KSAPI_GETKOMPAS=", app)
+    if app is not None:
+        print("APP_NAME=", app.GetApplicationName(True))
 except Exception as e:
     print("KSAPI_ERROR=", repr(e))
 PY
-  if ss -ltnp | grep -E 'kKompas|kHome|kStudy'; then
-    OK=1
-    break
-  fi
-  if ! kill -0 "$KP" 2>/dev/null; then
-    echo "KOMPAS process exited"
-    break
-  fi
-  sleep 2
-done
-
-echo "=== KOMPAS LOG ==="
-tail -300 kompas-linux/logs/kompas.log || true
-echo "=== SOCKETS ==="
-ss -ltnp | grep -E 'kKompas|kHome|kStudy' || true
-
-if [ "$OK" != "1" ]; then
-  echo "RESULT=KOMPAS_API_NOT_AVAILABLE" | tee kompas-linux/verification.txt
-  exit 2
-fi
 
 echo "=== build native FRW ==="
+
 export KOMPAS_DIR=/opt/ascon/kompas3d-v25
 python3 kompas-linux/build_native.py
 test -s "kompas-linux/Работа_1_параметрическая.frw"
