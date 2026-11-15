@@ -1,0 +1,46 @@
+name: Probe official KOMPAS Linux packages
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/probe-kompas-linux-packages.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Download official ASCON installer scripts
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 -o install-ubuntu.sh https://kompas.ru/source/files/2026/10/install-kompas3d-full-ubuntu.sh
+          curl -fL --retry 3 -o install-debian.sh https://kompas.ru/source/files/2026/10/install-kompas3d-full-debian.sh
+          chmod +x install-*.sh
+          sha256sum install-*.sh
+          echo '===== UBUNTU SCRIPT ====='
+          sed -n '1,300p' install-ubuntu.sh
+          echo '===== DEBIAN SCRIPT ====='
+          sed -n '1,300p' install-debian.sh
+          echo '===== PACKAGE/REPO REFERENCES ====='
+          grep -Ein 'ascon|kompas|repo|apt|deb |install ' install-*.sh || true
+
+      - name: Try to derive repository and list package names
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -Eo 'https?://[^"[:space:]]+' install-ubuntu.sh install-debian.sh | sort -u > urls.txt || true
+          cat urls.txt
+          grep -Eo 'ascon-[a-zA-Z0-9._+-]+' install-ubuntu.sh install-debian.sh | sort -u > packages.txt || true
+          cat packages.txt
+
+      - name: Upload scripts
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-kompas-linux-install-scripts
+          path: |
+            install-ubuntu.sh
+            install-debian.sh
+            urls.txt
+            packages.txt
