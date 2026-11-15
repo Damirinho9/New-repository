@@ -1,0 +1,22 @@
+name: KOMPAS Astra native Work1
+on:
+  push:
+    branches:
+      - kompas-linux-probe-run
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native Work1 in Astra 1.8
+        run: bash kompas-linux/astra-build.sh
+      - name: Upload native result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work1-astra-native
+          path: |
+            kompas-linux/*.frw
+            kompas-linux/*.txt
+            kompas-linux/*.log
