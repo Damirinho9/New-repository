@@ -10,7 +10,7 @@ docker exec kompas-astra bash -lc '
   set -euxo pipefail
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y wget curl gnupg lsb-release procps iproute2 python3 unzip locales     xvfb xserver-xephyr openbox dbus-x11 x11-xkb-utils desktop-file-utils x11-apps
+  apt-get install -y wget curl gnupg lsb-release procps iproute2 python3 unzip locales     xvfb xserver-xephyr openbox dbus-x11 x11-xkb-utils desktop-file-utils x11-apps libatomic1
   touch /etc/locale.gen
   grep -q "^ru_RU.CP1251 CP1251" /etc/locale.gen || echo "ru_RU.CP1251 CP1251" >> /etc/locale.gen
   locale-gen || true
@@ -46,6 +46,13 @@ docker exec kompas-astra bash -lc '
   export DISPLAY=:5 QT_QPA_PLATFORM=xcb
   BIN=/opt/ascon/kompas3d-v25/Bin/kStudy
   test -x "$BIN"
+  echo "=== LDD ===" > /work/kompas-diagnostic/ldd.txt
+  ldd "$BIN" >> /work/kompas-diagnostic/ldd.txt || true
+  if grep -q "not found" /work/kompas-diagnostic/ldd.txt; then
+    cat /work/kompas-diagnostic/ldd.txt
+    echo "MISSING_SHARED_LIBRARIES" > /work/kompas-diagnostic/result.txt
+    exit 21
+  fi
   nohup "$BIN" >/tmp/kompas.log 2>&1 &
   echo $! >/tmp/kstudy.pid
 
