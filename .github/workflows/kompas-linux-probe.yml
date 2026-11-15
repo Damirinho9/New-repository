@@ -1,0 +1,71 @@
+name: KOMPAS Linux native probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'kompas-linux/**'
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install X11 helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates xvfb xserver-xephyr openbox unzip procps iproute2
+      - name: Add official ASCON repositories
+        run: |
+          set -euxo pipefail
+          sudo bash -c "$(wget -qO- https://repo.ascon.ru/personal/scripts/ascon-personal-deb.sh)"
+          sudo bash -c "$(wget -qO- https://repo.ascon.ru/scripts/ascon-stable-deb.sh)"
+          sudo apt-get update
+      - name: Install minimal KOMPAS Study + SDK
+        run: |
+          set -euxo pipefail
+          sudo apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-study-v25 ascon-kompas-sdk-v25
+          ls -la /opt/ascon/kompas3d-v25/Bin | head -100
+      - name: Start nested X11 and KOMPAS
+        env:
+          HTTP_PROXY: ''
+          HTTPS_PROXY: ''
+          http_proxy: ''
+          https_proxy: ''
+        run: |
+          set -euxo pipefail
+          Xvfb :99 -screen 0 1600x1000x24 > /tmp/xvfb.log 2>&1 &
+          sleep 2
+          DISPLAY=:99 Xephyr :5 -screen 1400x900 -ac > /tmp/xephyr.log 2>&1 &
+          sleep 2
+          DISPLAY=:5 openbox > /tmp/openbox.log 2>&1 &
+          sleep 2
+          DISPLAY=:5 nohup kompas-study-v25 >/tmp/kompas.log 2>&1 &
+          for i in $(seq 1 75); do
+            if ss -ltnp | grep -Eq 'kStudy|kKompas|kHome'; then break; fi
+            sleep 2
+          done
+          tail -100 /tmp/kompas.log || true
+          ss -ltnp | grep -E 'kStudy|kKompas|kHome' || true
+          ss -ltnp | grep -Eq 'kStudy|kKompas|kHome'
+      - name: Build native FRW
+        env:
+          DISPLAY: :5
+          KOMPAS_DIR: /opt/ascon/kompas3d-v25
+        run: |
+          python3 kompas-linux/build_native.py
+          test -s kompas-linux/Работа_1_параметрическая.frw
+          unzip -t kompas-linux/Работа_1_параметрическая.frw
+          sha256sum kompas-linux/Работа_1_параметрическая.frw
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas-linux-native-result
+          path: |
+            kompas-linux/*.frw
+            kompas-linux/*.txt
+            /tmp/kompas.log
+            /tmp/xvfb.log
+            /tmp/xephyr.log
+            /tmp/openbox.log
