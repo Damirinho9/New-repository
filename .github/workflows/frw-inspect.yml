@@ -11,33 +11,53 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch real KOMPAS FRW sample
+      - name: Fetch real KOMPAS FRW samples
         shell: bash
         run: |
           set -euxo pipefail
           python3 - <<'PY'
           import urllib.request
-          url='https://raw.githubusercontent.com/MagicalBlade/KompasTools/79370d0c904be8a3f3e064202428252a5a5ece27/Resources/Sundry/Welding/DataWeld/%D0%A2%D0%B0%D0%B2%D1%80%D0%BE%D0%B2%D0%BE%D0%B5.frw'
-          urllib.request.urlretrieve(url, 'sample.frw')
+          urls={
+            'sample.frw':'https://raw.githubusercontent.com/MagicalBlade/KompasTools/79370d0c904be8a3f3e064202428252a5a5ece27/Resources/Sundry/Welding/DataWeld/%D0%A2%D0%B0%D0%B2%D1%80%D0%BE%D0%B2%D0%BE%D0%B5.frw',
+            'parametric.frw':'https://raw.githubusercontent.com/SergeySklyarov/Kompas3D-MCP/523b6bc7162fddb1290d00a2dfd52f03110dd6a2/tests/Unit/KompasMcp.Unit/Data/g2-reference-contour.frw'
+          }
+          for name,url in urls.items():
+              urllib.request.urlretrieve(url,name)
           PY
-          mkdir -p frw_unpacked
           python3 - <<'PY'
-          import zipfile, pathlib, hashlib
-          p=pathlib.Path('sample.frw')
-          print('size', p.stat().st_size, 'sha256', hashlib.sha256(p.read_bytes()).hexdigest())
-          with zipfile.ZipFile(p) as z:
-              print('\n'.join(f'{i.filename}\t{i.file_size}\t{i.compress_size}' for i in z.infolist()))
-              z.extractall('frw_unpacked')
+          import zipfile, pathlib, hashlib, zlib
+          for src,outdir in [('sample.frw','sample_unpacked'),('parametric.frw','param_unpacked')]:
+              p=pathlib.Path(src); pathlib.Path(outdir).mkdir(exist_ok=True)
+              print(src,'size',p.stat().st_size,'sha256',hashlib.sha256(p.read_bytes()).hexdigest())
+              with zipfile.ZipFile(p) as z:
+                  print('\n'.join(f'{i.filename}\t{i.file_size}\t{i.compress_size}' for i in z.infolist()))
+                  z.extractall(outdir)
+              b=pathlib.Path(outdir,'Contents').read_bytes()
+              poss=[i for i in range(len(b)) if b.startswith(b'\x78\x9c',i)]
+              rows=[]
+              for j,pos in enumerate(poss):
+                  try:
+                      d=zlib.decompressobj(); raw=d.decompress(b[pos:])
+                      used=len(b[pos:])-len(d.unused_data)
+                      pathlib.Path(outdir,f'chunk_{j:02d}_{pos}_{used}.bin').write_bytes(raw)
+                      rows.append(f'{j}\t{pos}\t{used}\t{len(raw)}')
+                  except Exception as e:
+                      rows.append(f'{j}\t{pos}\tERR\t{e}')
+              pathlib.Path(outdir,'chunks.tsv').write_text('\n'.join(rows))
           PY
-          find frw_unpacked -type f -maxdepth 3 -print0 | xargs -0 file > manifest_filetypes.txt || true
-          find frw_unpacked -type f -maxdepth 3 -print0 | xargs -0 -I{} sh -c 'echo ==== {}; strings -a -n 4 "{}" | head -200' > strings.txt || true
-          find frw_unpacked -type f -maxdepth 3 -print | sort > filenames.txt
+          find sample_unpacked -maxdepth 1 -type f -printf '%f\t%s\n' | sort > sample_files.tsv
+          find param_unpacked -maxdepth 1 -type f -printf '%f\t%s\n' | sort > param_files.tsv
+          for f in param_unpacked/chunk_*.bin; do echo "==== $f"; strings -el "$f" | head -400; done > param_utf16_strings.txt || true
+          for f in param_unpacked/chunk_*.bin; do echo "==== $f"; strings -a -n 4 "$f" | head -400; done > param_ascii_strings.txt || true
       - uses: actions/upload-artifact@v4
         with:
           name: native-frw-inspection
           path: |
             sample.frw
-            frw_unpacked/**
-            manifest_filetypes.txt
-            strings.txt
-            filenames.txt
+            parametric.frw
+            sample_unpacked/**
+            param_unpacked/**
+            sample_files.tsv
+            param_files.tsv
+            param_utf16_strings.txt
+            param_ascii_strings.txt
