@@ -44,10 +44,11 @@ fi
 echo "=== start KOMPAS professional ==="
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy || true
 pushd /opt/ascon/kompas3d-v25/Bin >/dev/null
+ln -sf kKompas kHome
 if command -v dbus-run-session >/dev/null 2>&1; then
-  nohup dbus-run-session -- ./kKompas > /work/kompas-linux/logs/kompas.log 2>&1 &
+  nohup dbus-run-session -- ./kHome > /work/kompas-linux/logs/kompas.log 2>&1 &
 else
-  nohup ./kKompas > /work/kompas-linux/logs/kompas.log 2>&1 &
+  nohup ./kHome > /work/kompas-linux/logs/kompas.log 2>&1 &
 fi
 KP=$!
 popd >/dev/null
