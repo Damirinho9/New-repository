@@ -1,0 +1,146 @@
+name: Probe official C++ KsAPI native FRW
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/probe-cpp-ksapi.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    container:
+      image: alt:p11
+    timeout-minutes: 25
+    steps:
+      - name: Install official KOMPAS v25 + SDK + clang libc++
+        shell: bash
+        run: |
+          set -u
+          apt-get update
+          apt-get install -y wget ca-certificates
+          bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+          apt-get update
+          apt-get install -y fontconfig glibc-i18ndata libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 ascon-kompas-sdk-v25 || true
+          apt-get install -y clang18.1 libcxx-devel libcxxabi-devel dbus procps iproute2 file python3
+          test -f /opt/ascon/kompas3d-v25/SDK/KsAPI/Include/KsAPI.h
+          test -f /opt/ascon/kompas3d-v25/Bin/libksAPI.so
+          test -x /opt/ascon/kompas3d-v25/Bin/kKompas
+
+      - name: Build official C++ API probe
+        shell: bash
+        run: |
+          cat >/tmp/probe.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <cstdio>
+          #include <exception>
+          #include <string>
+
+          int main() {
+            try {
+              std::puts("CALL GetKompasApplication");
+              auto &app = GetKompasApplication();
+              std::printf("APP_PTR=%p\n", (void*)&app);
+
+              auto docs = app.GetDocuments();
+              std::printf("DOCS_PTR=%p\n", (void*)docs.Get());
+              if (!docs) return 20;
+
+              auto doc = docs->Add(ksDocumentFragment, false);
+              std::printf("DOC_PTR=%p\n", (void*)doc.Get());
+              if (!doc) return 21;
+
+              ksapi::IKompasDocument2DPtr d2(doc);
+              std::printf("D2_PTR=%p\n", (void*)d2.Get());
+              if (!d2) return 22;
+
+              d2->SetParametricMode(true);
+              auto mgr = d2->GetViewsAndLayersManager();
+              if (!mgr) return 23;
+              auto views = mgr->GetViews();
+              if (!views) return 24;
+              auto view = views->GetActiveView();
+              std::printf("VIEW_PTR=%p\n", (void*)view.Get());
+              if (!view) return 25;
+
+              ksapi::IDrawingContainerPtr dc(view);
+              std::printf("DC_PTR=%p\n", (void*)dc.Get());
+              if (!dc) return 26;
+
+              auto lines = dc->GetLineSegments();
+              auto seg = lines->Add();
+              if (!seg) return 27;
+              seg->SetX1(0.0); seg->SetY1(0.0);
+              seg->SetX2(15.0); seg->SetY2(0.0);
+              if (!seg->Update()) return 28;
+
+              auto v1=d2->AddVariable(L"l1",15.0,L"crank length");
+              auto v2=d2->AddVariable(L"l2",55.0,L"coupler length");
+              auto v3=d2->AddVariable(L"l3",80.0,L"rocker length");
+              auto v4=d2->AddVariable(L"L",75.0,L"base distance");
+              auto vf=d2->AddVariable(L"fi",90.0,L"crank angle");
+              std::printf("VARS=%p %p %p %p %p count=%d\n",
+                (void*)v1.Get(),(void*)v2.Get(),(void*)v3.Get(),(void*)v4.Get(),(void*)vf.Get(),
+                d2->GetVariablesCount(false));
+
+              bool rb=d2->RebuildDocument();
+              std::printf("REBUILD=%d\n",(int)rb);
+
+              std::wstring out=L"/tmp/cpp-native.frw";
+              bool saved=doc->SaveAs(out);
+              std::printf("SAVE=%d\n",(int)saved);
+              return saved ? 0 : 29;
+            } catch (const std::exception &e) {
+              std::fprintf(stderr,"STD_EXCEPTION=%s\n",e.what());
+              return 90;
+            } catch (...) {
+              std::fprintf(stderr,"UNKNOWN_EXCEPTION\n");
+              return 91;
+            }
+          }
+          CPP
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          clang++-18 -std=c++20 -stdlib=libc++ -I"$INC" /tmp/probe.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/probe
+          file /tmp/probe
+          ldd /tmp/probe | head -100
+
+      - name: Start KOMPAS and run official API probe
+        shell: bash
+        run: |
+          set +e
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+          export QT_QPA_PLATFORM=offscreen
+          unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          cd /opt/ascon/kompas3d-v25/Bin
+          ln -sf kKompas kHome
+          dbus-run-session -- ./kHome >/tmp/kompas.log 2>&1 &
+          KP=$!
+          sleep 12
+          echo "KOMPAS_PID=$KP"
+          ps -eo pid,ppid,comm,args | grep -E '[k]Home|[k]Kompas' || true
+          cd /tmp
+          timeout 120s ./probe 2>&1 | tee /tmp/probe.log
+          rc=${PIPESTATUS[0]}
+          echo "PROBE_RC=$rc"
+          ls -l /tmp/cpp-native.frw || true
+          if [ -s /tmp/cpp-native.frw ]; then
+            file /tmp/cpp-native.frw
+            sha256sum /tmp/cpp-native.frw
+            python3 - <<'PY'
+          import zipfile
+          p='/tmp/cpp-native.frw'
+          print('is_zip',zipfile.is_zipfile(p))
+          with zipfile.ZipFile(p) as z:
+              print('members',[(i.filename,i.file_size) for i in z.infolist()])
+              print(z.read('FileInfo')[:800])
+          PY
+            echo "=== FRW_BASE64_BEGIN ==="
+            base64 -w 76 /tmp/cpp-native.frw
+            echo "=== FRW_BASE64_END ==="
+          fi
+          echo "=== KOMPAS LOG TAIL ==="
+          tail -150 /tmp/kompas.log || true
+          exit $rc
