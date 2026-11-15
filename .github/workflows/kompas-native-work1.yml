@@ -1,0 +1,82 @@
+name: KOMPAS native Work 1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - kompas-7335493-native-work1
+    paths:
+      - 'kompas-work1/**'
+      - '.github/workflows/kompas-native-work1.yml'
+
+jobs:
+  build-native-frw:
+    runs-on: [self-hosted, Windows, X64, kompas]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Runner info
+        shell: powershell
+        run: |
+          Write-Host "Computer: $env:COMPUTERNAME"
+          Write-Host "User: $env:USERNAME"
+          Write-Host "OS: $([Environment]::OSVersion.VersionString)"
+
+      - name: Require commercial KOMPAS license acknowledgement
+        shell: powershell
+        run: |
+          if ($env:KOMPAS_COMMERCIAL_CONFIRMED -ne "1") {
+            throw "Set machine-level KOMPAS_COMMERCIAL_CONFIRMED=1 only on a runner with a legitimate commercial KOMPAS-3D license. Educational, Home and trial modes are not accepted."
+          }
+
+      - name: Check KOMPAS COM registration
+        shell: powershell
+        run: |
+          $t = [type]::GetTypeFromProgID("KOMPAS.Application.7")
+          if ($null -eq $t) {
+            throw "KOMPAS.Application.7 COM ProgID is not registered on this runner."
+          }
+          Write-Host "KOMPAS COM server found."
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pywin32
+        shell: powershell
+        run: python -m pip install --disable-pip-version-check pywin32
+
+      - name: Build native FRW inside KOMPAS
+        shell: powershell
+        working-directory: kompas-work1
+        run: python build_work1_frw.py
+
+      - name: Reopen and verify real parametric rebuild
+        shell: powershell
+        working-directory: kompas-work1
+        run: python verify_work1_frw.py
+
+      - name: Verify result and hash
+        shell: powershell
+        working-directory: kompas-work1
+        run: |
+          $f = Get-Item "Работа_1_параметрическая.frw" -ErrorAction Stop
+          if ($f.Length -lt 1024) { throw "FRW is unexpectedly small." }
+          Get-Content verification.txt
+          if (-not (Select-String -Path verification.txt -Pattern "RESULT=PASS_NATIVE_PARAMETRIC_REBUILD" -Quiet)) {
+            throw "Native parametric verification did not pass."
+          }
+          Get-FileHash $f.FullName -Algorithm SHA256
+
+      - name: Upload verified native deliverable
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work1-native-frw
+          if-no-files-found: error
+          path: |
+            kompas-work1/Работа_1_параметрическая.frw
+            kompas-work1/verification.txt
