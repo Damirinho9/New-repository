@@ -13,7 +13,7 @@ docker exec kompas-astra bash -lc '
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get install -y wget curl gnupg lsb-release procps iproute2 python3 unzip locales \
-    xvfb xserver-xephyr openbox dbus-x11 x11-xkb-utils
+    xvfb xserver-xephyr openbox dbus-x11 x11-xkb-utils desktop-file-utils
   touch /etc/locale.gen
   grep -q "^ru_RU.CP1251 CP1251" /etc/locale.gen || echo "ru_RU.CP1251 CP1251" >> /etc/locale.gen
   locale-gen || true
