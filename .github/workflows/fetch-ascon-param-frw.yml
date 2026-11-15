@@ -1,10 +1,9 @@
 name: Fetch ASCON parametric FRW sample
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/fetch-ascon-param-frw.yml'
+  push:
+    branches:
+      - kompas-7335493-native-work1
 
 jobs:
   fetch:
@@ -51,3 +50,5 @@ jobs:
         with:
           name: ascon-parametric-frw-sample
           path: paz.frw
+
+# push-trigger
