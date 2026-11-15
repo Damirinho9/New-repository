@@ -1,0 +1,51 @@
+name: Parametric FRW template inspect
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frw-param-trigger.txt'
+
+jobs:
+  inspect-param:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and unpack parametric FRW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import urllib.request, zipfile, pathlib, hashlib, zlib
+          url='https://raw.githubusercontent.com/SergeySklyarov/Kompas3D-MCP/523b6bc7162fddb1290d00a2dfd52f03110dd6a2/tests/Unit/KompasMcp.Unit/Data/g2-reference-contour.frw'
+          urllib.request.urlretrieve(url,'parametric.frw')
+          p=pathlib.Path('parametric.frw')
+          print('size',p.stat().st_size,'sha256',hashlib.sha256(p.read_bytes()).hexdigest())
+          out=pathlib.Path('param_unpacked'); out.mkdir()
+          with zipfile.ZipFile(p) as z:
+              print('\n'.join(f'{i.filename}\t{i.file_size}\t{i.compress_size}' for i in z.infolist()))
+              z.extractall(out)
+          b=(out/'Contents').read_bytes()
+          poss=[i for i in range(len(b)) if b.startswith(b'\x78\x9c',i)]
+          rows=[]
+          for j,pos in enumerate(poss):
+              try:
+                  d=zlib.decompressobj(); raw=d.decompress(b[pos:])
+                  used=len(b[pos:])-len(d.unused_data)
+                  (out/f'chunk_{j:02d}_{pos}_{used}.bin').write_bytes(raw)
+                  rows.append(f'{j}\t{pos}\t{used}\t{len(raw)}')
+              except Exception as e:
+                  rows.append(f'{j}\t{pos}\tERR\t{e}')
+          pathlib.Path('chunks.tsv').write_text('\n'.join(rows))
+          PY
+          for f in param_unpacked/chunk_*.bin; do echo "==== $f"; strings -el "$f" | head -500; done > utf16_strings.txt || true
+          for f in param_unpacked/chunk_*.bin; do echo "==== $f"; strings -a -n 4 "$f" | head -500; done > ascii_strings.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parametric-frw-template
+          path: |
+            parametric.frw
+            param_unpacked/**
+            chunks.tsv
+            utf16_strings.txt
+            ascii_strings.txt
