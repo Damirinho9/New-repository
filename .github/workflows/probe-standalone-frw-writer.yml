@@ -1,0 +1,124 @@
+name: Probe standalone native FRW writer
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/probe-standalone-frw-writer.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: alt:p11
+    steps:
+      - name: Enable ASCON official repository
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apt-get update
+          apt-get install -y wget ca-certificates
+          bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+          apt-get update
+
+      - name: Install official KOMPAS Graphic runtime and compiler
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 gcc-c++ binutils file
+
+      - name: Build standalone writer probe
+        shell: bash
+        run: |
+          cat > /tmp/probe.cpp <<'CPP'
+          #include <dlfcn.h>
+          #include <locale.h>
+          #include <wchar.h>
+          #include <sys/stat.h>
+          #include <cstdio>
+          #include <cstdlib>
+          #include <cstring>
+          #include <vector>
+          #include <string>
+
+          using Ctor = void (*)(void*, const wchar_t*, bool);
+          using Create = void* (*)(void*);
+          using Write = int (*)(void*, const wchar_t*, int, int);
+
+          static long fsize(const char* p) {
+            struct stat st{};
+            return stat(p, &st)==0 ? (long)st.st_size : -1;
+          }
+
+          int main() {
+            setlocale(LC_ALL, "");
+            const char* lib = "/opt/ascon/kompas3d-v25/Bin/libk2DDoc.so";
+            void* h = dlopen(lib, RTLD_NOW | RTLD_GLOBAL);
+            if (!h) {
+              std::fprintf(stderr, "dlopen failed: %s\n", dlerror());
+              return 10;
+            }
+            auto ctor = reinterpret_cast<Ctor>(dlsym(h, "_ZN15GrEditorCreaterC1EPKwb"));
+            auto create = reinterpret_cast<Create>(dlsym(h, "_ZN15GrEditorCreater6CreateEv"));
+            auto write = reinterpret_cast<Write>(dlsym(h, "_ZN16GrDocumentEditor11WriteToFileEPKwii"));
+            std::printf("symbols ctor=%p create=%p write=%p\n", (void*)ctor,(void*)create,(void*)write);
+            if (!ctor || !create || !write) return 11;
+
+            const wchar_t* src = L"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw";
+            const wchar_t* dst = L"/tmp/standalone-copy.frw";
+            std::vector<unsigned char> storage(4096);
+            std::memset(storage.data(), 0, storage.size());
+
+            std::puts("calling GrEditorCreater ctor...");
+            ctor(storage.data(), src, false);
+            std::puts("calling Create...");
+            void* editor = create(storage.data());
+            std::printf("editor=%p\n", editor);
+            if (!editor) return 12;
+
+            std::puts("calling WriteToFile...");
+            int rc = write(editor, dst, 0, 0);
+            std::printf("WriteToFile rc=%d size=%ld\n", rc, fsize("/tmp/standalone-copy.frw"));
+            if (fsize("/tmp/standalone-copy.frw") < 1000) return 13;
+            return 0;
+          }
+          CPP
+          g++ -std=c++17 -O0 -g /tmp/probe.cpp -ldl -o /tmp/probe
+          file /tmp/probe
+
+      - name: Run standalone native writer
+        shell: bash
+        env:
+          LD_LIBRARY_PATH: /opt/ascon/kompas3d-v25/Bin
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set +e
+          ulimit -c 0
+          timeout 90s /tmp/probe 2>&1 | tee /tmp/probe.log
+          rc=${PIPESTATUS[0]}
+          echo "probe_rc=$rc" | tee -a /tmp/probe.log
+          ls -l /tmp/standalone-copy.frw 2>/dev/null || true
+          if [ -f /tmp/standalone-copy.frw ]; then
+            file /tmp/standalone-copy.frw | tee -a /tmp/probe.log
+            sha256sum /tmp/standalone-copy.frw | tee -a /tmp/probe.log
+            python3 - <<'PY' 2>&1 | tee -a /tmp/probe.log || true
+          import zipfile
+          p='/tmp/standalone-copy.frw'
+          with zipfile.ZipFile(p) as z:
+              print('members', [(x.filename,x.file_size) for x in z.infolist()])
+              print('FileInfo', z.read('FileInfo')[:1000])
+          PY
+          fi
+          exit $rc
+
+      - name: Upload probe outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-frw-writer-probe
+          if-no-files-found: ignore
+          path: |
+            /tmp/probe.log
+            /tmp/standalone-copy.frw
