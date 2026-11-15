@@ -26,8 +26,15 @@ jobs:
       - name: Install official KOMPAS Graphic runtime and compiler
         shell: bash
         run: |
-          set -euxo pipefail
-          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 gcc-c++ binutils file
+          set -uxo pipefail
+          # ALT in a container can return 100 at the final glibc replacement stage
+          # even after KOMPAS RPMs have been installed. Treat filesystem presence
+          # as the hard gate for this probe.
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 gcc-c++ binutils file || true
+          test -f /opt/ascon/kompas3d-v25/Bin/libk2DDoc.so
+          test -f /opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw
+          command -v g++
+          echo "KOMPAS runtime and compiler are present"
 
       - name: Build standalone writer probe
         shell: bash
