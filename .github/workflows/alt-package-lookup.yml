@@ -1,0 +1,26 @@
+name: ALT package lookup
+
+on:
+  push:
+    branches:
+      - kompas-7335493-native-work1
+    paths:
+      - '.github/workflows/alt-package-lookup.yml'
+
+jobs:
+  lookup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Search ALT packages
+        shell: bash
+        run: |
+          docker pull alt:p11
+          docker run --rm alt:p11 bash -lc '
+            apt-get update >/dev/null &&
+            echo "=== ewmh ===" &&
+            apt-cache search ewmh || true
+            echo "=== xcb wm ==="
+            apt-cache search xcb | grep -Ei "wm|icccm|ewmh" || true
+            echo "=== provides via apt-file unavailable; rpm db search names ==="
+            apt-cache search libxcbutil || true
+          '
