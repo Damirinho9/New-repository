@@ -1,0 +1,135 @@
+name: Probe standalone native FRW geometry
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/probe-standalone-geometry.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    container:
+      image: alt:p11
+    timeout-minutes: 25
+    steps:
+      - name: Install KOMPAS native libraries
+        shell: bash
+        run: |
+          set -u
+          apt-get update
+          apt-get install -y wget ca-certificates
+          bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+          apt-get update
+          apt-get install -y fontconfig libxcbutil-icccm libxcbutil-keysyms libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 gcc-c++ file python3 || true
+          test -f /opt/ascon/kompas3d-v25/Bin/libk2DDoc.so
+          test -f /opt/ascon/kompas3d-v25/Bin/libkAPI2DCore.so
+          cp "/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw" /tmp/template.frw
+
+      - name: Build native geometry probe
+        shell: bash
+        run: |
+          cat >/tmp/probe.cpp <<'CPP'
+          #include <dlfcn.h>
+          #include <locale.h>
+          #include <sys/stat.h>
+          #include <cstdio>
+          #include <cstring>
+          #include <vector>
+
+          static long fsize(const char* p){ struct stat s{}; return stat(p,&s)==0?s.st_size:-1; }
+          template<class T> T sym(void* h,const char* n){
+            auto p=dlsym(h,n);
+            std::printf("sym %s = %p\n",n,p);
+            if(!p){ std::fprintf(stderr,"dlsym: %s\n",dlerror()); std::exit(40); }
+            return reinterpret_cast<T>(p);
+          }
+          int main(){
+            setlocale(LC_ALL,"C.UTF-8");
+            void* h2=dlopen("/opt/ascon/kompas3d-v25/Bin/libk2DDoc.so",RTLD_NOW|RTLD_GLOBAL);
+            if(!h2){std::fprintf(stderr,"dlopen k2DDoc: %s\n",dlerror());return 10;}
+            void* ha=dlopen("/opt/ascon/kompas3d-v25/Bin/libkAPI2DCore.so",RTLD_NOW|RTLD_GLOBAL);
+            if(!ha){std::fprintf(stderr,"dlopen API2D: %s\n",dlerror());return 11;}
+
+            using CreatorCtor=void(*)(void*,const wchar_t*,bool);
+            using CreatorCreate=void*(*)(void*);
+            using Writer=int(*)(void*,const wchar_t*,int,int);
+            using Ed2Ctor=void(*)(void*,void*,bool);
+            using GetViews=void*(*)(void*,bool,bool);
+            using GetActive=void*(*)(void*);
+            using GetObjects=void*(*)(void*);
+            using AddObject=void*(*)(void*,int);
+            using SetD=void(*)(void*,double);
+            using SetI=void(*)(void*,int);
+            using Update=void(*)(void*);
+
+            auto creatorCtor=sym<CreatorCtor>(h2,"_ZN15GrEditorCreaterC1EPKwb");
+            auto creatorCreate=sym<CreatorCreate>(h2,"_ZN15GrEditorCreater6CreateEv");
+            auto write=sym<Writer>(h2,"_ZN16GrDocumentEditor11WriteToFileEPKwii");
+            auto ed2Ctor=sym<Ed2Ctor>(ha,"_ZN13LtDocEditor2DC1EP16GrDocumentEditorb");
+            auto getViews=sym<GetViews>(ha,"_ZN13LtDocEditor2D16GetDocumentViewsEbb");
+            // Returned pointers are interface subobjects; use ABI adjustment thunks.
+            auto getActive=sym<GetActive>(ha,"_ZThn160_N7LtViews13GetActiveViewEv");
+            auto getObjects=sym<GetObjects>(ha,"_ZThn208_N6LtView19GetObjectsContainerEv");
+            auto addObject=sym<AddObject>(ha,"_ZThn112_N16LtDrawingObjects3AddE21DrawingObjectTypeEnum");
+            auto setX1=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetX1Ed");
+            auto setY1=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetY1Ed");
+            auto setX2=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetX2Ed");
+            auto setY2=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetY2Ed");
+            auto setStyle=sym<SetI>(ha,"_ZThn112_N17LtSelfLineSegment8SetStyleEi");
+            auto update=sym<Update>(ha,"_ZThn208_N17LtSelfLineSegment13ContourUpdateEv");
+
+            std::vector<unsigned char> creator(4096); std::memset(creator.data(),0,creator.size());
+            creatorCtor(creator.data(),L"/tmp/template.frw",false);
+            void* editor=creatorCreate(creator.data());
+            std::printf("EDITOR=%p\n",editor); if(!editor)return 12;
+
+            std::vector<unsigned char> ed2(65536); std::memset(ed2.data(),0,ed2.size());
+            ed2Ctor(ed2.data(),editor,false);
+            void* views=getViews(ed2.data(),false,false);
+            std::printf("VIEWS_IF=%p\n",views); if(!views)return 13;
+            void* view=getActive(views);
+            std::printf("VIEW_IF=%p\n",view); if(!view)return 14;
+            void* objs=getObjects(view);
+            std::printf("OBJECTS_IF=%p\n",objs); if(!objs)return 15;
+            void* line=addObject(objs,1); // DrawingObjectTypeEnum::ksDrLineSeg
+            std::printf("LINE_IF=%p\n",line); if(!line)return 16;
+
+            setX1(line,0.0); setY1(line,0.0); setX2(line,75.0); setY2(line,0.0);
+            setStyle(line,1);
+            update(line);
+
+            int rc=write(editor,L"/tmp/native-line.frw",0,0);
+            std::printf("WRITE_RC=%d SIZE=%ld\n",rc,fsize("/tmp/native-line.frw"));
+            return fsize("/tmp/native-line.frw")>1000?0:17;
+          }
+          CPP
+          g++ -std=c++17 -O0 -g /tmp/probe.cpp -ldl -o /tmp/probe
+
+      - name: Run native geometry probe
+        shell: bash
+        run: |
+          set +e
+          export LD_LIBRARY_PATH=/opt/ascon/kompas3d-v25/Bin
+          export QT_QPA_PLATFORM=offscreen
+          ulimit -c 0
+          timeout 60s /tmp/probe 2>&1 | tee /tmp/probe.log
+          rc=${PIPESTATUS[0]}
+          echo "PROBE_RC=$rc"
+          if [ -s /tmp/native-line.frw ]; then
+            file /tmp/native-line.frw
+            sha256sum /tmp/native-line.frw
+            python3 - <<'PY'
+          import zipfile
+          p='/tmp/native-line.frw'
+          print('zip',zipfile.is_zipfile(p))
+          with zipfile.ZipFile(p) as z:
+            print([(x.filename,x.file_size) for x in z.infolist()])
+            print(z.read('FileInfo')[:500])
+          PY
+            echo "=== FRW_BASE64_BEGIN ==="
+            base64 -w 76 /tmp/native-line.frw
+            echo "=== FRW_BASE64_END ==="
+          fi
+          exit $rc
