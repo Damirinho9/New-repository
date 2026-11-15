@@ -35,6 +35,7 @@ jobs:
           #include <locale.h>
           #include <sys/stat.h>
           #include <cstdio>
+          #include <cstdlib>
           #include <cstring>
           #include <vector>
 
@@ -133,4 +134,3 @@ jobs:
             echo "=== FRW_BASE64_END ==="
           fi
           exit $rc
-\n# cstdlib-fix-2026-11-15T20:19:56.866Z\n
