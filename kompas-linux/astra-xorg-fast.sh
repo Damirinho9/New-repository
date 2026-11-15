@@ -13,7 +13,7 @@ timeout 420s docker exec kompas-astra bash -lc '
   timeout 120s apt-get update
   timeout 180s apt-get install -y wget curl gnupg lsb-release procps iproute2 python3 unzip locales \
     xserver-xorg-core xserver-xorg-video-dummy xserver-xephyr openbox dbus-x11 x11-xkb-utils \
-    desktop-file-utils x11-apps libatomic1 libxcb-res0 libgl1-mesa-dri libxcb-dri2-0 libxcb-dri3-0 libxcb-present0 libxcb-sync1 libxcb-xfixes0 libxcb-shape0 libxcb-glx0 libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-xinerama0 libxshmfence1
+    desktop-file-utils x11-apps libatomic1 libxcb-res0 libgl1-mesa-dri libxcb-dri2-0 libxcb-dri3-0 libxcb-present0 libxcb-sync1 libxcb-xfixes0 libxcb-shape0 libxcb-glx0 libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-xinerama0 libxshmfence1 libxss1 libxtst6 libxv1 libxmu6 libxpm4 libxaw7 libxinerama1 libxcursor1 libxdamage1 libxi6 libxrandr2 libxrender1 libxcomposite1 libxfixes3 libxt6 libice6 libsm6 libfontenc1 libxkbfile1 libxmuu1 libxext6
   touch /etc/locale.gen
   grep -q "^ru_RU.CP1251 CP1251" /etc/locale.gen || echo "ru_RU.CP1251 CP1251" >> /etc/locale.gen
   locale-gen || true
