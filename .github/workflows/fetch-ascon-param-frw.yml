@@ -1,0 +1,53 @@
+name: Fetch ASCON parametric FRW sample
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/fetch-ascon-param-frw.yml'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download attachment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import urllib.request
+          urls=[
+            'https://forum.ascon.ru/index.php?action=dlattach;attach=110111',
+            'https://forum.ascon.ru/index.php?action=dlattach%3Battach%3D110111',
+          ]
+          last=None
+          for u in urls:
+              try:
+                  req=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0'})
+                  with urllib.request.urlopen(req,timeout=30) as r:
+                      data=r.read()
+                      print('URL',u,'status',r.status,'type',r.headers.get('content-type'),'len',len(data),'final',r.geturl())
+                  open('paz.frw','wb').write(data)
+                  break
+              except Exception as e:
+                  print('FAIL',u,repr(e)); last=e
+          else:
+              raise SystemExit(last)
+          PY
+          file paz.frw
+          ls -l paz.frw
+          xxd -l 32 paz.frw
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('paz.frw')
+          print('sha256',hashlib.sha256(p.read_bytes()).hexdigest())
+          print('zip?',zipfile.is_zipfile(p))
+          if zipfile.is_zipfile(p):
+              with zipfile.ZipFile(p) as z:
+                  print('\n'.join(i.filename for i in z.infolist()))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ascon-parametric-frw-sample
+          path: paz.frw
