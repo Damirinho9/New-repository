@@ -1,0 +1,70 @@
+name: KOMPAS Linux professional native test
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'kompas-linux-trigger.txt'
+
+jobs:
+  kompas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install minimal KOMPAS professional packages
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh
+          sudo apt-get update
+          apt-cache policy ascon-kompas-graphic-v25 ascon-kompas-sdk-v25 || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-graphic-v25 ascon-kompas-sdk-v25
+          find /opt/ascon/kompas3d-v25 -maxdepth 2 -type f | head -200
+          dpkg -l 'ascon-kompas*' | tee installed.txt
+      - name: Launch KOMPAS and inspect API
+        shell: bash
+        run: |
+          set -euxo pipefail
+          Xvfb :99 -screen 0 1920x1080x24 -ac >xvfb.log 2>&1 &
+          export DISPLAY=:99
+          openbox >openbox.log 2>&1 &
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          exe=$(find /opt/ascon/kompas3d-v25 -type f \( -name kKompas -o -name KOMPAS -o -name kompas \) -perm -111 | head -1 || true)
+          echo "EXE=$exe" | tee launch.txt
+          if [ -z "$exe" ]; then
+            find /opt/ascon/kompas3d-v25 -type f -perm -111 | sort | tee executables.txt
+            exit 2
+          fi
+          "$exe" >kompas.stdout 2>kompas.stderr &
+          echo $! > kompas.pid
+          for i in $(seq 1 90); do
+            ps -fp $(cat kompas.pid) || true
+            ss -ltnp | tee sockets.txt || true
+            if grep -Eq 'kKompas|KOMPAS' sockets.txt; then break; fi
+            sleep 2
+          done
+          cat kompas.stdout || true
+          cat kompas.stderr || true
+          ss -ltnp | tee sockets-final.txt || true
+          pgrep -a -f 'kKompas|KOMPAS|kompas' || true
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-linux-professional-diagnostics
+          path: |
+            installed.txt
+            launch.txt
+            executables.txt
+            xvfb.log
+            openbox.log
+            kompas.stdout
+            kompas.stderr
+            sockets.txt
+            sockets-final.txt
+            kompas.pid
+          if-no-files-found: ignore
