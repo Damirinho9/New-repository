@@ -10,7 +10,7 @@ bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
 apt-get update
 
 echo "=== install locale and XCB dependencies first ==="
-apt-get install -y glibc-locales libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util || true
+apt-get install -y glibc-i18ndata libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv || true
 
 echo "=== install KOMPAS professional payload ==="
 set +e
@@ -31,6 +31,13 @@ set -e
 echo "=== X11 passed from host ==="
 echo "DISPLAY=$DISPLAY"
 ls -la /tmp/.X11-unix || true
+
+echo "=== dependency audit ==="
+ldd /opt/ascon/kompas3d-v25/Bin/kKompas | tee kompas-linux/logs/ldd.txt
+if grep -q "not found" kompas-linux/logs/ldd.txt; then
+  echo "MISSING_LIBRARIES_DETECTED"
+  grep "not found" kompas-linux/logs/ldd.txt
+fi
 
 echo "=== start KOMPAS professional ==="
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy || true
