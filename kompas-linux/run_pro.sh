@@ -24,18 +24,15 @@ find /opt/ascon -maxdepth 4 -type f -name ksapi.py -ls || true
 test -x /opt/ascon/kompas3d-v25/Bin/kKompas
 
 echo "=== install small runtime helpers separately ==="
-set +e
-apt-get install -y procps iproute2 python3 xorg-server-xvfb openbox
-set -e
+apt-get install -y procps iproute2 python3 dbus || true
+command -v python3
+command -v dbus-run-session || true
 
-echo "=== start local X11 ==="
-export DISPLAY=:99
-Xvfb :99 -screen 0 1600x1000x24 >kompas-linux/logs/xvfb.log 2>&1 &
-sleep 3
-openbox >kompas-linux/logs/openbox.log 2>&1 &
-sleep 2
-echo "DISPLAY=$DISPLAY"
-ls -la /tmp/.X11-unix || true
+echo "=== Qt headless mode ==="
+unset DISPLAY || true
+export QT_QPA_PLATFORM=offscreen
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
 
 echo "=== dependency audit ==="
 ldd /opt/ascon/kompas3d-v25/Bin/kKompas | tee kompas-linux/logs/ldd.txt
@@ -47,7 +44,11 @@ fi
 echo "=== start KOMPAS professional ==="
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy || true
 pushd /opt/ascon/kompas3d-v25/Bin >/dev/null
-nohup ./kKompas > /work/kompas-linux/logs/kompas.log 2>&1 &
+if command -v dbus-run-session >/dev/null 2>&1; then
+  nohup dbus-run-session -- ./kKompas > /work/kompas-linux/logs/kompas.log 2>&1 &
+else
+  nohup ./kKompas > /work/kompas-linux/logs/kompas.log 2>&1 &
+fi
 KP=$!
 popd >/dev/null
 echo "$KP" >kompas-linux/logs/kompas.pid
