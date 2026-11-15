@@ -26,42 +26,44 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           dpkg -l 'ascon-kompas*' | tee installed.txt
 
-      - name: Start Invisible, expose it as kKompas, create native FRW
+      - name: Launch Invisible as kKompas and create native FRW
         shell: bash
         run: |
           set -euxo pipefail
           BIN=/opt/ascon/kompas3d-v25/Bin
           export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
 
-          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             "$BIN/ksinvisible" -automation >ksi-live.out 2>ksi-live.err &
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             /tmp/kKompas -automation >kompas-live.out 2>kompas-live.err &
           WRAPPER_PID=$!
 
           KP=""
           for i in $(seq 1 40); do
             sleep 1
-            KP=$(pgrep -x ksinvisible | head -1 || true)
+            KP=$(pgrep -x kKompas | head -1 || true)
             [ -n "$KP" ] && break
           done
-          echo "KSIPID=$KP" | tee ksi-pid.txt
+          echo "KPID=$KP" | tee kompas-pid.txt
           if [ -z "$KP" ]; then
-            cat ksi-live.err || true
+            ps aux | grep -E 'kKompas|ksinvisible' || true
+            cat kompas-live.err || true
             exit 2
           fi
-
-          for i in $(seq 1 40); do
-            sleep 1
-            ss -ltnp > ksi-sockets.txt || true
-            if grep -q "ksinvisible" ksi-sockets.txt; then break; fi
-          done
-          cat ksi-sockets.txt
-
-          echo "before=$(cat /proc/$KP/comm)" | tee process-name.txt
-          echo kKompas > /proc/$KP/comm
-          echo "after=$(cat /proc/$KP/comm)" | tee -a process-name.txt
           ps -o pid,comm,args -p "$KP" | tee process-ps.txt
 
+          for i in $(seq 1 50); do
+            sleep 1
+            ss -ltnp > kompas-sockets.txt || true
+            if grep -q "kKompas" kompas-sockets.txt; then break; fi
+          done
+          cat kompas-sockets.txt
+          if ! grep -q "kKompas" kompas-sockets.txt; then
+            cat kompas-live.err || true
+            exit 3
+          fi
+
           python3 - <<'PY' | tee api-result.txt
-          import pathlib, hashlib, sys
+          import pathlib, hashlib
           import ksapi
           from constants import constants as c
 
@@ -109,11 +111,10 @@ jobs:
           path: |
             smoke_native.frw
             installed.txt
-            ksi-live.out
-            ksi-live.err
-            ksi-sockets.txt
-            ksi-pid.txt
-            process-name.txt
+            kompas-live.out
+            kompas-live.err
+            kompas-sockets.txt
+            kompas-pid.txt
             process-ps.txt
             api-result.txt
           if-no-files-found: ignore
