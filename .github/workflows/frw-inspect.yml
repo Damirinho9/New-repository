@@ -1,0 +1,43 @@
+name: Inspect native FRW container
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/frw-inspect.yml'
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch real KOMPAS FRW sample
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import urllib.request
+          url='https://raw.githubusercontent.com/MagicalBlade/KompasTools/79370d0c904be8a3f3e064202428252a5a5ece27/Resources/Sundry/Welding/DataWeld/%D0%A2%D0%B0%D0%B2%D1%80%D0%BE%D0%B2%D0%BE%D0%B5.frw'
+          urllib.request.urlretrieve(url, 'sample.frw')
+          PY
+          mkdir -p frw_unpacked
+          python3 - <<'PY'
+          import zipfile, pathlib, hashlib
+          p=pathlib.Path('sample.frw')
+          print('size', p.stat().st_size, 'sha256', hashlib.sha256(p.read_bytes()).hexdigest())
+          with zipfile.ZipFile(p) as z:
+              print('\n'.join(f'{i.filename}\t{i.file_size}\t{i.compress_size}' for i in z.infolist()))
+              z.extractall('frw_unpacked')
+          PY
+          find frw_unpacked -type f -maxdepth 3 -print0 | xargs -0 file > manifest_filetypes.txt || true
+          find frw_unpacked -type f -maxdepth 3 -print0 | xargs -0 -I{} sh -c 'echo ==== {}; strings -a -n 4 "{}" | head -200' > strings.txt || true
+          find frw_unpacked -type f -maxdepth 3 -print | sort > filenames.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-frw-inspection
+          path: |
+            sample.frw
+            frw_unpacked/**
+            manifest_filetypes.txt
+            strings.txt
+            filenames.txt
