@@ -1,0 +1,19 @@
+name: KOMPAS Astra Xorg fast
+on:
+  push:
+    branches:
+      - kompas-astra-xorg-fast
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bounded native KOMPAS smoke
+        run: bash kompas-linux/astra-xorg-fast.sh
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-astra-xorg-fast
+          path: kompas-xorg-fast/**
