@@ -26,74 +26,77 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           dpkg -l 'ascon-kompas*' | tee installed.txt
 
-      - name: Start ksinvisible under Xvfb and create native smoke FRW
+      - name: Start Invisible, expose it as kKompas, create native FRW
         shell: bash
         run: |
           set -euxo pipefail
           BIN=/opt/ascon/kompas3d-v25/Bin
-          KSI=$BIN/ksinvisible
           export PYTHONPATH="$BIN"
 
-          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             "$KSI" -automation >ksi-live.out 2>ksi-live.err &
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             "$BIN/ksinvisible" -automation >ksi-live.out 2>ksi-live.err &
           WRAPPER_PID=$!
-          echo "$WRAPPER_PID" > ksi-wrapper.pid
 
-          PORT=""
-          for i in $(seq 1 30); do
+          KP=""
+          for i in $(seq 1 40); do
             sleep 1
-            ss -ltnp > ksi-sockets.txt || true
-            PORT=$(python3 - <<'PY'
-          import re
-          txt=open('ksi-sockets.txt',errors='ignore').read()
-          for line in txt.splitlines():
-              if 'ksinvisible' in line.lower():
-                  m=re.search(r':(\d+)\s+', line)
-                  if m:
-                      print(m.group(1)); break
-          PY
-            )
-            if [ -n "$PORT" ]; then break; fi
-            if ! kill -0 "$WRAPPER_PID" 2>/dev/null; then break; fi
+            KP=$(pgrep -x ksinvisible | head -1 || true)
+            [ -n "$KP" ] && break
           done
-
-          echo "PORT=$PORT" | tee ksi-port.txt
-          cat ksi-sockets.txt || true
-          cat ksi-live.err || true
-          cat ksi-live.out || true
-
-          if [ -z "$PORT" ]; then
-            echo "No ksinvisible API port found" >&2
-            exit 3
+          echo "KSIPID=$KP" | tee ksi-pid.txt
+          if [ -z "$KP" ]; then
+            cat ksi-live.err || true
+            exit 2
           fi
 
-          KOMPAS_PORT="$PORT" python3 - <<'PY'
-          import os, pathlib, hashlib
+          for i in $(seq 1 40); do
+            sleep 1
+            ss -ltnp > ksi-sockets.txt || true
+            if grep -q "ksinvisible" ksi-sockets.txt; then break; fi
+          done
+          cat ksi-sockets.txt
+
+          echo "before=$(cat /proc/$KP/comm)" | tee process-name.txt
+          echo kKompas > /proc/$KP/comm
+          echo "after=$(cat /proc/$KP/comm)" | tee -a process-name.txt
+          ps -o pid,comm,args -p "$KP" | tee process-ps.txt
+
+          python3 - <<'PY' | tee api-result.txt
+          import pathlib, hashlib, sys
           import ksapi
           from constants import constants as c
 
-          port=int(os.environ['KOMPAS_PORT'])
-          app=ksapi.IApplication(port)
-          print('APP=', app.GetApplicationName(True))
-          print('BUILD=', app.GetBuildNumber())
+          app = ksapi.GetKompas()
+          print("APP_OBJ=", app)
+          if app is None:
+              raise SystemExit("GetKompas returned None")
+          print("APP_NAME=", app.GetApplicationName(True))
+          print("BUILD=", app.GetBuildNumber())
 
           doc=app.GetDocuments().Add(c.ksDocumentFragment, True)
+          if doc is None:
+              raise SystemExit("Could not create fragment")
           d2=ksapi.IKompasDocument2D(doc)
           view=d2.GetViewsAndLayersManager().GetViews().GetActiveView()
           dc=ksapi.IDrawingContainer(view)
 
           s=dc.GetLineSegments().Add()
           s.SetX1(0.0); s.SetY1(0.0); s.SetX2(15.0); s.SetY2(0.0)
-          s.SetStyle(c.ksCSNormal); s.Update()
+          s.SetStyle(c.ksCSNormal)
+          if not s.Update():
+              raise SystemExit("Line Update failed")
 
-          out=str(pathlib.Path('smoke_native.frw').resolve())
+          out=str(pathlib.Path("smoke_native.frw").resolve())
           ok=doc.SaveAs(out)
-          print('SAVE=',ok,out)
+          print("SAVE=",ok)
           p=pathlib.Path(out)
-          if not p.exists() or p.stat().st_size < 1000:
-              raise SystemExit('native FRW not created')
-          print('SIZE=',p.stat().st_size)
-          print('SHA256=',hashlib.sha256(p.read_bytes()).hexdigest())
-          print('HEAD=',p.read_bytes()[:4])
+          print("EXISTS=",p.exists())
+          if not p.exists():
+              raise SystemExit("FRW was not created")
+          print("SIZE=",p.stat().st_size)
+          print("SHA256=",hashlib.sha256(p.read_bytes()).hexdigest())
+          print("HEAD=",p.read_bytes()[:4])
+          if p.read_bytes()[:2] != b"PK":
+              raise SystemExit("Not a native modern KOMPAS container")
           PY
 
           kill "$WRAPPER_PID" 2>/dev/null || true
@@ -109,5 +112,8 @@ jobs:
             ksi-live.out
             ksi-live.err
             ksi-sockets.txt
-            ksi-port.txt
+            ksi-pid.txt
+            process-name.txt
+            process-ps.txt
+            api-result.txt
           if-no-files-found: ignore
