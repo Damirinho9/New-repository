@@ -41,14 +41,25 @@ fi
 
 echo "=== start KOMPAS professional ==="
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy || true
-nohup kompas-v25 >kompas-linux/logs/kompas.log 2>&1 &
+pushd /opt/ascon/kompas3d-v25/Bin >/dev/null
+nohup ./kKompas > /work/kompas-linux/logs/kompas.log 2>&1 &
 KP=$!
+popd >/dev/null
 echo "$KP" >kompas-linux/logs/kompas.pid
 
 OK=0
 for i in $(seq 1 75); do
   echo "probe=$i"
-  ps aux | grep -E '[k]Kompas|[k]Home|[k]Study' || true
+  ps -eo pid,ppid,comm,args | grep -Ei '[k]Kompas|[k]Home|[k]Study|[K]OMPAS' || true
+  python3 - <<'PY' || true
+import sys
+sys.path.insert(0, "/opt/ascon/kompas3d-v25/Bin")
+import ksapi
+try:
+    print("KSAPI_GETKOMPAS=", ksapi.GetKompas())
+except Exception as e:
+    print("KSAPI_ERROR=", repr(e))
+PY
   if ss -ltnp | grep -E 'kKompas|kHome|kStudy'; then
     OK=1
     break
