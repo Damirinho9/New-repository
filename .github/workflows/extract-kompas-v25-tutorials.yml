@@ -1,0 +1,57 @@
+name: Extract official KOMPAS v25 tutorials
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/extract-kompas-v25-tutorials.yml'
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sudo apt-get update && sudo apt-get install -y rpm2cpio cpio
+      - name: Download official v25 tutorials
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-tutorials-v25-25.0.5.2780-0.x86_64.rpm'
+          curl -fL --retry 3 -o tutorials.rpm "$URL"
+          ls -lh tutorials.rpm
+          sha256sum tutorials.rpm
+      - name: Extract and locate native files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir root
+          (cd root && rpm2cpio ../tutorials.rpm | cpio -idm --quiet)
+          find root -type f -printf '%p %s\n' | sort > all-files.txt
+          grep -Eai '\.(frw|cdw|m3d|a3d) ' all-files.txt > native-files.txt || true
+          grep -Eai 'param|variable|constraint|fragment|parametr|перемен|парамет|огранич|фрагмент' all-files.txt > param-files.txt || true
+          echo "Native count: $(wc -l < native-files.txt)"
+          echo "Param-name count: $(wc -l < param-files.txt)"
+          echo '===== NATIVE FILES ====='
+          cat native-files.txt
+          echo '===== PARAM FILES ====='
+          cat param-files.txt
+      - name: Collect 2D native and param candidates
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          while IFS= read -r line; do
+            f="${line% *}"
+            [ -f "$f" ] || continue
+            case "$f" in
+              *.frw|*.FRW|*.cdw|*.CDW) cp --parents "$f" out/ ;;
+            esac
+          done < native-files.txt
+          cp native-files.txt param-files.txt all-files.txt out/
+          du -sh out
+      - name: Upload extracted tutorial native files
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-kompas-v25-tutorial-native-files
+          compression-level: 6
+          path: out/**
