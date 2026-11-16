@@ -22,26 +22,57 @@ static void blog(const char* s){
 }
 
 static void run_writer_main_thread(){
+  static void* h=nullptr;
+  static int (*fn)(void)=nullptr;
+  static int attempts=0;
+
   blog("BOOTSTRAP_MAIN_THREAD_ENTER");
-  void* h=dlopen("/tmp/writer_variant06.so",RTLD_NOW|RTLD_GLOBAL);
   if(!h){
+    h=dlopen("/tmp/writer_variant06.so",RTLD_NOW|RTLD_GLOBAL);
+    if(!h){
+      const char* e=dlerror();
+      blog(e?e:"dlopen failed without dlerror");
+      return;
+    }
+    blog("BOOTSTRAP_WRITER_LOADED_MAIN");
+    dlerror();
+    fn=(int(*)(void))dlsym(h,"run_variant06_writer");
     const char* e=dlerror();
-    blog(e?e:"dlopen failed without dlerror");
-    return;
+    if(e||!fn){
+      blog(e?e:"dlsym run_variant06_writer failed");
+      return;
+    }
   }
-  blog("BOOTSTRAP_WRITER_LOADED_MAIN");
-  dlerror();
-  int (*fn)(void)=(int(*)(void))dlsym(h,"run_variant06_writer");
-  const char* e=dlerror();
-  if(e||!fn){
-    blog(e?e:"dlsym run_variant06_writer failed");
-    return;
-  }
+
   blog("BOOTSTRAP_CALL_WRITER_MAIN");
   int rc=fn();
-  char buf[96];
-  snprintf(buf,sizeof(buf),"BOOTSTRAP_WRITER_MAIN_RC=%d",rc);
+  char buf[128];
+  snprintf(buf,sizeof(buf),"BOOTSTRAP_WRITER_MAIN_RC=%d ATTEMPT=%d",rc,attempts);
   blog(buf);
+
+  if(rc==0){
+    blog("BOOTSTRAP_WRITER_DONE");
+    return;
+  }
+  attempts++;
+  if(attempts>=30){
+    blog("BOOTSTRAP_RETRY_LIMIT");
+    return;
+  }
+
+  QCoreApplication* app=QCoreApplication::instance();
+  if(!app){
+    blog("BOOTSTRAP_NO_APP_FOR_RETRY");
+    return;
+  }
+  QTimer::singleShot(
+    1500,
+    app,
+    [](){
+      blog("BOOTSTRAP_RETRY_TIMER_FIRED");
+      run_writer_main_thread();
+    }
+  );
 }
 
 static void* scheduler(void*){
