@@ -157,3 +157,5 @@ jobs:
           path: stage3-final/
           if-no-files-found: error
           retention-days: 7
+
+# stage3 trigger source-locked v6
