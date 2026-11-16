@@ -1,0 +1,28 @@
+name: Extract full KOMPAS v25 KsAPI headers
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/extract-full-ksapi.yml'
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: sudo apt-get update && sudo apt-get install -y rpm2cpio cpio
+      - name: Download SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 5 --retry-delay 2 -o sdk.rpm             'https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
+          mkdir root out
+          (cd root && rpm2cpio ../sdk.rpm | cpio -idm --quiet)
+          cp -a root/opt/ascon/kompas3d-v25/SDK/KsAPI out/
+          find out -type f -printf '%P %s\n' | sort | head -500
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-full-ksapi
+          compression-level: 9
+          path: out/**
