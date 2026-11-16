@@ -56,18 +56,24 @@ jobs:
           test -x /opt/ascon/kompas3d-v25/Bin/kKompas
           test -f /opt/ascon/kompas3d-v25/Bin/libksAPI.so
 
-          wget -O /tmp/inject_variant06.cpp             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/inject_variant06.cpp'
-          test -s /tmp/inject_variant06.cpp
+          wget -O /tmp/writer_variant06.cpp             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/writer_variant06.cpp'
+          wget -O /tmp/bootstrap_variant06.c             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/bootstrap_variant06.c'
+          test -s /tmp/writer_variant06.cpp
+          test -s /tmp/bootstrap_variant06.c
 
           INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
           BIN=/opt/ascon/kompas3d-v25/Bin
           test -f "$INC/KsAPI.h"
-          clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" /tmp/inject_variant06.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/inject_variant06.so
-          test -s /tmp/inject_variant06.so
-          echo "=== INJECTOR LDD ==="
-          ldd /tmp/inject_variant06.so || true
 
-          rm -f /tmp/work1_v6_inject.log                 /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw                 /tmp/kompas_v6.log
+          clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" /tmp/writer_variant06.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/writer_variant06.so
+          clang-18 -O2 -fPIC -shared -pthread /tmp/bootstrap_variant06.c -ldl             -o /tmp/bootstrap_variant06.so
+
+          echo "=== WRITER LDD ==="
+          ldd /tmp/writer_variant06.so || true
+          echo "=== BOOTSTRAP LDD ==="
+          ldd /tmp/bootstrap_variant06.so || true
+
+          rm -f /tmp/work1_v6_inject.log /tmp/work1_bootstrap.log                 /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw /tmp/kompas_v6.log
 
           export LANG=C.UTF-8
           export LC_ALL=C.UTF-8
@@ -76,12 +82,13 @@ jobs:
           unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
           cd /opt/ascon/kompas3d-v25/Bin
-          dbus-run-session -- bash -c 'LD_PRELOAD=/tmp/inject_variant06.so exec ./kKompas' >/tmp/kompas_v6.log 2>&1 &
+          dbus-run-session -- bash -c 'LD_PRELOAD=/tmp/bootstrap_variant06.so exec ./kKompas' >/tmp/kompas_v6.log 2>&1 &
           KP=$!
           echo "KOMPAS_PID=$KP"
 
           for i in $(seq 1 120); do
             echo "POLL=$i"
+            tail -20 /tmp/work1_bootstrap.log 2>/dev/null || true
             tail -30 /tmp/work1_v6_inject.log 2>/dev/null || true
             if grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_inject.log 2>/dev/null; then
               echo "PASS_MARKER_FOUND"
@@ -94,6 +101,8 @@ jobs:
             sleep 2
           done
 
+          echo "=== BOOTSTRAP_LOG ==="
+          cat /tmp/work1_bootstrap.log 2>/dev/null || true
           echo "=== INJECT_LOG ==="
           cat /tmp/work1_v6_inject.log 2>/dev/null || true
           echo "=== KOMPAS_LOG_TAIL ==="
