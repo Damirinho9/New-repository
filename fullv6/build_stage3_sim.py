@@ -85,7 +85,6 @@ net += [
  "RCTRL vctrl u_ctrl 100",
  "RLINE ac_src l 10",
  "RLOAD l sw 2.2k",
- "XSC1 sens sw 0 nc_trig 0 nc_b OSCILLOSCOPE",
 ]
 
 layout={
@@ -143,7 +142,6 @@ labels={
  "RCTRL":"SIM CTRL SUPPLY: 100 Ohm",
  "RLINE":"TEST BENCH: source R=10 Ohm",
  "RLOAD":"TEST LOAD: 2.2 kOhm",
- "XSC1":"XSC1: A=SENS, B=SW",
 }
 for item in root.iter("Item"):
     if item.get("Class")!="CIITSymbolComp" or not len(item): continue
