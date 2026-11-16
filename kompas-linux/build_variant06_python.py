@@ -60,6 +60,20 @@ def driving(dim,name,value,expression=None):
     constraint(dim,c.ksCDimWithVariable,name=name,value=value,expression=expression)
     return dim
 
+def make_layer(view, number, name):
+    layers=require(view.GetLayers(),"GetLayers")
+    layer=layers.GetLayerByNumber(number)
+    if not layer:
+        layer=require(layers.Add(),f"Layer Add {number}")
+    layer.SetLayerNumber(number)
+    layer.SetName(name)
+    layer.SetBackground(False)
+    layer.SetVisible(True)
+    layer.SetPrintable(True)
+    require(layer.Update(),f"Layer Update {number}")
+    log(f"LAYER {number}={name}")
+    return layer
+
 def seg(dc,a,b,style=c.ksCSNormal,layer=0):
     s=require(dc.GetLineSegments().Add(),"Segment Add")
     s.SetX1(a[0]); s.SetY1(a[1]); s.SetX2(b[0]); s.SetY2(b[1])
@@ -70,10 +84,12 @@ def seg(dc,a,b,style=c.ksCSNormal,layer=0):
     require(s.Update(),"Segment Update")
     return s
 
-def ldim(sc,a,b,textpt,orientation,partners,name,value,expression=None):
+def ldim(sc,a,b,textpt,orientation,partners,name,value,expression=None,layer=2):
     d=require(sc.GetLineDimensions().Add(),f"LineDimension Add {name}")
     d.SetX1(a[0]); d.SetY1(a[1]); d.SetX2(b[0]); d.SetY2(b[1])
     d.SetX3(textpt[0]); d.SetY3(textpt[1]); d.SetOrientation(orientation)
+    if layer:
+        d.SetLayerNumber(layer)
     require(d.Update(),f"LineDimension Update {name}")
     require(d.Associate(),f"Associate {name}")
     log(f"associate {name} constraints={[x.GetConstraintType() for x in d.GetConstraints()]}")
@@ -87,10 +103,12 @@ def ldim(sc,a,b,textpt,orientation,partners,name,value,expression=None):
         require(ok,f"Missing witness association {name}/{di}")
     return driving(d,name,value,expression)
 
-def adim(sc,l1,l2,pos,name,value):
+def adim(sc,l1,l2,pos,name,value,layer=2):
     d=require(sc.GetAngleDimensions().Add(c.ksDrADimension),f"AngleDimension Add {name}")
     d.SetBaseObject1(l1); d.SetBaseObject2(l2)
     d.SetX3(pos[0]); d.SetY3(pos[1])
+    if layer:
+        d.SetLayerNumber(layer)
     require(d.Update(),f"AngleDimension Update {name}")
     return driving(d,name,value)
 
@@ -197,16 +215,20 @@ def main():
     d2.SetParametricMode(True)
     require(d2.IsParametricMode(),"Parametric mode")
     view=require(d2.GetViewsAndLayersManager().GetViews().GetActiveView(),"Active view")
+    make_layer(view,1,"Контуры механизма")
+    make_layer(view,2,"Размеры")
+    make_layer(view,3,"Вспомогательные построения")
+    make_layer(view,4,"Исследование")
     dc=require(ksapi.IDrawingContainer(view),"Drawing container")
     sc=require(ksapi.ISymbols2DContainer(view),"Symbols container")
     log("fragment created")
 
     A,B,C,D,E,X=state(FI0)
-    crank=seg(dc,A,B)
-    rocker=seg(dc,C,D)
-    rod=seg(dc,D,E)
-    baseAC=seg(dc,A,C,c.ksCSConstruction)
-    href=seg(dc,A,(20.0,0.0),c.ksCSConstruction)
+    crank=seg(dc,A,B,layer=1)
+    rocker=seg(dc,C,D,layer=1)
+    rod=seg(dc,D,E,layer=1)
+    baseAC=seg(dc,A,C,c.ksCSConstruction,layer=3)
+    href=seg(dc,A,(20.0,0.0),c.ksCSConstruction,layer=3)
     log("geometry created")
 
     constraint(crank,c.ksCFixedPoint,index=0)
@@ -266,7 +288,7 @@ def main():
     prev=None
     for deg in range(0,361,5):
         *_,xx=state(0.001 if deg==0 else deg)
-        if prev is not None: seg(dc,prev,xx)
+        if prev is not None: seg(dc,prev,xx,layer=4)
         prev=xx
 
     # Slider displacement graph x_E(fi).
@@ -277,20 +299,20 @@ def main():
         samples.append((deg,ee[0]))
         emin=min(emin,ee[0]); emax=max(emax,ee[0])
     gx,gy,sx,sy=110.0,-10.0,0.20,0.55
-    seg(dc,(gx,gy),(gx+360*sx,gy),c.ksCSConstruction)
-    seg(dc,(gx,gy),(gx,gy+50),c.ksCSConstruction)
+    seg(dc,(gx,gy),(gx+360*sx,gy),c.ksCSConstruction,layer=4)
+    seg(dc,(gx,gy),(gx,gy+50),c.ksCSConstruction,layer=4)
     prev=None
     for deg,e in samples:
         p=(gx+deg*sx,gy+(e-emin)*sy)
-        if prev is not None: seg(dc,prev,p)
+        if prev is not None: seg(dc,prev,p,layer=4)
         prev=p
 
     # Velocity graph.
     omega=2*math.pi*N_RPM/60.0
     period=60.0/N_RPM
     vgY=-70.0; st=280.0; sv=0.005
-    seg(dc,(gx,vgY),(gx+period*st,vgY),c.ksCSConstruction)
-    seg(dc,(gx,vgY-35),(gx,vgY+35),c.ksCSConstruction)
+    seg(dc,(gx,vgY),(gx+period*st,vgY),c.ksCSConstruction,layer=4)
+    seg(dc,(gx,vgY-35),(gx,vgY+35),c.ksCSConstruction,layer=4)
     prev=None; vmax=0.0
     for deg in range(5,360,5):
         _,_,_,_,e0,_=state(deg-5)
@@ -299,7 +321,7 @@ def main():
         vmax=max(vmax,abs(vel))
         t=deg/360.0*period
         p=(gx+t*st,vgY+vel*sv)
-        if prev is not None: seg(dc,prev,p)
+        if prev is not None: seg(dc,prev,p,layer=4)
         prev=p
 
     # Angular swing of CD.
@@ -309,7 +331,7 @@ def main():
         th.append((deg,math.atan2(dd[1]-cc[1],dd[0]-cc[0])))
     amin=min(th,key=lambda z:z[1]); amax=max(th,key=lambda z:z[1])
     for _,a in (amin,amax):
-        seg(dc,C,(C[0]+L2*math.cos(a),C[1]+L2*math.sin(a)),c.ksCSConstruction)
+        seg(dc,C,(C[0]+L2*math.cos(a),C[1]+L2*math.sin(a)),c.ksCSConstruction,layer=4)
 
     log(f"travel_E={emax-emin} mm")
     log(f"swing_CD={math.degrees(amax[1]-amin[1])} deg")
