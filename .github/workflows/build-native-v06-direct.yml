@@ -22,20 +22,24 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          curl -fL --retry 5 --retry-delay 2 -o /tmp/graphic.rpm             'https://repo.ascon.ru/stable/rpm/redos/8.0/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
-          curl -fL --retry 5 --retry-delay 2 -o /tmp/core.rpm             'https://repo.ascon.ru/stable/rpm/redos/8.0/ascon-kompas-v25-25.0.5.2780-0.x86_64.rpm'
-          mkdir -p /tmp/kroot
-          (cd /tmp/kroot && rpm2cpio /tmp/graphic.rpm | cpio -idm --quiet)
-          (cd /tmp/kroot && rpm2cpio /tmp/core.rpm | cpio -idm --quiet)
-          KOMPAS_BIN="$(find /tmp/kroot -type f -name kKompas -print -quit)"
-          KSAPI_LIB="$(find /tmp/kroot -type f -name libksAPI.so -print -quit)"
-          echo "KOMPAS_BIN=$KOMPAS_BIN"
-          echo "KSAPI_LIB=$KSAPI_LIB"
-          test -n "$KOMPAS_BIN"
-          test -n "$KSAPI_LIB"
-          chmod +x "$KOMPAS_BIN"
+          BASE='https://repo.ascon.ru/stable/rpm/redos/8.0'
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/graphic.rpm "$BASE/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm"
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/core.rpm "$BASE/ascon-kompas-v25-25.0.5.2780-0.x86_64.rpm"
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/common.rpm "$BASE/ascon-kompas-common-1.0.0.7-0.x86_64.rpm"
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/fonts.rpm "$BASE/ascon-kompas-fonts-1.0.0.8-0.x86_64.rpm"
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/kactivation.rpm "$BASE/ascon-kompas-kactivation-v25-4.3.9.134-1.red80.x86_64.rpm"
+
+          for r in /tmp/graphic.rpm /tmp/core.rpm /tmp/common.rpm /tmp/fonts.rpm /tmp/kactivation.rpm; do
+            echo "Extracting $r into /"
+            rpm2cpio "$r" | (cd / && sudo cpio -idmu --quiet)
+          done
+
+          KOMPAS_BIN="/opt/ascon/kompas3d-v25/Bin/kKompas"
+          KSAPI_LIB="/opt/ascon/kompas3d-v25/Bin/libksAPI.so"
+          test -x "$KOMPAS_BIN"
+          test -f "$KSAPI_LIB"
           dirname "$KOMPAS_BIN" > /tmp/kompas_bin_dir.txt
-          echo "=== RPM ==="; ls -lh /tmp/graphic.rpm /tmp/core.rpm
+          echo "=== RPMs ==="; ls -lh /tmp/graphic.rpm /tmp/core.rpm /tmp/common.rpm /tmp/fonts.rpm /tmp/kactivation.rpm
           echo "=== KOMPAS ==="; file "$KOMPAS_BIN"; ls -lh "$KOMPAS_BIN"
           echo "=== unresolved ==="
           LD_LIBRARY_PATH="$(dirname "$KOMPAS_BIN"):/usr/lib/llvm-18/lib:/usr/lib/x86_64-linux-gnu" ldd "$KOMPAS_BIN" | grep 'not found' || true
