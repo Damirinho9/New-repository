@@ -1,6 +1,11 @@
 name: PR13 native Word environment
 
 on:
+  push:
+    branches:
+      - word-pr13-native-20261116
+    paths:
+      - ".github/workflows/word-pr13-native.yml"
   pull_request:
     branches:
       - main
