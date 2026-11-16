@@ -44,19 +44,19 @@ jobs:
           KP=""
           for i in $(seq 1 90); do
             sleep 1
-            KP=$(pgrep -x kHome | head -1 || true)
+            KP=$(pgrep -x kKompas | head -1 || true)
             [ -n "$KP" ] && break
           done
-          echo "KPID=$KP"
+          echo "KPID=$KP"; ps aux | grep -E "[k]Kompas|[k]Home" || true
           test -n "$KP"
 
           for i in $(seq 1 90); do
             sleep 1
             ss -ltnp >/tmp/sockets.txt || true
-            if grep -q "kHome" /tmp/sockets.txt; then break; fi
+            if grep -q "kKompas" /tmp/sockets.txt; then break; fi
           done
           cat /tmp/sockets.txt
-          grep -q "kHome" /tmp/sockets.txt
+          grep -q "kKompas" /tmp/sockets.txt
 
           python3 - <<'PY'
           import ksapi, time
