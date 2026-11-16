@@ -105,17 +105,87 @@ def set_var(doc,var,value):
     require(doc.CompleteRebuildDocument(),"CompleteRebuildDocument")
     return var.GetValue()
 
+
+def try_fragment(docs, label, factory):
+    try:
+        doc=factory()
+        log(f"candidate {label}: doc={doc}")
+        if not doc:
+            return None
+        try:
+            doc.SetActive()
+        except Exception as e:
+            log(f"candidate {label}: SetActive warning {e!r}")
+        d2=ksapi.IKompasDocument2D(doc)
+        view=d2.GetViewsAndLayersManager().GetViews().GetActiveView()
+        dc=ksapi.IDrawingContainer(view)
+        probe=dc.GetLineSegments().Add()
+        if not probe:
+            log(f"candidate {label}: LineSegments.Add -> None")
+            try: doc.Close(c.kdDoNotSaveChanges)
+            except Exception: pass
+            return None
+        probe.SetX1(-5.0); probe.SetY1(-5.0); probe.SetX2(-1.0); probe.SetY2(-5.0)
+        probe.SetStyle(c.ksCSConstruction)
+        if not probe.Update():
+            log(f"candidate {label}: probe Update false")
+            try: doc.Close(c.kdDoNotSaveChanges)
+            except Exception: pass
+            return None
+        probe.Delete()
+        log(f"candidate {label}: PASS editable fragment")
+        return doc
+    except Exception as e:
+        log(f"candidate {label}: EXCEPTION {e!r}")
+        return None
+
+def acquire_fragment(docs):
+    template=pathlib.Path("/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw")
+    work=pathlib.Path("/tmp/variant06_base.frw")
+    shutil.copy2(template,work)
+
+    candidates=[
+        ("Add-visible", lambda: docs.Add(c.ksDocumentFragment, True)),
+        ("Add-invisible", lambda: docs.Add(c.ksDocumentFragment, False)),
+        ("AddDefault-visible", lambda: docs.AddWithDefaultSettings(c.ksDocumentFragment, True)),
+        ("AddDefault-invisible", lambda: docs.AddWithDefaultSettings(c.ksDocumentFragment, False)),
+        ("AddFromTemplate-visible", lambda: docs.AddNewDocumentFromTemplate(str(template), True)),
+        ("AddFromTemplate-invisible", lambda: docs.AddNewDocumentFromTemplate(str(template), False)),
+        ("Open-visible-rw", lambda: docs.Open(str(work), True, False)),
+        ("Open-invisible-rw", lambda: docs.Open(str(work), False, False)),
+    ]
+
+    try:
+        p=docs.GetOpenDocumentParam()
+        if p:
+            p.SetVisible(True); p.SetReadOnly(False)
+            candidates.append(("OpenDocument-visible-rw", lambda p=p: docs.OpenDocument(str(work),p)))
+    except Exception as e:
+        log(f"GetOpenDocumentParam visible warning {e!r}")
+    try:
+        p2=docs.GetOpenDocumentParam()
+        if p2:
+            p2.SetVisible(False); p2.SetReadOnly(False)
+            candidates.append(("OpenDocument-invisible-rw", lambda p2=p2: docs.OpenDocument(str(work),p2)))
+    except Exception as e:
+        log(f"GetOpenDocumentParam invisible warning {e!r}")
+
+    for label,factory in candidates:
+        doc=try_fragment(docs,label,factory)
+        if doc:
+            return doc,label
+    raise RuntimeError("No editable fragment acquisition route worked")
+
 def main():
     LOG.unlink(missing_ok=True)
     OUT.unlink(missing_ok=True)
     app=require(ksapi.GetKompas(),"GetKompas")
     log("APP="+str(app.GetApplicationName(True)))
     docs=require(app.GetDocuments(),"Documents")
-    template=pathlib.Path("/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw")
-    work=pathlib.Path("/tmp/variant06_base.frw")
-    shutil.copy2(template,work)
-    doc=require(docs.Open(str(work),True,False),"Open writable fragment template")
-    doc.SetActive()
+    doc,route=acquire_fragment(docs)
+    log("fragment route="+route)
+    try: doc.SetActive()
+    except Exception: pass
     d2=require(ksapi.IKompasDocument2D(doc),"IKompasDocument2D")
     d2.SetParametricMode(True)
     require(d2.IsParametricMode(),"Parametric mode")
