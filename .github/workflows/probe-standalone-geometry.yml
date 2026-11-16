@@ -108,7 +108,9 @@ jobs:
             std::printf("VIEW_IF=%p\n",view); if(!view)return 14;
             void* objs=getObjects(view);
             std::printf("OBJECTS_IF=%p\n",objs); if(!objs)return 15;
-            void* line=addObject(objs,1); // DrawingObjectTypeEnum::ksDrLineSeg
+            void* lines=getCollection(objs,13024); // KompasAPIObjectTypeEnum::ksObjectLineSegments
+            std::printf("LINES_IF=%p\n",lines); if(!lines)return 19;
+            void* line=addObject(lines,1); // DrawingObjectTypeEnum::ksDrLineSeg
             std::printf("LINE_IF=%p\n",line); if(!line)return 16;
 
             setX1(line,0.0); setY1(line,0.0); setX2(line,75.0); setY2(line,0.0);
