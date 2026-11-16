@@ -23,7 +23,8 @@ jobs:
           apt-get install -y wget ca-certificates fontconfig dbus procps file coreutils
           bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
           apt-get update
-          apt-get install -y clang18.1 libcxx-devel libcxxabi-devel || true
+          apt-get install -y clang18.1 libcxx libcxx-devel libcxxabi libcxxabi-devel || true
+          ldconfig -p | grep -E 'libc\+\+|libc\+\+abi' || true
           apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-sdk-v25 ascon-kompas-v25 || true
           test -x /opt/ascon/kompas3d-v25/Bin/kKompas
           test -f /opt/ascon/kompas3d-v25/Bin/libksAPI.so
@@ -36,7 +37,7 @@ jobs:
         run: |
           set -euxo pipefail
           wget -O /tmp/inject_writer.cpp             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/inject_writer.cpp'
-          clang++-18 -std=c++20 -fPIC -shared             -fms-extensions -fvisibility-ms-compat -stdlib=libc++             -I/opt/ascon/kompas3d-v25/SDK/KsAPI/Include             /tmp/inject_writer.cpp             -L/opt/ascon/kompas3d-v25/Bin             -Wl,-rpath,/opt/ascon/kompas3d-v25/Bin             -Wl,--no-undefined -stdlib=libc++             -lksAPI -latomic -ldl -pthread             -o /tmp/inject_writer.so
+          clang++-18 -std=c++20 -fPIC -shared             -fms-extensions -fvisibility-ms-compat -stdlib=libc++             -I/opt/ascon/kompas3d-v25/SDK/KsAPI/Include             /tmp/inject_writer.cpp             -L/opt/ascon/kompas3d-v25/Bin             -Wl,-rpath,/opt/ascon/kompas3d-v25/Bin             -stdlib=libc++             -lksAPI -Wl,--no-as-needed -lc++ -lc++abi -Wl,--as-needed -latomic -ldl -pthread             -o /tmp/inject_writer.so
           file /tmp/inject_writer.so
           ldd /tmp/inject_writer.so | tee /tmp/inject_ldd.txt
           ! grep -q 'not found' /tmp/inject_ldd.txt
