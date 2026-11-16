@@ -1,0 +1,61 @@
+name: Compile KOMPAS variant06 injector
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - 'kompas-linux/inject_variant06.cpp'
+      - '.github/workflows/compile-variant06-injector.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+      - name: Install compiler and RPM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libc++-dev libc++abi-dev rpm2cpio cpio curl
+      - name: Extract official ASCON headers and libksAPI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SDK='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
+          GFX='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          curl -fL --retry 5 -o /tmp/sdk.rpm "$SDK"
+          curl -fL --retry 5 -o /tmp/gfx.rpm "$GFX"
+          mkdir -p /tmp/sdkroot /tmp/gfxroot
+          (cd /tmp/sdkroot && rpm2cpio /tmp/sdk.rpm | cpio -idm --quiet)
+          (cd /tmp/gfxroot && rpm2cpio /tmp/gfx.rpm | cpio -idm --quiet)
+          test -f /tmp/sdkroot/opt/ascon/kompas3d-v25/SDK/KsAPI/Include/KsAPI.h
+          test -f /tmp/gfxroot/opt/ascon/kompas3d-v25/Bin/libksAPI.so
+      - name: Compile injected writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INC=/tmp/sdkroot/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          LIB=/tmp/gfxroot/opt/ascon/kompas3d-v25/Bin
+          mkdir -p kompas-linux/bin
+          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" kompas-linux/inject_variant06.cpp             -L"$LIB" -Wl,-rpath,/opt/ascon/kompas3d-v25/Bin             -lksAPI -lc++abi -o kompas-linux/bin/inject_variant06.so
+          file kompas-linux/bin/inject_variant06.so
+          ls -lh kompas-linux/bin/inject_variant06.so
+      - name: Commit compiled injector
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name 'KOMPAS build bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -f kompas-linux/bin/inject_variant06.so
+          if git diff --cached --quiet; then
+            echo "Binary unchanged"
+          else
+            git commit -m 'Build variant 6 KOMPAS injector'
+            git push origin HEAD:kompas-7335493-native-work1
+          fi
