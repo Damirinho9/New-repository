@@ -40,12 +40,20 @@ static bool state(double deg,P& B,P& C,P& D,P& E,P& X){
 }
 
 static ILayerPtr layer(const IViewPtr& view,int n,const std::wstring& name){
-  auto ls=view->GetLayers(); if(!ls) return {};
-  auto x=ls->GetLayerByNumber(n); if(!x) x=ls->Add();
-  if(!x) return {};
-  x->SetLayerNumber(n); x->SetName(name); x->SetVisible(true);
-  x->SetBackground(false); x->SetPrintable(true); x->SetCurrent();
-  if(!x->Update()) return {};
+  auto ls=view->GetLayers();
+  if(!ls){ log("layer: GetLayers failed"); return {}; }
+  auto x=ls->GetLayerByNumber(n);
+  if(!x){
+    x=ls->Add();
+    if(!x){ log("layer: Add failed n="+std::to_string(n)); return {}; }
+    x->SetLayerNumber(n);
+    x->SetName(name);
+    if(!x->Update()){
+      log("layer: Update failed n="+std::to_string(n));
+      return {};
+    }
+  }
+  log("layer OK n="+std::to_string(n));
   return x;
 }
 
