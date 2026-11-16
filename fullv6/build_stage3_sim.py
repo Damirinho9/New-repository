@@ -42,13 +42,13 @@ net=[
  named("VD1",models["photo"],A="0",K="sens"),
  "C1 sens 0 47n CAP_ELECTROLIT_VIRTUAL",
  "C2 u_ctrl 0 1u CAP_ELECTROLIT_VIRTUAL",
- named("VT1",models["kp501"],D="sens",G="g12",S="t1"),
+ named("VT1",models["kp501"],D="t1",G="g12",S="sens"),
  "R3 g12 0 330",
  "R4 u_ctrl t1 10k",
- named("VT2",models["kp501"],D="t1",G="g12",S="t2"),
+ named("VT2",models["kp501"],D="t2",G="g12",S="t1"),
  named("VD2",models["zener12"],A="0",K="u_ctrl"),
  "R5 u_ctrl t2 5.1k",
- named("VT3",models["kp707"],D="t2",G="0",S="vt3_r6"),
+ named("VT3",models["kp707"],D="vt3_r6",G="0",S="t2"),
  "R6 vt3_r6 drv 51",
  named("HL1",models["led"],A="led_a",K="u_ctrl"),
  named("VD3",models["rectifier"],A="led_r",K="led_a"),
@@ -80,7 +80,7 @@ else:
 # Simulation-only test bench. I1 is reverse photocurrent from cathode node SENS to anode/common.
 net += [
  f"I1 sens 0 {iph:.12g}",
- "V1 ac_src n SIN(0 311.1269837 50)",
+ "V1 ac_src n SIN(0 311.1269837 50)",\n "V2 vctrl 0 12",\n "RCTRL vctrl u_ctrl 100",
  "RLINE ac_src l 10",
  "RLOAD l sw 2.2k",
  "XSC1 sens sw 0 nc_trig 0 nc_b OSCILLOSCOPE",
@@ -97,7 +97,7 @@ layout={
  "XVD6":[1197,342],"XVD5":[1323,198],"R9":[1323,270],
  "XVS2":[1404,342,90],"C3":[1512,450,90],"XFU2":[1512,576],
  "XXP1":[1656,306],
- "I1":[270,486,90],"V1":[1782,558,90],"RLINE":[1692,558],"RLOAD":[1656,144,90],
+ "I1":[270,486,90],"V1":[1782,558,90],"V2":[1782,270,90],"RCTRL":[1656,270],"RLINE":[1692,558],"RLOAD":[1656,144,90],
  "XSC1":[720,666],
  "GND":[[252,558],[432,558],[666,558],[900,558],[1080,558],[1233,558],[1404,648],[1512,648],[270,558],[756,756]],
 }
@@ -136,7 +136,7 @@ labels={
  "VD6":f"RB154 -> {models['bridge']}",
  "FU1":f"103 32A -> {models['fuse']}","FU2":f"103 32A -> {models['fuse']}",
  "I1":f"SIM LIGHT: I_PH={iph*1e6:.6g} uA",
- "V1":"TEST BENCH: 220 Vrms / 50 Hz",
+ "V1":"TEST BENCH: 220 Vrms / 50 Hz",\n "V2":"SIM CTRL SUPPLY: 12 V",\n "RCTRL":"SIM CTRL SUPPLY: 100 Ohm",
  "RLINE":"TEST BENCH: source R=10 Ohm",
  "RLOAD":"TEST LOAD: 2.2 kOhm",
  "XSC1":"XSC1: A=SENS, B=SW",
@@ -152,7 +152,7 @@ xmlio.save(root,TARGET,compress=True)
 report=check.check_file(TARGET)
 manifest={
  "state":state,"photocurrent_A":iph,"photocurrent_uA":iph*1e6,
- "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"Rline_Ohm":10,"Rload_Ohm":2200},
+ "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"control_supply_V":12,"control_series_Ohm":100,"Rline_Ohm":10,"Rload_Ohm":2200},
  "models":models,"check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
