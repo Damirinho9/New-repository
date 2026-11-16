@@ -17,7 +17,7 @@ def stats(vals):
     return {"mean":mean,"rms":math.sqrt(sum(v*v for v in vals)/n),"min":min(vals),"max":max(vals),"pp":max(vals)-min(vals)}
 
 res=[]
-for uA in [0.0,5.0,10.0]:
+for uA in [0.0,3.0,4.0,5.0]:
     label=f"Q_{str(uA).replace('.','p')}uA"
     b=run([sys.executable,str(BUILD),label,str(uA*1e-6)],OUT/f"{label}_build.txt")
     ms14=ROOT/"stage3-out"/f"7330744_PhotoRelay_V6_SIM_{label}.ms14"
@@ -44,8 +44,8 @@ for uA in [0.0,5.0,10.0]:
     res.append(r)
 (OUT/"quick_results.json").write_text(json.dumps(res,ensure_ascii=False,indent=2),encoding="utf-8")
 ok=[r for r in res if r.get("metrics")]
-if len(ok)!=3:
-    raise SystemExit("not all three native model2 transients completed")
+if len(ok)!=4:
+    raise SystemExit("not all four native ZVN2106A diagnostic transients completed")
 span=max(r["metrics"]["load_v"]["rms"] for r in ok)-min(r["metrics"]["load_v"]["rms"] for r in ok)
 print(json.dumps({"results":res,"load_rms_span_V":span},ensure_ascii=False,indent=2))
 if span<5:
