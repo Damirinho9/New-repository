@@ -33,7 +33,7 @@ jobs:
       - name: CreateProjectTemp, recover project object and inspect palette
         shell: pwsh
         run: |
-          $ErrorActionPreference="Stop"
+          $ErrorActionPreference="Continue"
           $log="$env:GITHUB_WORKSPACE\mstemp\temp-project.txt"
           $baseProjects="C:\MasterSCADA Projects\Projects"
           $id="7341268_Variant7"
@@ -56,7 +56,6 @@ jobs:
             if(Test-Path $target){
               $fi=Get-Item $target
               "TARGET_SIZE_AFTER_CREATE=$($fi.Length)" | Add-Content -Encoding utf8 $log
-              "TARGET_SHA256_AFTER_CREATE=$((Get-FileHash $target -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $log
             }
 
             "PROJECTS_COUNT=$($app.Projects.Count)" | Add-Content -Encoding utf8 $log
@@ -98,15 +97,23 @@ jobs:
               "$($_.FullName)`t$($_.Length)"
             } | Add-Content -Encoding utf8 $log
 
-            $copy="$env:GITHUB_WORKSPACE\mstemp\7341268_Variant7"
-            if(Test-Path $copy){Remove-Item $copy -Recurse -Force}
-            Copy-Item $folder $copy -Recurse -Force
-            "COPIED_TO_WORKSPACE=$copy" | Add-Content -Encoding utf8 $log
           } finally {
             if($app){
               try{$app.ExitScada()}catch{}
               try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
             }
+          }
+          Start-Sleep -Seconds 3
+          if(Test-Path $target){
+            try{"TARGET_SHA256_AFTER_CLOSE=$((Get-FileHash $target -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $log}catch{"HASH_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+          }
+          $copy="$env:GITHUB_WORKSPACE\mstemp\7341268_Variant7"
+          if(Test-Path $copy){Remove-Item $copy -Recurse -Force}
+          try {
+            Copy-Item $folder $copy -Recurse -Force
+            "COPIED_TO_WORKSPACE=$copy" | Add-Content -Encoding utf8 $log
+          } catch {
+            "COPY_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $log
           }
 
       - name: Validate native VAV opens in MasterSCADA
