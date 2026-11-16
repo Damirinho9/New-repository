@@ -80,7 +80,9 @@ else:
 # Simulation-only test bench. I1 is reverse photocurrent from cathode node SENS to anode/common.
 net += [
  f"I1 sens 0 {iph:.12g}",
- "V1 ac_src n SIN(0 311.1269837 50)",\n "V2 vctrl 0 12",\n "RCTRL vctrl u_ctrl 100",
+ "V1 ac_src n SIN(0 311.1269837 50)",
+ "V2 vctrl 0 12",
+ "RCTRL vctrl u_ctrl 100",
  "RLINE ac_src l 10",
  "RLOAD l sw 2.2k",
  "XSC1 sens sw 0 nc_trig 0 nc_b OSCILLOSCOPE",
@@ -136,7 +138,9 @@ labels={
  "VD6":f"RB154 -> {models['bridge']}",
  "FU1":f"103 32A -> {models['fuse']}","FU2":f"103 32A -> {models['fuse']}",
  "I1":f"SIM LIGHT: I_PH={iph*1e6:.6g} uA",
- "V1":"TEST BENCH: 220 Vrms / 50 Hz",\n "V2":"SIM CTRL SUPPLY: 12 V",\n "RCTRL":"SIM CTRL SUPPLY: 100 Ohm",
+ "V1":"TEST BENCH: 220 Vrms / 50 Hz",
+ "V2":"SIM CTRL SUPPLY: 12 V",
+ "RCTRL":"SIM CTRL SUPPLY: 100 Ohm",
  "RLINE":"TEST BENCH: source R=10 Ohm",
  "RLOAD":"TEST LOAD: 2.2 kOhm",
  "XSC1":"XSC1: A=SENS, B=SW",
