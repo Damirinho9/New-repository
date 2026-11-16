@@ -35,7 +35,7 @@ jobs:
           grep -R -n 'mirror.yandex.ru\|ftp.altlinux.org\|p11/branch' /etc/apt 2>/dev/null || true
 
           apt-get update
-          apt-get install -y wget ca-certificates fontconfig dbus             libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util             libXv libXScrnSaver libxkbfile libfontenc || true
+          apt-get install -y wget ca-certificates fontconfig dbus glibc-locales             libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util             libXv libXScrnSaver libxkbfile libfontenc || true
 
           echo "=== LOCALES BEFORE KOMPAS ==="
           locale -a | grep -Ei 'ru_RU.*1251|ru_RU.*utf' || true
