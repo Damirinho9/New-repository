@@ -62,8 +62,22 @@ jobs:
             $p=$null
             try {$p=$app.CurrentProject} catch {"CURRENT_PROJECT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
             if($null -eq $p){
-              try {$p=$app.Projects.Item($id)} catch {"PROJECT_ITEM_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+              foreach($key in @($id,"Система водяного отопления - вариант 7",$target,$folder)){
+                try {
+                  $cand=$app.Projects.Item($key)
+                  "PROJECT_ITEM[$key]=$cand" | Add-Content -Encoding utf8 $log
+                  if($cand -and $null -eq $p){$p=$cand}
+                } catch {"PROJECT_ITEM[$key] ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+              }
             }
+            "=== ENUM PROJECTS ===" | Add-Content -Encoding utf8 $log
+            try {
+              foreach($proj in $app.Projects){
+                "ENUM_PROJECT=$proj" | Add-Content -Encoding utf8 $log
+                try {"ENUM_NAME=$($proj.Name) ENUM_PATH=$($proj.Path)" | Add-Content -Encoding utf8 $log}catch{}
+                if($null -eq $p){$p=$proj}
+              }
+            } catch {"ENUM_PROJECTS_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
             "PROJECT_RECOVERED=$($null -ne $p)" | Add-Content -Encoding utf8 $log
             if($p){
               "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $log
@@ -87,8 +101,21 @@ jobs:
             try {
               $pal=$app.ObjPalette
               $pal | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
-              foreach($prop in @("CurrentCategory","SelectedObject")){
+              foreach($prop in @("CurrentCategory","SelectedObject","LibraryCount")){
                 try{"PAL_$prop=$($pal.$prop)"|Add-Content -Encoding utf8 $log}catch{"PAL_$prop ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+              }
+              foreach($name in @("Компьютер","Объект","Переменная","Значение","Computer","Object","Variable","Value")){
+                try {
+                  $o=$pal.GetObject($name)
+                  "PAL_GET[$name]=$o" | Add-Content -Encoding utf8 $log
+                  if($o){
+                    "PAL_GET[$name]_TYPE=$($o.GetType().FullName)" | Add-Content -Encoding utf8 $log
+                    $o | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+                    foreach($pr in @("Name","clsid","CLSID","ObjectType","ItemType","DisplayName","ClassInfoObject")){
+                      try{"PAL_GET[$name].$pr=$($o.$pr)"|Add-Content -Encoding utf8 $log}catch{}
+                    }
+                  }
+                } catch {"PAL_GET[$name]_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
               }
             } catch {"PALETTE_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
 
