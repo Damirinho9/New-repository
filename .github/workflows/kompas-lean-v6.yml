@@ -1,0 +1,118 @@
+name: KOMPAS lean 2D native Work1 v6
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/kompas-lean-v6.yml'
+      - 'kompas-linux/build_variant06_python.py'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Install only KOMPAS Graphic v25
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wget ca-certificates gnupg xvfb iproute2 dbus-x11
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main'             | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             ascon-kompas-graphic-v25
+
+          echo '=== KOMPAS FILES ==='
+          find /opt/ascon -maxdepth 6 \( -name 'kKompas' -o -name 'kHome' -o -name 'kStudy' -o -name 'ksinvisible' -o -name 'ksapi.py' -o -name 'constants.py' \) -ls || true
+          test -e /opt/ascon/kompas3d-v25/Bin/ksinvisible
+          test -e /opt/ascon/kompas3d-v25/Bin/ksapi.py
+
+      - name: Launch invisible API and check 2D license
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+
+          xvfb-run -a --server-args="-screen 0 1600x1000x24 -ac"             /tmp/kKompas -automation >/tmp/kompas.out 2>/tmp/kompas.err &
+          WRAP=$!
+
+          KP=""
+          for i in $(seq 1 45); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+            kill -0 "$WRAP" 2>/dev/null || break
+          done
+          echo "KPID=$KP"
+          test -n "$KP"
+
+          for i in $(seq 1 45); do
+            python3 - <<'PY' && break || true
+          import ksapi
+          app=ksapi.GetKompas()
+          assert app
+          print(app.GetApplicationName(True))
+          PY
+            sleep 1
+          done
+
+          python3 - <<'PY'
+          import ksapi
+          from constants import constants as c
+          app=ksapi.GetKompas()
+          assert app, "No KOMPAS API"
+          print("APP=",app.GetApplicationName(True))
+          lm=app.GetApplicationLicenseManager()
+          print("LICENSE_MANAGER=",lm)
+          active=lm.IsKompasModuleActive(c.ksKompasModule2D) if lm else False
+          print("LICENSE_MODULE_2D_ACTIVE=",active)
+          docs=app.GetDocuments()
+          print("DOCS=",docs)
+          doc=docs.Add(c.ksDocumentFragment, False) if docs else None
+          print("SMOKE_DOC=",doc)
+          if doc:
+              d2=ksapi.IKompasDocument2D(doc)
+              view=d2.GetViewsAndLayersManager().GetViews().GetActiveView()
+              dc=ksapi.IDrawingContainer(view)
+              seg=dc.GetLineSegments().Add()
+              print("SMOKE_SEG=",seg)
+              if seg:
+                  seg.SetX1(0);seg.SetY1(0);seg.SetX2(10);seg.SetY2(0)
+                  print("SMOKE_UPDATE=",seg.Update())
+              doc.Close(c.kdDoNotSaveChanges)
+          if not active:
+              raise SystemExit("2D module inactive")
+          if not doc:
+              raise SystemExit("fragment creation failed")
+          PY
+
+      - name: Build and verify native FRW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 kompas-linux/build_variant06_python.py 2>&1 | tee /tmp/build-v6.out
+          OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          test -s "$OUT"
+          grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_python.log
+          mkdir -p result
+          cp "$OUT" result/
+          cp /tmp/work1_v6_python.log result/
+          cp /tmp/build-v6.out result/
+          sha256sum "$OUT"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-work1-v6-lean
+          if-no-files-found: ignore
+          path: result/**
