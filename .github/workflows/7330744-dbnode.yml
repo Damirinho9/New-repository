@@ -1,0 +1,64 @@
+name: 7330744 node db index probe
+
+on:
+  push:
+    branches: [multisim-7330744-dbnode]
+    paths:
+      - ".github/workflows/7330744-dbnode.yml"
+  workflow_dispatch:
+
+jobs:
+  dbindex:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NI Multisim 14.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          New-Item -ItemType Directory -Force dbnode-out | Out-Null
+          $installer=Join-Path $env:RUNNER_TEMP 'ni-cds-educational_14.3_online.exe'
+          Invoke-WebRequest 'https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe' -OutFile $installer -UseBasicParsing
+          $sig=Get-AuthenticodeSignature $installer
+          if($sig.Status -ne 'Valid'){ throw 'invalid NI signature' }
+          $p=Start-Process $installer -ArgumentList @('--quiet','--accept-eulas','--prevent-reboot') -PassThru
+          if(-not $p.WaitForExit(480000)){ try{Stop-Process -Id $p.Id -Force}catch{} }
+          $db="$env:PROGRAMDATA\National Instruments\Circuit Design Suite\14.3\database\MSCOMP_S.PRD"
+          if(-not (Test-Path $db)){ throw "DB absent: $db" }
+          "db=$db size=$((Get-Item $db).Length)" | Out-File dbnode-out\info.txt
+
+      - name: Install decoder package
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          npm install -g electronics-workbench-decoder@0.4.1
+          $root=(npm root -g).Trim()
+          "npm_root=$root" | Add-Content dbnode-out\info.txt
+          Get-ChildItem "$root\electronics-workbench-decoder\dist" | Select-Object Name,Length | Out-String | Add-Content dbnode-out\info.txt
+
+      - name: Clone MultisimForge for dbindex helper
+        shell: powershell
+        run: |
+          git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+
+      - name: Read Multisim master database with Node MDB reader
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $db="$env:PROGRAMDATA\National Instruments\Circuit Design Suite\14.3\database\MSCOMP_S.PRD"
+          $root=(npm root -g).Trim()
+          node "$env:RUNNER_TEMP\MultisimForge\tools\dbindex.js" "$db" "$env:GITHUB_WORKSPACE\dbnode-out\db_index.json" "$root\electronics-workbench-decoder" 2>&1 | Tee-Object -FilePath dbnode-out\dbindex-console.txt
+          if($LASTEXITCODE -ne 0){ throw "node dbindex exit=$LASTEXITCODE" }
+          python -c "import json; p=r'dbnode-out/db_index.json'; d=json.load(open(p,encoding='utf-8')); print('count',len(d)); terms=['FNR','VARIST','MOV','RB154','W04M','W10M','BRIDGE','RECTIFIER','SCR','THYRIST','2N506','C106','2N7000','MOSFET','PHOTO','PHOTODIODE','LED','FUSE','CONNECTOR']; [(print('\n###',t), [print(k,d[k]) for k in list(d) if t.lower() in k.lower()][:30]) for t in terms]" | Out-File -Encoding utf8 dbnode-out\matches.txt
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-dbnode
+          path: dbnode-out/
+          if-no-files-found: warn
+          retention-days: 7
