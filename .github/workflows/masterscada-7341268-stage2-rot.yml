@@ -1,0 +1,134 @@
+name: MasterSCADA 7341268 Stage 2 ROT probe
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-rot.yml"
+  workflow_dispatch:
+
+jobs:
+  rot:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\msrot" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Create native VAV and launch it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Continue"
+          $baseProjects="C:\MasterSCADA Projects\Projects"
+          $id="7341268_Variant7"
+          $folder=Join-Path $baseProjects $id
+          if(Test-Path $folder){Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue}
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          $target=Join-Path $folder "$id.vav"
+          $app=New-Object -ComObject MasterSCADA.Application
+          try { try{$null=$app.CreateProjectTemp(1,$baseProjects,$id,"Система водяного отопления - вариант 7","")}catch{} }
+          finally { try{$app.ExitScada()}catch{}; try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{} }
+          Start-Sleep -Seconds 3
+          if(!(Test-Path $target)){throw "VAV not created"}
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $p=Start-Process $exe -ArgumentList @($target) -PassThru
+          "MASTER_PID=$($p.Id)" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\msrot\launch.txt"
+          Start-Sleep -Seconds 12
+          "MASTER_ALIVE=$(($null -ne (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)))" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\msrot\launch.txt"
+
+      - name: Compile ROT scanner
+        shell: pwsh
+        run: |
+          $src=@'
+          using System;
+          using System.Runtime.InteropServices;
+          using System.Runtime.InteropServices.ComTypes;
+          using System.Collections.Generic;
+          using System.IO;
+
+          public static class RotScan {
+            [DllImport("ole32.dll")]
+            static extern int GetRunningObjectTable(int reserved, out IRunningObjectTable prot);
+            [DllImport("ole32.dll")]
+            static extern int CreateBindCtx(int reserved, out IBindCtx ppbc);
+
+            public static string Scan() {
+              var sw=new StringWriter();
+              IRunningObjectTable rot;
+              int hr=GetRunningObjectTable(0,out rot);
+              sw.WriteLine("GetRunningObjectTable hr="+hr);
+              rot.EnumRunning(out IEnumMoniker enumMon);
+              var mons=new IMoniker[1];
+              IntPtr fetched=IntPtr.Zero;
+              int i=0;
+              while(enumMon.Next(1,mons,fetched)==0) {
+                i++;
+                IBindCtx ctx; CreateBindCtx(0,out ctx);
+                string name="";
+                try { mons[0].GetDisplayName(ctx,null,out name); } catch(Exception ex){name="<name error "+ex.Message+">";}
+                sw.WriteLine("ROT["+i+"]="+name);
+                object obj=null;
+                try {
+                  rot.GetObject(mons[0],out obj);
+                  sw.WriteLine("  TYPE="+(obj==null?"<null>":obj.GetType().FullName));
+                  if(obj!=null) {
+                    try {
+                      dynamic d=obj;
+                      object cur=d.CurrentProject;
+                      sw.WriteLine("  HAS_CurrentProject=true CUR_NULL="+(cur==null));
+                      try { sw.WriteLine("  Projects.Count="+d.Projects.Count); } catch(Exception ex){ sw.WriteLine("  Projects.Count ERR="+ex.Message); }
+                      if(cur!=null) {
+                        dynamic p=cur;
+                        try{sw.WriteLine("  PROJECT.Name="+p.Name);}catch(Exception ex){sw.WriteLine("  PROJECT.Name ERR="+ex.Message);}
+                        try{sw.WriteLine("  PROJECT.Path="+p.Path);}catch(Exception ex){sw.WriteLine("  PROJECT.Path ERR="+ex.Message);}
+                        try{sw.WriteLine("  PROJECT.ComputerCount="+p.ComputerCount);}catch(Exception ex){sw.WriteLine("  PROJECT.ComputerCount ERR="+ex.Message);}
+                      }
+                    } catch(Exception ex) {
+                      sw.WriteLine("  CurrentProject probe ERR="+ex.GetType().FullName+": "+ex.Message);
+                    }
+                  }
+                } catch(Exception ex) { sw.WriteLine("  GetObject ERR="+ex.Message); }
+                try{ if(obj!=null && Marshal.IsComObject(obj)) Marshal.FinalReleaseComObject(obj);}catch{}
+                try{Marshal.FinalReleaseComObject(ctx);}catch{}
+                try{Marshal.FinalReleaseComObject(mons[0]);}catch{}
+              }
+              sw.WriteLine("COUNT="+i);
+              return sw.ToString();
+            }
+          }
+          '@
+          Add-Type -TypeDefinition $src -Language CSharp
+          [RotScan]::Scan() | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\msrot\rot.txt"
+
+      - name: Stop MasterSCADA and copy VAV
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process MasterSCADA -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          $src="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          $dst="$env:GITHUB_WORKSPACE\msrot\7341268_Variant7"
+          if(Test-Path $src){Copy-Item $src $dst -Recurse -Force}
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-rot
+          path: msrot/**
+          if-no-files-found: warn
