@@ -1,0 +1,106 @@
+name: KOMPAS full GUI automation Work1 v6
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/kompas-fullgui-v6.yml'
+      - 'kompas-linux/build_variant06_python.py'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Install KOMPAS v25
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2             libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main'             | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+
+      - name: Launch full KOMPAS automation under Xvfb
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/kKompas" /tmp/kHome
+
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             /tmp/kHome -automation >/tmp/kompas-full.out 2>/tmp/kompas-full.err &
+          WRAP=$!
+          echo "$WRAP" >/tmp/wrap.pid
+
+          KP=""
+          for i in $(seq 1 90); do
+            sleep 1
+            KP=$(pgrep -x kHome | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          echo "KPID=$KP"
+          test -n "$KP"
+
+          for i in $(seq 1 90); do
+            sleep 1
+            ss -ltnp >/tmp/sockets.txt || true
+            if grep -q "kHome" /tmp/sockets.txt; then break; fi
+          done
+          cat /tmp/sockets.txt
+          grep -q "kHome" /tmp/sockets.txt
+
+          python3 - <<'PY'
+          import ksapi, time
+          from constants import constants as c
+          app=None
+          for _ in range(30):
+              app=ksapi.GetKompas()
+              if app: break
+              time.sleep(1)
+          print("APP",app)
+          if not app: raise SystemExit("No app")
+          print(app.GetApplicationName(True))
+          doc=app.GetDocuments().Add(c.ksDocumentFragment, True)
+          print("SMOKE_DOC",doc)
+          if not doc: raise SystemExit("Documents.Add failed")
+          d2=ksapi.IKompasDocument2D(doc)
+          v=d2.GetViewsAndLayersManager().GetViews().GetActiveView()
+          dc=ksapi.IDrawingContainer(v)
+          s=dc.GetLineSegments().Add()
+          print("SMOKE_SEG",s)
+          if not s: raise SystemExit("Line Add failed")
+          s.SetX1(0);s.SetY1(0);s.SetX2(10);s.SetY2(0)
+          if not s.Update(): raise SystemExit("Line update failed")
+          doc.Close(c.kdDoNotSaveChanges)
+          PY
+
+      - name: Build variant 6
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 kompas-linux/build_variant06_python.py 2>&1 | tee /tmp/build-v6.out
+          OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          test -s "$OUT"
+          grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_python.log
+          mkdir -p result
+          cp "$OUT" result/
+          cp /tmp/work1_v6_python.log result/
+          cp /tmp/build-v6.out result/
+          sha256sum "$OUT"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-work1-v6-fullgui
+          if-no-files-found: ignore
+          path: result/**
