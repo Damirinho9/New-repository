@@ -1,4 +1,4 @@
-name: MasterSCADA 7341268 Stage 2 ROT probe
+name: MasterSCADA 7341268 Stage 2 ROT probe\n# rerun
 
 on:
   push:
