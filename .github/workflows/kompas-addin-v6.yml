@@ -1,0 +1,158 @@
+name: KOMPAS AddIn native Work1 variant06
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - 'kompas-linux/work1_variant06_plugin.cpp'
+      - '.github/workflows/kompas-addin-v6.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Install KOMPAS v25 SDK and build tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox xdotool dbus-x11 \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 clang-18 libc++-18-dev libc++abi-18-dev
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          test -f /opt/ascon/kompas3d-v25/SDK/KsAPI/Include/KsAPI.h
+          test -x /opt/ascon/kompas3d-v25/Bin/kKompas
+
+      - name: Compile native AddIn
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared \
+            -I"$INC" kompas-linux/work1_variant06_plugin.cpp \
+            -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -ldl \
+            -o /tmp/libwork1_variant06.rtw
+          file /tmp/libwork1_variant06.rtw
+          ldd /tmp/libwork1_variant06.rtw | tee /tmp/plugin-ldd.txt
+          test -s /tmp/libwork1_variant06.rtw
+
+      - name: Inspect Linux KOMPAS registry and register AddIn
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "=== EXISTING REGISTRY ==="
+          find /usr/share/ascon/KOMPAS-3D -maxdepth 4 -type f -path '*/Registry/*' -print 2>/dev/null | head -80 || true
+          grep -R '"AutoConnect"\|"AddIns"\|"Converters"' /usr/share/ascon/KOMPAS-3D -n 2>/dev/null | head -100 || true
+
+          sudo mkdir -p /usr/share/ascon/KOMPAS-3D/25/Registry
+          sudo tee /usr/share/ascon/KOMPAS-3D/25/Registry/Work1Variant06.json >/dev/null <<'JSON'
+          {
+            "AddIns": {
+              "Work1Variant06": {
+                "Path": "/tmp/libwork1_variant06.rtw",
+                "AutoConnect": 1
+              }
+            }
+          }
+          JSON
+
+          mkdir -p "$HOME/.config/ASCON/KOMPAS-3D/25/Registry"
+          cp /usr/share/ascon/KOMPAS-3D/25/Registry/Work1Variant06.json \
+             "$HOME/.config/ASCON/KOMPAS-3D/25/Registry/Work1Variant06.json"
+
+          cat /usr/share/ascon/KOMPAS-3D/25/Registry/Work1Variant06.json
+
+      - name: Launch KOMPAS and wait for native AddIn
+        shell: bash
+        run: |
+          set +e
+          rm -f /tmp/work1_variant06_plugin.log /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export LD_LIBRARY_PATH="$BIN"
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
+            dbus-run-session -- "$BIN/kKompas" >/tmp/kompas-addin.out 2>/tmp/kompas-addin.err &
+          KP=$!
+          echo "WRAPPER_PID=$KP"
+
+          for i in $(seq 1 90); do
+            sleep 2
+            echo "POLL=$i"
+            cat /tmp/work1_variant06_plugin.log 2>/dev/null || true
+            if grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_variant06_plugin.log 2>/dev/null; then
+              echo "PASS_MARKER_FOUND"
+              break
+            fi
+            if [ "$i" = "5" ] || [ "$i" = "10" ]; then
+              DISPLAY=:99 xdotool key Return 2>/dev/null || true
+            fi
+            if ! kill -0 "$KP" 2>/dev/null; then
+              echo "KOMPAS_EXITED"
+              break
+            fi
+          done
+
+          echo "=== PLUGIN LOG ==="
+          cat /tmp/work1_variant06_plugin.log 2>/dev/null || true
+          echo "=== KOMPAS STDOUT ==="
+          tail -200 /tmp/kompas-addin.out 2>/dev/null || true
+          echo "=== KOMPAS STDERR ==="
+          tail -300 /tmp/kompas-addin.err 2>/dev/null || true
+
+          OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          if [ ! -s "$OUT" ]; then
+            echo "RESULT=FAIL_NO_FRW"
+            exit 20
+          fi
+          if ! grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_variant06_plugin.log; then
+            echo "RESULT=FAIL_NO_PARAMETRIC_PASS"
+            exit 21
+          fi
+
+          mkdir -p result
+          cp "$OUT" result/
+          cp /tmp/work1_variant06_plugin.log result/
+          cp /tmp/plugin-ldd.txt result/
+          cp /tmp/kompas-addin.out result/ || true
+          cp /tmp/kompas-addin.err result/ || true
+
+          python3 - <<'PY' | tee result/verification.txt
+          import pathlib,zipfile,hashlib,re
+          p=pathlib.Path('/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw')
+          print('size',p.stat().st_size)
+          print('sha256',hashlib.sha256(p.read_bytes()).hexdigest())
+          print('is_zip',zipfile.is_zipfile(p))
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              print('members',[(i.filename,i.file_size) for i in z.infolist()])
+              assert 'Contents' in z.namelist()
+              assert 'FileInfo' in z.namelist()
+          log=pathlib.Path('/tmp/work1_variant06_plugin.log').read_text(errors='replace')
+          assert 'PARAMETRIC_REBUILD_PASS' in log
+          assert 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' in log
+          print('verification PASS')
+          PY
+
+          kill "$KP" 2>/dev/null || true
+          exit 0
+
+      - name: Upload native result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work1-variant06-native-addin
+          if-no-files-found: ignore
+          path: result/**
