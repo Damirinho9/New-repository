@@ -141,15 +141,7 @@ static bool build(){
 
   log("using system layer 0 for core parametric build");
 
-  auto vl1=doc->AddVariable(L"l1",L1,L"Длина кривошипа AB");
-  auto vl2=doc->AddVariable(L"l2",L2,L"Длина звена CD = 2L");
-  auto vl3=doc->AddVariable(L"l3",L3,L"Длина звена DE");
-  auto vL=doc->AddVariable(L"L",BASE,L"Расстояние AC");
-  auto vfi=doc->AddVariable(L"fi",FI0,L"Угол поворота кривошипа");
-  auto vdx=doc->AddVariable(L"DX",DX,L"Расстояние от D до исследуемой точки X");
-  if(!vl1||!vl2||!vl3||!vL||!vfi||!vdx){log("FAIL variables");return false;}
-  vl2->SetExpression(L"2*L");
-  log("variables created");
+  log("variables will be created by driving dimensions");
 
   P B,C,D,E,X;
   if(!state(FI0,B,C,D,E,X)){log("FAIL initial state");return false;}
@@ -173,12 +165,35 @@ static bool build(){
   if(!constr(crank,ksCHAlignPoints,0,rod,1)){log("FAIL E horizontal A");return false;}
   log("geometric constraints created");
 
+  log("name-valid l1="+std::to_string(doc->IsVariableNameValid(L"l1"))+
+      " l2="+std::to_string(doc->IsVariableNameValid(L"l2"))+
+      " l3="+std::to_string(doc->IsVariableNameValid(L"l3"))+
+      " L="+std::to_string(doc->IsVariableNameValid(L"L"))+
+      " fi="+std::to_string(doc->IsVariableNameValid(L"fi")));
+
   if(!lin_dim(sc,crank,L"l1",L1,0,7)){log("FAIL dim l1");return false;}
   if(!lin_dim(sc,rocker,L"l2",L2,0,-7)){log("FAIL dim l2");return false;}
   if(!lin_dim(sc,rod,L"l3",L3,0,7)){log("FAIL dim l3");return false;}
   if(!lin_dim(sc,baseAC,L"L",BASE,0,-8)){log("FAIL dim L");return false;}
   if(!angle_dim(sc,href,crank,0,FI0)){log("FAIL dim fi");return false;}
-  log("driving dimensions created");
+  log("driving dimensions created; variables="+std::to_string(doc->GetVariablesCount(false)));
+
+  auto vl1=doc->GetVariableByName(false,L"l1");
+  auto vl2=doc->GetVariableByName(false,L"l2");
+  auto vl3=doc->GetVariableByName(false,L"l3");
+  auto vL=doc->GetVariableByName(false,L"L");
+  auto vfi=doc->GetVariableByName(false,L"fi");
+  log(std::string("lookup vars l1=")+(vl1?"1":"0")+
+      " l2="+(vl2?"1":"0")+" l3="+(vl3?"1":"0")+
+      " L="+(vL?"1":"0")+" fi="+(vfi?"1":"0"));
+  if(!vl1||!vl2||!vl3||!vL||!vfi){log("FAIL variables after dimensions");return false;}
+  vl1->SetNote(L"Длина кривошипа AB");
+  vl2->SetNote(L"Длина звена CD = 2L");
+  vl3->SetNote(L"Длина звена DE");
+  vL->SetNote(L"Расстояние AC");
+  vfi->SetNote(L"Угол поворота кривошипа");
+  vl2->SetExpression(L"2*L");
+  log("variable expression l2=2*L set");
 
   if(!doc->UpdateVariables())log("WARN UpdateVariables false");
   if(!doc->CompleteRebuildDocument()){log("FAIL initial complete rebuild");return false;}
