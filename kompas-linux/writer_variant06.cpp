@@ -15,6 +15,11 @@ using namespace ksapi;
 static std::ofstream logstream("/tmp/work1_v6_inject.log", std::ios::out | std::ios::app);
 static void log(const std::string& s){ logstream << s << std::endl; logstream.flush(); }
 
+static IKompasDocumentPtr g_pending_doc{};
+static int g_pending_age=0;
+static bool g_waiting_for_document=false;
+static bool g_writer_done=false;
+
 struct P { double x,y; };
 static constexpr double PI=3.14159265358979323846;
 static constexpr double L1=20.0;
@@ -175,6 +180,60 @@ static bool build(){
   IDrawingContainerPtr dc{};
   ISymbols2DContainerPtr sc{};
 
+
+  g_waiting_for_document=false;
+
+  // A document created from inside the GUI callback may not have its 2D
+  // editing context until the Qt event loop gets control back. Reuse the
+  // same document on the next timer tick instead of creating another one.
+  if(g_pending_doc){
+    log("pending fragment retry age="+std::to_string(g_pending_age));
+    auto cand=g_pending_doc;
+    try{
+      app.SetActiveDocument(cand);
+      cand->SetActive();
+      IKompasDocument2DPtr d2=cand;
+      if(d2){
+        d2->SetParametricMode(true);
+        auto vm=d2->GetViewsAndLayersManager();
+        auto views=vm?vm->GetViews():IViewsPtr{};
+        auto v=views?views->GetActiveView():IViewPtr{};
+        IDrawingContainerPtr dcont=v;
+        ISymbols2DContainerPtr scont=v;
+        auto lines=dcont?dcont->GetLineSegments():ILineSegmentsPtr{};
+        auto probe=lines?lines->Add():ILineSegmentPtr{};
+        if(probe){
+          probe->SetX1(-5);probe->SetY1(-5);probe->SetX2(-1);probe->SetY2(-5);
+          probe->SetStyle(ksCSConstruction);
+          if(probe->Update()){
+            probe->Delete();
+            base=cand; doc=d2; view=v; dc=dcont; sc=scont;
+            g_pending_doc={};
+            g_pending_age=0;
+            log("pending fragment PASS editable");
+          }else{
+            probe->Delete();
+          }
+        }
+      }
+    }catch(...){
+      log("pending fragment retry EXCEPTION");
+    }
+    if(!base){
+      g_pending_age++;
+      if(g_pending_age>20){
+        log("FAIL pending fragment never became editable");
+        try{cand->Close(kdDoNotSaveChanges);}catch(...){}
+        g_pending_doc={};
+        g_pending_age=0;
+        return false;
+      }
+      g_waiting_for_document=true;
+      log("pending fragment still initializing");
+      return false;
+    }
+  }
+
   auto adopt=[&](const std::string& label,const IKompasDocumentPtr& cand)->bool{
     log("candidate "+label+" doc="+(cand?"1":"0"));
     if(!cand) return false;
@@ -203,7 +262,13 @@ static bool build(){
       auto lines=dcont->GetLineSegments();
       if(!lines){log("candidate "+label+" FAIL line collection"); cand->Close(kdDoNotSaveChanges); return false;}
       auto probe=lines->Add();
-      if(!probe){log("candidate "+label+" FAIL probe Add"); cand->Close(kdDoNotSaveChanges); return false;}
+      if(!probe){
+        log("candidate "+label+" probe Add pending");
+        g_pending_doc=cand;
+        g_pending_age=0;
+        g_waiting_for_document=true;
+        return false;
+      }
       probe->SetX1(-5);probe->SetY1(-5);probe->SetX2(-1);probe->SetY2(-5);
       probe->SetStyle(ksCSConstruction);
       if(!probe->Update()){log("candidate "+label+" FAIL probe Update"); probe->Delete(); cand->Close(kdDoNotSaveChanges); return false;}
@@ -218,9 +283,10 @@ static bool build(){
     }
   };
 
-  bool acquired=false;
+  bool acquired=(bool)base;
   if(!acquired) acquired=adopt("AddDefault-visible", docs->AddWithDefaultSettings(ksDocumentFragment,true));
   if(!acquired) acquired=adopt("AddDefault-invisible", docs->AddWithDefaultSettings(ksDocumentFragment,false));
+  if(g_waiting_for_document) return false;
   if(!acquired) acquired=adopt("Add-visible", docs->Add(ksDocumentFragment,true));
   if(!acquired) acquired=adopt("Add-invisible", docs->Add(ksDocumentFragment,false));
   if(!acquired) acquired=adopt("Template-visible", docs->AddNewDocumentFromTemplate(templatePath,true));
@@ -383,16 +449,24 @@ static bool build(){
 
 extern "C" __attribute__((visibility("default")))
 int run_variant06_writer(){
-  int once=open("/tmp/work1_writer_once.lock",O_WRONLY|O_CREAT|O_EXCL,0644);
-  if(once<0){
-    return 2;
+  if(g_writer_done){
+    return 0;
   }
-  close(once);
   log("run_variant06_writer entry");
   bool ok=false;
+  g_waiting_for_document=false;
   try{ok=build();}
   catch(const std::exception& e){log(std::string("EXCEPTION ")+e.what());}
   catch(...){log("EXCEPTION unknown");}
-  log(ok?"RUN_WRITER_PASS":"RUN_WRITER_FAIL");
-  return ok?0:1;
+  if(ok){
+    g_writer_done=true;
+    log("RUN_WRITER_PASS");
+    return 0;
+  }
+  if(g_waiting_for_document){
+    log("RUN_WRITER_PENDING");
+    return 3;
+  }
+  log("RUN_WRITER_FAIL");
+  return 1;
 }
