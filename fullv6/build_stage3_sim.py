@@ -1,7 +1,7 @@
 import json, math, sys, hashlib, os
 from pathlib import Path
 from multisimforge import builder, check, xmlio
-from multisimforge.parts import Library
+from multisimforge.parts import Library\nfrom stage3_model_patch import patch_models
 
 ROOT=Path(__file__).resolve().parent.parent
 OUT=ROOT/"stage3-out"
@@ -21,7 +21,7 @@ kp501_pref=os.environ.get("KP501_MODEL","2N6659")
 models={
  "photo":pick("PHOTO_DIODE_RATED","PHOTODIODE","DIODE_RATED"),
  "kp501":pick(kp501_pref,"2N6659","MTD4N20E","IRFD110"),
- "kp707":pick("BUZ90","IRFD110","2N6659"),
+ "kp707":pick("IRFD110"),
  "zener12":pick("1N4742A","DIODE_RATED"),
  "rectifier":pick("1N4007","MUR1510G","1N4003G","1N4001"),
  "scr":pick("SCR"),
