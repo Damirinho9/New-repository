@@ -7,6 +7,7 @@ on:
       - '.github/workflows/build-native-frw-v6-final.yml'
       - 'kompas-linux/writer_variant06.cpp'
       - 'kompas-linux/bootstrap_variant06.c'
+      - 'kompas-linux/bootstrap_variant06_qt.cpp'
   workflow_dispatch:
 
 jobs:
@@ -53,29 +54,34 @@ jobs:
           grep -R -n 'mirror.yandex.ru\|ftp.altlinux.org\|repo.ascon.ru' /etc/apt 2>/dev/null || true
 
           apt-get update
-          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 ascon-kompas-sdk-v25 clang18.1 libcxx-devel libcxxabi-devel || true
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 ascon-kompas-sdk-v25 clang18.1 libcxx-devel libcxxabi-devel qt6-base-devel pkg-config || true
 
           test -x /opt/ascon/kompas3d-v25/Bin/kKompas
           test -f /opt/ascon/kompas3d-v25/Bin/libksAPI.so
 
           wget -O /tmp/writer_variant06.cpp             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/writer_variant06.cpp'
-          wget -O /tmp/bootstrap_variant06.c             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/bootstrap_variant06.c'
+          wget -O /tmp/bootstrap_variant06_qt.cpp             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/bootstrap_variant06_qt.cpp'
           test -s /tmp/writer_variant06.cpp
-          test -s /tmp/bootstrap_variant06.c
+          test -s /tmp/bootstrap_variant06_qt.cpp
 
           INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
           BIN=/opt/ascon/kompas3d-v25/Bin
           test -f "$INC/KsAPI.h"
 
           clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" /tmp/writer_variant06.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/writer_variant06.so
-          clang-18 -O2 -fPIC -shared -pthread /tmp/bootstrap_variant06.c -ldl             -o /tmp/bootstrap_variant06.so
+          clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread \
+            $(pkg-config --cflags Qt6Core) /tmp/bootstrap_variant06_qt.cpp \
+            $(pkg-config --libs Qt6Core) -ldl -lc++abi \
+            -o /tmp/bootstrap_variant06.so
 
           echo "=== WRITER LDD ==="
           ldd /tmp/writer_variant06.so || true
           echo "=== BOOTSTRAP LDD ==="
           ldd /tmp/bootstrap_variant06.so || true
 
-          rm -f /tmp/work1_v6_inject.log /tmp/work1_bootstrap.log                 /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw /tmp/kompas_v6.log
+          rm -f /tmp/work1_v6_inject.log /tmp/work1_bootstrap.log \
+                /tmp/work1_bootstrap_once.lock /tmp/work1_writer_once.lock \
+                /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw /tmp/kompas_v6.log
 
           export LANG=C.UTF-8
           export LC_ALL=C.UTF-8
