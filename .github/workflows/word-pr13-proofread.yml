@@ -90,15 +90,13 @@ jobs:
                 $find.Forward = $true
                 $find.Wrap = 0
                 if (-not $find.Execute()) { throw "Word did not find: $($item.wrong)" }
-                if ([string]$item.type -eq "орфографическая") {
-                  try {
-                    $sugs = $word.GetSpellingSuggestions([string]$item.wrong)
-                    $names = @()
-                    foreach ($s in $sugs) { $names += $s.Name }
-                    $log.Add("WORD_SUGGEST:$($item.wrong) -> $($names -join '; ')")
-                  } catch {
-                    $log.Add("WORD_SUGGEST:$($item.wrong) -> unavailable")
-                  }
+                try {
+                  $sugs = $word.GetSpellingSuggestions([string]$item.wrong)
+                  $names = @()
+                  foreach ($s in $sugs) { $names += $s.Name }
+                  $log.Add("WORD_SUGGEST:$($item.wrong) -> $($names -join '; ')")
+                } catch {
+                  $log.Add("WORD_SUGGEST:$($item.wrong) -> unavailable")
                 }
                 $rng.Text = [string]$item.correct
                 $fixed++
