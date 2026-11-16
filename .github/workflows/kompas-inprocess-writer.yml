@@ -1,0 +1,105 @@
+name: Build native parametric Work1 via KOMPAS in-process KsAPI
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/kompas-inprocess-writer.yml'
+      - 'kompas-linux/inject_writer.cpp'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      image: alt:p11
+    timeout-minutes: 20
+    steps:
+      - name: Install KOMPAS v25, SDK and matching Clang/libc++
+        shell: bash
+        run: |
+          set -uxo pipefail
+          apt-get update
+          apt-get install -y wget ca-certificates fontconfig dbus procps file coreutils
+          bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+          apt-get update
+          apt-get install -y clang18.1 libcxx-devel libcxxabi-devel || true
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-sdk-v25 ascon-kompas-v25 || true
+          test -x /opt/ascon/kompas3d-v25/Bin/kKompas
+          test -f /opt/ascon/kompas3d-v25/Bin/libksAPI.so
+          test -f /opt/ascon/kompas3d-v25/SDK/KsAPI/Include/KsAPI.h
+          command -v clang++-18
+          echo "KOMPAS and SDK ready"
+
+      - name: Fetch and compile in-process writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          wget -O /tmp/inject_writer.cpp             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/inject_writer.cpp'
+          clang++-18 -std=c++20 -fPIC -shared             -fms-extensions -fvisibility-ms-compat -stdlib=libc++             -I/opt/ascon/kompas3d-v25/SDK/KsAPI/Include             /tmp/inject_writer.cpp             -L/opt/ascon/kompas3d-v25/Bin             -Wl,-rpath,/opt/ascon/kompas3d-v25/Bin             -Wl,--no-undefined -stdlib=libc++             -lksAPI -latomic -ldl -pthread             -o /tmp/inject_writer.so
+          file /tmp/inject_writer.so
+          ldd /tmp/inject_writer.so | tee /tmp/inject_ldd.txt
+          ! grep -q 'not found' /tmp/inject_ldd.txt
+
+      - name: Launch real KOMPAS with writer injected
+        shell: bash
+        run: |
+          set -uxo pipefail
+          rm -f /tmp/Work1_Parametric_Native.frw /tmp/work1_inject.log
+          export QT_QPA_PLATFORM=offscreen
+          export LANG=C.UTF-8
+          export LC_ALL=C.UTF-8
+          export LD_LIBRARY_PATH=/opt/ascon/kompas3d-v25/Bin
+          cd /opt/ascon/kompas3d-v25/Bin
+
+          dbus-run-session -- env             LD_PRELOAD=/tmp/inject_writer.so             QT_QPA_PLATFORM=offscreen             LANG=C.UTF-8 LC_ALL=C.UTF-8             LD_LIBRARY_PATH=/opt/ascon/kompas3d-v25/Bin             ./kKompas >/tmp/kompas_inprocess.log 2>&1 &
+          WRAPPER=$!
+
+          ok=0
+          for i in $(seq 1 100); do
+            echo "probe=$i"
+            cat /tmp/work1_inject.log 2>/dev/null || true
+            if [ -s /tmp/Work1_Parametric_Native.frw ] &&                grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_FRW' /tmp/work1_inject.log 2>/dev/null; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+
+          echo '=== INJECT LOG ==='
+          cat /tmp/work1_inject.log 2>/dev/null || true
+          echo '=== KOMPAS LOG TAIL ==='
+          tail -300 /tmp/kompas_inprocess.log 2>/dev/null || true
+          pkill -f '/opt/ascon/kompas3d-v25/Bin/kKompas' || true
+          kill "$WRAPPER" 2>/dev/null || true
+
+          test "$ok" = "1"
+          test -s /tmp/Work1_Parametric_Native.frw
+          file /tmp/Work1_Parametric_Native.frw
+          sha256sum /tmp/Work1_Parametric_Native.frw
+
+          python3 - <<'PY'
+          import zipfile,hashlib,pathlib
+          p=pathlib.Path('/tmp/Work1_Parametric_Native.frw')
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              print('members',names)
+              assert 'Contents' in names and 'FileInfo' in names
+          print('size',p.stat().st_size)
+          print('sha256',hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+
+          echo '=== FRW_BASE64_BEGIN ==='
+          base64 -w 76 /tmp/Work1_Parametric_Native.frw
+          echo '=== FRW_BASE64_END ==='
+
+      - name: Print proof
+        if: always()
+        shell: bash
+        run: |
+          echo '=== inject ==='
+          cat /tmp/work1_inject.log 2>/dev/null || true
+          echo '=== file ==='
+          ls -l /tmp/Work1_Parametric_Native.frw 2>/dev/null || true
+          sha256sum /tmp/Work1_Parametric_Native.frw 2>/dev/null || true
