@@ -32,16 +32,19 @@ def build_and_sim(label,uA,duration=0.40,rate=7000):
     if not csvfile.exists():
         rec["failure"]="no_csv"
         return rec
-    rows=[]
+    all_rows=[]
     with csvfile.open(newline="",encoding="utf-8") as f:
         rd=csv.DictReader(f)
         for r in rd:
             try:
-                vals={k:float(v) for k,v in r.items()}
+                all_rows.append({k:float(v) for k,v in r.items()})
             except Exception:
                 continue
-            if vals["time"] >= duration*0.55:
-                rows.append(vals)
+    rec["last_time_s"]=all_rows[-1]["time"] if all_rows else None
+    if not all_rows or rec["last_time_s"] < duration*0.99:
+        rec["failure"]="incomplete_transient"
+        return rec
+    rows=[r for r in all_rows if r["time"] >= duration*0.55]
     if not rows:
         rec["failure"]="no_tail"
         return rec
