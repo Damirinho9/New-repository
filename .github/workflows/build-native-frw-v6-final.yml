@@ -71,7 +71,8 @@ jobs:
           clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" /tmp/writer_variant06.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/writer_variant06.so
           clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread \
             $(pkg-config --cflags Qt6Core) /tmp/bootstrap_variant06_qt.cpp \
-            $(pkg-config --libs Qt6Core) -ldl -lc++abi \
+            -L"$BIN" -Wl,-rpath,"$BIN" -Wl,-rpath-link,"$BIN" \
+            -Wl,-l:libQt6Core.so.6 -ldl -lc++abi \
             -o /tmp/bootstrap_variant06.so
 
           echo "=== WRITER LDD ==="
