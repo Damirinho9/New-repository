@@ -37,6 +37,10 @@ jobs:
           apt-get update
           apt-get install -y wget ca-certificates fontconfig dbus             libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util             libXv libXScrnSaver libxkbfile libfontenc || true
 
+          echo "=== LOCALES BEFORE KOMPAS ==="
+          locale -a | grep -Ei 'ru_RU.*1251|ru_RU.*utf' || true
+          test -d /usr/share/i18n/charmaps || true
+
           bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
 
           # ASCON script can rewrite ALT sources. Force Yandex again before update.
