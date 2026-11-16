@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: alt:p11
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - name: Install KOMPAS runtime and run injected writer
         shell: bash
