@@ -1,7 +1,8 @@
 import json, math, sys, hashlib, os
 from pathlib import Path
 from multisimforge import builder, check, xmlio
-from multisimforge.parts import Library\nfrom stage3_model_patch import patch_models
+from multisimforge.parts import Library
+from stage3_model_patch import patch_models
 
 ROOT=Path(__file__).resolve().parent.parent
 OUT=ROOT/"stage3-out"
@@ -142,6 +143,7 @@ res=builder.build(spec,lib=lib,allow_fallback=True,auto_repair=True)
 
 # Patch visible labels so test-bench parts and SIM-only capacitor values cannot be confused with the source BOM.
 root=xmlio.load(TARGET)
+model_patch_notes=patch_models(root, xmlio)
 comp_ref={}
 for item in root.iter("Item"):
     if item.get("Class")=="CiComponent" and len(item):
@@ -151,9 +153,9 @@ labels={
  "C1":"K50-35 | SIM-only 47 nF",
  "C2":"K73 | SIM-only 1 uF",
  "C3":"K73 | SIM-only 47 nF",
- "VT1":f"KP501A -> {models['kp501']}",
- "VT2":f"KP501A -> {models['kp501']}",
- "VT3":f"KP707V2 -> {models['kp707']}",
+ "VT1":"KP501A -> ZVN2120 datasheet-fit SIM model",
+ "VT2":"KP501A -> ZVN2120 datasheet-fit SIM model",
+ "VT3":"KP707V2 -> datasheet-fit SIM model",
  "VD2":f"KS512A -> {models['zener12']}",
  "VD3":f"KD243Zh -> {models['rectifier']}",
  "VD4":f"KD243Zh -> {models['rectifier']}",
@@ -181,10 +183,12 @@ manifest={
  "state":state,"photocurrent_A":iph,"photocurrent_uA":iph*1e6,
  "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"control_supply_V":12,"control_series_Ohm":100,"Rline_Ohm":10,"Rload_Ohm":2200},
  "models":models,
+ "model_patch_notes":model_patch_notes,
  "source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},
  "check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
 (OUT/f"{TARGET.stem}_netlist.txt").write_text(spec["netlist"],encoding="utf-8")
-# Geometry issues are recorded in the manifest but do not block native simulation;\n# Multisim electrical nodes remain explicit CiNode objects. Final selected states are checked again after simulation.
+# Geometry issues are recorded in the manifest but do not block native simulation.
+# Multisim electrical nodes remain explicit CiNode objects. Final selected states are checked again after simulation.
 print(json.dumps(manifest,ensure_ascii=False,indent=2))
