@@ -1,0 +1,107 @@
+name: 7330744 stage3 real Multisim sweep
+
+on:
+  push:
+    branches: [multisim-7330744-stage3-sim]
+    paths:
+      - ".github/workflows/7330744-stage3-sim.yml"
+      - "fullv6/build_stage3_sim.py"
+      - "fullv6/scan_stage3.py"
+  workflow_dispatch:
+
+concurrency:
+  group: 7330744-stage3-sim
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download harvested Multisim library
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-full-v6-discovery
+          path: dep-library
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43835690292
+
+      - name: Download decoded master DB index
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-dbnode
+          path: dep-db
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43836264959
+
+      - name: Prepare reusable library
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force fullv6-lib,stage3-out | Out-Null
+          Expand-Archive -Path dep-library\parts-library.zip -DestinationPath fullv6-lib -Force
+          Copy-Item dep-db\db_index.json fullv6-lib\db_index.json -Force
+
+      - name: Install NI Multisim 14.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $installer=Join-Path $env:RUNNER_TEMP 'ni-cds-educational_14.3_online.exe'
+          Invoke-WebRequest 'https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe' -OutFile $installer -UseBasicParsing
+          if((Get-AuthenticodeSignature $installer).Status -ne 'Valid'){throw 'Invalid NI signature'}
+          $p=Start-Process $installer -ArgumentList @('--quiet','--accept-eulas','--prevent-reboot') -PassThru
+          if(-not $p.WaitForExit(480000)){try{Stop-Process -Id $p.Id -Force}catch{}}
+          $ms=Get-ChildItem 'C:\Program Files (x86)\National Instruments','C:\Program Files\National Instruments' -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue|Select-Object -First 1
+          if(-not $ms){throw 'Multisim.exe absent'}
+          $ms.FullName|Out-File stage3-out\multisim-path.txt
+
+      - name: Install x86 Python and MultisimForge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $py=Join-Path $env:RUNNER_TEMP 'python-3.11.9-x86.exe'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.11.9/python-3.11.9.exe' -OutFile $py -UseBasicParsing
+          if((Get-AuthenticodeSignature $py).Status -ne 'Valid'){throw 'Invalid Python signature'}
+          $p=Start-Process $py -ArgumentList @('/quiet','InstallAllUsers=1','TargetDir=C:\Python311-32','PrependPath=0','Include_launcher=0','Include_test=0','Include_pip=1') -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "Python x86 installer exit=$($p.ExitCode)"}
+          & 'C:\Python311-32\python.exe' -m pip install --disable-pip-version-check --quiet pywin32
+          git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m pip install --disable-pip-version-check -e ".[capture]"
+
+      - name: Fetch simulation models
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Continue'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $models=@('PHOTO_DIODE_RATED','MTD4N20E','BUZ90','1N4742A','1N4007','MDA2504','30_AMP','HDR1X5')
+          foreach($m in $models){
+            python -m multisimforge parts fetch "$m" 2>&1 | Add-Content "$env:GITHUB_WORKSPACE\stage3-out\fetch.txt"
+          }
+
+      - name: Sweep photocurrent in real Multisim engine
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Continue'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          $env:PYTHONPATH="$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:GITHUB_WORKSPACE"
+          python fullv6\scan_stage3.py 2>&1 | Tee-Object -FilePath stage3-out\scan-console.txt
+          "scan_rc=$LASTEXITCODE" | Out-File stage3-out\scan-rc.txt
+          exit 0
+
+      - name: Upload sweep diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-stage3-sweep
+          path: stage3-out/
+          if-no-files-found: error
+          retention-days: 7
