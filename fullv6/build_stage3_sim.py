@@ -19,11 +19,11 @@ def pick(*names):
 
 models={
  "photo":pick("PHOTO_DIODE_RATED","PHOTODIODE","DIODE_RATED"),
- "kp501":pick("MTD4N20E","IRFD110","2N6659"),
+ "kp501":pick("ZVN0124A","ZVN2106A","MTD4N20E","IRFD110","2N6659"),
  "kp707":pick("BUZ90","IRFD110","2N6659"),
  "zener12":pick("1N4742A","DIODE_RATED"),
  "rectifier":pick("1N4007","MUR1510G","1N4003G","1N4001"),
- "scr":pick("SCR"),
+ "scr":pick("2N6509","BT151_500R","SCR"),
  "bridge":pick("MDA2504","1B4B42","3N246"),
  "fuse":pick("30_AMP","FUSE_RATED","RESISTOR_VIRTUAL"),
  "led":pick("LED_red","LED_RED_RATED","LED"),
