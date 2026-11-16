@@ -53,8 +53,9 @@ jobs:
           export LANG=C.UTF-8
           export LC_ALL=C.UTF-8
           unset QT_QPA_PLATFORM
+          export LD_LIBRARY_PATH="$BIN${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-          dbus-run-session -- xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             ${KOMPAS_EXE:-$KOMPAS_LAUNCHER} >/tmp/kompas-live.out 2>/tmp/kompas-live.err &
+          dbus-run-session -- xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             ${KOMPAS_EXE:-$KOMPAS_LAUNCHER} -APIServer=10500 >/tmp/kompas-live.out 2>/tmp/kompas-live.err &
           WRAPPER_PID=$!
           echo "$WRAPPER_PID" >/tmp/wrapper.pid
 
@@ -71,10 +72,10 @@ jobs:
           for i in $(seq 1 60); do
             sleep 1
             ss -ltnp >/tmp/kompas-sockets.txt || true
-            if grep -Eq 'kKompas|kHome|kStudy' /tmp/kompas-sockets.txt; then break; fi
+            if grep -q ':10500' /tmp/kompas-sockets.txt; then break; fi
           done
           cat /tmp/kompas-sockets.txt
-          grep -Eq 'kKompas|kHome|kStudy' /tmp/kompas-sockets.txt
+          grep -q ':10500' /tmp/kompas-sockets.txt
 
       - name: Build native parametric FRW
         shell: bash
@@ -82,6 +83,7 @@ jobs:
           set -euxo pipefail
           BIN="$KOMPAS_BIN"
           export PYTHONPATH="$BIN"
+          export KOMPAS_PORT=10500
           python3 kompas-linux/build_variant06_python.py 2>&1 | tee /tmp/build-v6.out
 
           OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
