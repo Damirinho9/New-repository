@@ -38,7 +38,7 @@ jobs:
           test -f /opt/ascon/kompas3d-v25/SDK/KsAPI/Include/KsAPI.h
           command -v clang++-18
 
-          wget -O /tmp/inject_variant06.cpp             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/inject_variant06.cpp'
+          wget -O /tmp/inject_variant06_lazy.cpp             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/inject_variant06_lazy.cpp'
 
           INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
           BIN=/opt/ascon/kompas3d-v25/Bin
