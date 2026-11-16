@@ -58,8 +58,8 @@ static ILayerPtr layer(const IViewPtr& view,int n,const std::wstring& name){
 }
 
 static ILineSegmentPtr line(const IDrawingContainerPtr& dc,P a,P b,int lay,int style){
-  auto col=dc->GetLineSegments(); if(!col) return {};
-  auto s=col->Add(); if(!s) return {};
+  auto col=dc->GetLineSegments(); if(!col){ log("line FAIL GetLineSegments"); return {}; }
+  auto s=col->Add(); if(!s){ log("line FAIL Add"); return {}; }
   s->SetX1(a.x); s->SetY1(a.y); s->SetX2(b.x); s->SetY2(b.y);
   if(lay>0) s->SetLayerNumber(lay);
   s->SetStyle(style);
@@ -135,7 +135,7 @@ static bool build(){
   app.SetHideMessage(ksHideMessageYes);
 
   auto docs=app.GetDocuments(); if(!docs){log("FAIL docs");return false;}
-  auto base=docs->Add(ksDocumentFragment,false); if(!base){log("FAIL add");return false;}
+  auto base=docs->Add(ksDocumentFragment,true); if(!base){log("FAIL add");return false;}
   IKompasDocument2DPtr doc=base; if(!doc){log("FAIL cast");return false;}
   app.SetActiveDocument(base); doc->SetParametricMode(true);
 
