@@ -90,6 +90,25 @@ jobs:
 
               apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 || true
 
+              # Initialize a deterministic KOMPAS profile before loading KsAPI.
+              # The first launch creates missing UI/config state; resource lookup
+              # otherwise falls back to /root/.config and emits QtResources.bin errors.
+              export HOME=/root
+              export XDG_CONFIG_HOME=/root/.config
+              CFG=/root/.config/ascon/KOMPAS-3D/25
+              mkdir -p "$CFG"
+              BIN=/opt/ascon/kompas3d-v25/Bin
+              RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+              if [ -n "$RES" ] && [ ! -e "$CFG/QtResources.bin" ]; then
+                cp -f "$RES" "$CFG/QtResources.bin"
+              fi
+              # Prime the document/UI subsystem once, then terminate the
+              # non-injected process before the actual KsAPI run.
+              cd "$BIN"
+              timeout 20s dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config QT_QPA_PLATFORM=offscreen ./kKompas -automation >/tmp/kompas-profile-init.out 2>/tmp/kompas-profile-init.err || true
+              pkill -f "$BIN/kKompas" 2>/dev/null || true
+              test -d "$CFG"
+
               BIN=/opt/ascon/kompas3d-v25/Bin
               test -x "$BIN/kKompas"
               test -f "$BIN/libksAPI.so"
