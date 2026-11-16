@@ -108,14 +108,13 @@ static ILineDimensionPtr lin_dim(const ISymbols2DContainerPtr& sc,const ILineSeg
   if(!d->Update()){ log("lin_dim "+vn+" FAIL Update"); return {}; }
   log("lin_dim "+vn+" dimension Update PASS");
 
-  // Measured KOMPAS route for a linear driving dimension:
-  // dimension object -> ksCAssociation(partner array containing measured segment)
-  // -> ksCFixedDim -> ksCDimWithVariable.
-  if(!constr(d,ksCAssociation,-1,seg,-1)){
-    log("lin_dim "+vn+" FAIL ksCAssociation");
+  // Native v25 route: let the dimension create its witness-point
+  // associations itself, then make it driving.
+  if(!d->Associate()){
+    log("lin_dim "+vn+" FAIL Associate");
     return {};
   }
-  log("lin_dim "+vn+" association PASS");
+  log("lin_dim "+vn+" Associate PASS");
 
   if(!constr(d,ksCFixedDim)){
     log("lin_dim "+vn+" FAIL ksCFixedDim");
@@ -168,9 +167,8 @@ static bool build(){
   app.SetHideMessage(ksHideMessageYes);
 
   auto docs=app.GetDocuments(); if(!docs){log("FAIL docs");return false;}
-  const std::wstring templatePath=L"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw";
-  auto base=docs->Open(templatePath,false,false);
-  if(!base){log("FAIL open stock fragment template");return false;}
+  auto base=docs->Add(ksDocumentFragment,false);
+  if(!base){log("FAIL add new fragment");return false;}
   IKompasDocument2DPtr doc=base; if(!doc){log("FAIL cast");return false;}
   app.SetActiveDocument(base); doc->SetParametricMode(true);
 
