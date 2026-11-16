@@ -73,6 +73,12 @@ jobs:
           python -m pip install --disable-pip-version-check -e ".[capture]"
           python -m pip install --disable-pip-version-check --quiet pyautogui pywinauto pywin32 pillow
 
+      - name: Patch helper to wait for complete native transient
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python fullv6\patch_multisimforge_wait.py "$env:RUNNER_TEMP\MultisimForge" | Tee-Object -FilePath stage3-final\helper-patch.txt
+
       - name: Fetch exact simulation models
         shell: powershell
         run: |
