@@ -157,3 +157,4 @@ jobs:
           path: stage3-final/
           if-no-files-found: error
           retention-days: 7
+\n# trigger: corrected bridge + embedded MOS models + FD320 0-25uA sweep\n
