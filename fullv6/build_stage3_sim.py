@@ -48,7 +48,7 @@ net=[
  named("VT2",models["kp501"],ctrlp="g12",ctrln="t1",sw1="t2",sw2="t1"),
  named("VD2",models["zener12"],A="0",K="u_ctrl"),
  "R5 u_ctrl t2 5.1k",
- named("VT3",models["kp707"],D="t2",G="0",S="vt3_r6"),
+ named("VT3",models["kp707"],D="vt3_r6",G="0",S="t2"),
  "R6 vt3_r6 drv 51",
  named("HL1",models["led"],A="led_a",K="u_ctrl"),
  named("VD3",models["rectifier"],A="led_r",K="led_a"),
