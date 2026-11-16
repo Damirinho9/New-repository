@@ -39,11 +39,12 @@ def build_and_sim(label,uA,duration=0.30,rate=6000,cfg=None):
     rec["metrics"]=m; return rec
 
 configs=[
+ {"CTRL_SUPPLY":0,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"dc_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
+ {"CTRL_SUPPLY":0,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"dc_tb","BRIDGE_SWAP":1,"VD20_SWAP":0},
+ {"CTRL_SUPPLY":1,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"dc_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
+ {"CTRL_SUPPLY":1,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"dc_tb","BRIDGE_SWAP":1,"VD20_SWAP":0},
+ {"CTRL_SUPPLY":0,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"dc_bt","BRIDGE_SWAP":0,"VD20_SWAP":0},
  {"CTRL_SUPPLY":0,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
- {"CTRL_SUPPLY":1,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
- {"CTRL_SUPPLY":1,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":1,"VD20_SWAP":0},
- {"CTRL_SUPPLY":1,"KP501_FLIP":0,"VT3_FLIP":0,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
- {"CTRL_SUPPLY":1,"KP501_FLIP":1,"VT3_FLIP":1,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
 ]
 candidates=[]
 for i,cfg in enumerate(configs):
@@ -51,7 +52,8 @@ for i,cfg in enumerate(configs):
     good=[r for r in samples if r.get("metrics")]
     if len(good)==2:
         y=[r["metrics"]["load_v"]["rms"] for r in good]; span=abs(y[1]-y[0])
-        score=span-(50 if min(y)>60 else 0)-(50 if max(y)<150 else 0)
+        off=min(y); on=max(y)
+        score=span + (80 if off<25 else 0) + (80 if on>180 else 0) - (80 if off>80 else 0)
     else: span=-1; score=-999
     candidates.append({"cfg":cfg,"samples":samples,"load_span_Vrms":span,"score":score})
     (OUT/"candidate_progress.json").write_text(json.dumps(candidates,ensure_ascii=False,indent=2),encoding="utf-8")
