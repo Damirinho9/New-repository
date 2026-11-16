@@ -168,20 +168,62 @@ static bool build(){
 
   auto docs=app.GetDocuments(); if(!docs){log("FAIL docs");return false;}
   const std::wstring templatePath=L"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw";
-  auto base=docs->Open(templatePath,true,false);
-  if(!base){log("FAIL open visible stock fragment template");return false;}
-  IKompasDocument2DPtr doc=base; if(!doc){log("FAIL cast");return false;}
-  app.SetActiveDocument(base); doc->SetParametricMode(true);
 
-  auto vm=doc->GetViewsAndLayersManager(); if(!vm)return false;
-  auto views=vm->GetViews(); if(!views)return false;
-  auto view=views->GetActiveView(); if(!view)return false;
-  IDrawingContainerPtr dc=view; ISymbols2DContainerPtr sc=view;
-  if(!dc||!sc){log("FAIL containers");return false;}
+  IKompasDocumentPtr base{};
+  IKompasDocument2DPtr doc{};
+  IViewPtr view{};
+  IDrawingContainerPtr dc{};
+  ISymbols2DContainerPtr sc{};
 
-  log("using system layer 0 for core parametric build");
+  auto adopt=[&](const std::string& label,const IKompasDocumentPtr& cand)->bool{
+    log("candidate "+label+" doc="+(cand?"1":"0"));
+    if(!cand) return false;
+    try{
+      app.SetActiveDocument(cand);
+      IKompasDocument2DPtr d2=cand;
+      if(!d2){log("candidate "+label+" FAIL cast"); cand->Close(kdDoNotSaveChanges); return false;}
+      d2->SetParametricMode(true);
+      auto vm=d2->GetViewsAndLayersManager();
+      if(!vm){log("candidate "+label+" FAIL manager"); cand->Close(kdDoNotSaveChanges); return false;}
+      auto views=vm->GetViews();
+      if(!views){log("candidate "+label+" FAIL views"); cand->Close(kdDoNotSaveChanges); return false;}
+      auto v=views->GetActiveView();
+      if(!v){log("candidate "+label+" FAIL active view"); cand->Close(kdDoNotSaveChanges); return false;}
+      IDrawingContainerPtr dcont=v;
+      ISymbols2DContainerPtr scont=v;
+      if(!dcont||!scont){log("candidate "+label+" FAIL containers"); cand->Close(kdDoNotSaveChanges); return false;}
+      auto lines=dcont->GetLineSegments();
+      if(!lines){log("candidate "+label+" FAIL line collection"); cand->Close(kdDoNotSaveChanges); return false;}
+      auto probe=lines->Add();
+      if(!probe){log("candidate "+label+" FAIL probe Add"); cand->Close(kdDoNotSaveChanges); return false;}
+      probe->SetX1(-5);probe->SetY1(-5);probe->SetX2(-1);probe->SetY2(-5);
+      probe->SetStyle(ksCSConstruction);
+      if(!probe->Update()){log("candidate "+label+" FAIL probe Update"); probe->Delete(); cand->Close(kdDoNotSaveChanges); return false;}
+      probe->Delete();
+      base=cand; doc=d2; view=v; dc=dcont; sc=scont;
+      log("candidate "+label+" PASS editable");
+      return true;
+    }catch(...){
+      log("candidate "+label+" EXCEPTION");
+      try{cand->Close(kdDoNotSaveChanges);}catch(...){}
+      return false;
+    }
+  };
 
+  bool acquired=false;
+  if(!acquired) acquired=adopt("AddDefault-visible", docs->AddWithDefaultSettings(ksDocumentFragment,true));
+  if(!acquired) acquired=adopt("AddDefault-invisible", docs->AddWithDefaultSettings(ksDocumentFragment,false));
+  if(!acquired) acquired=adopt("Add-visible", docs->Add(ksDocumentFragment,true));
+  if(!acquired) acquired=adopt("Add-invisible", docs->Add(ksDocumentFragment,false));
+  if(!acquired) acquired=adopt("Template-visible", docs->AddNewDocumentFromTemplate(templatePath,true));
+  if(!acquired) acquired=adopt("Template-invisible", docs->AddNewDocumentFromTemplate(templatePath,false));
+  if(!acquired) acquired=adopt("Open-template-visible", docs->Open(templatePath,true,false));
+  if(!acquired) acquired=adopt("Open-template-invisible", docs->Open(templatePath,false,false));
+  if(!acquired){log("FAIL no editable fragment route");return false;}
+
+  log("using native editable fragment route");
   log("variables will be created by driving dimensions");
+
 
   P B,C,D,E,X;
   if(!state(FI0,B,C,D,E,X)){log("FAIL initial state");return false;}
