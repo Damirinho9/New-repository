@@ -1,0 +1,100 @@
+name: Build native KOMPAS FRW variant06 final
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/build-native-frw-v6-final.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      image: alt:p11
+    timeout-minutes: 12
+    steps:
+      - name: Install KOMPAS runtime and run injected writer
+        shell: bash
+        run: |
+          set -u
+          mkdir -p /tmp/work1
+          cd /tmp/work1
+
+          apt-get update
+          apt-get install -y wget ca-certificates fontconfig glibc-i18ndata             libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util             libXv libXScrnSaver libxkbfile libfontenc dbus procps iproute2 file python3 curl || true
+
+          bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+          apt-get update
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 || true
+
+          test -x /opt/ascon/kompas3d-v25/Bin/kKompas
+          test -f /opt/ascon/kompas3d-v25/Bin/libksAPI.so
+
+          curl -fL --retry 5 -o /tmp/inject_variant06.so             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/bin/inject_variant06.so'
+          test -s /tmp/inject_variant06.so
+          file /tmp/inject_variant06.so
+
+          rm -f /tmp/work1_v6_inject.log /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw                 /tmp/kompas_v6.log
+
+          export LANG=C.UTF-8
+          export LC_ALL=C.UTF-8
+          export QT_QPA_PLATFORM=offscreen
+          export LD_LIBRARY_PATH=/opt/ascon/kompas3d-v25/Bin
+          export LD_PRELOAD=/tmp/inject_variant06.so
+          unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+          cd /opt/ascon/kompas3d-v25/Bin
+          dbus-run-session -- ./kKompas >/tmp/kompas_v6.log 2>&1 &
+          KP=$!
+          echo "KOMPAS_PID=$KP"
+
+          for i in $(seq 1 120); do
+            echo "POLL=$i"
+            tail -40 /tmp/work1_v6_inject.log 2>/dev/null || true
+            if grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_inject.log 2>/dev/null; then
+              echo "PASS_MARKER_FOUND"
+              break
+            fi
+            if ! kill -0 "$KP" 2>/dev/null; then
+              echo "KOMPAS_EXITED"
+              break
+            fi
+            sleep 2
+          done
+
+          echo "=== INJECT_LOG ==="
+          cat /tmp/work1_v6_inject.log 2>/dev/null || true
+          echo "=== KOMPAS_LOG_TAIL ==="
+          tail -200 /tmp/kompas_v6.log 2>/dev/null || true
+
+          OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          if [ ! -s "$OUT" ]; then
+            echo "RESULT=FAIL_NO_FRW"
+            exit 20
+          fi
+          if ! grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_inject.log; then
+            echo "RESULT=FAIL_NO_PARAMETRIC_PASS"
+            exit 21
+          fi
+
+          echo "=== FRW_METADATA ==="
+          ls -l "$OUT"
+          file "$OUT"
+          sha256sum "$OUT"
+          python3 - <<'PY'
+          import pathlib, zipfile, hashlib
+          p=pathlib.Path('/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw')
+          print('SIZE=',p.stat().st_size)
+          print('SHA256=',hashlib.sha256(p.read_bytes()).hexdigest())
+          print('IS_ZIP=',zipfile.is_zipfile(p))
+          with zipfile.ZipFile(p) as z:
+              print('MEMBERS=',[(i.filename,i.file_size) for i in z.infolist()])
+              assert 'Contents' in z.namelist()
+              assert 'FileInfo' in z.namelist()
+          PY
+
+          echo "=== FRW_BASE64_BEGIN ==="
+          base64 -w 76 "$OUT"
+          echo "=== FRW_BASE64_END ==="
+          echo "RESULT=PASS_FINAL_NATIVE_FRW"
