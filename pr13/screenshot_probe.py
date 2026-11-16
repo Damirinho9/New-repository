@@ -192,25 +192,12 @@ try:
         {"AutoHyphenation":1,"HyphenateCaps":0}
     )
 
-    # 5. Modern Word AutoText gallery (Insert -> Quick Parts -> AutoText).
-    focus_word(word)
-    try:
-        enabled=word.CommandBars.GetEnabledMso("AutoTextGallery")
-        print("AUTOTEXT_GALLERY_ENABLED",enabled,flush=True)
-        if enabled:
-            word.CommandBars.ExecuteMso("AutoTextGallery")
-            time.sleep(2.0)
-            save_shot("05_Автотекст.png")
-            dismiss()
-        else:
-            raise RuntimeError("AutoTextGallery control is disabled")
-    except Exception as e:
-        print("AUTOTEXT_GALLERY_FAIL",repr(e),flush=True)
-        # Fallback: show Quick Parts gallery, which exposes AutoText in Word.
-        word.CommandBars.ExecuteMso("QuickPartsInsertGallery")
-        time.sleep(2.0)
-        save_shot("05_Автотекст.png")
-        dismiss()
+    # 5. Native Word AutoText management dialog.
+    capture_dialog(
+        word,
+        constants.wdDialogEditAutoText,
+        "05_Автотекст.png"
+    )
 
     doc.Close(0)
     doc=None
