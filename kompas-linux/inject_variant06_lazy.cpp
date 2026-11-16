@@ -64,12 +64,32 @@ static bool state(double deg,P& B,P& C,P& D,P& E,P& X){
 }
 
 static ILayerPtr layer(const IViewPtr& view,int n,const std::wstring& name){
-  auto ls=view->GetLayers(); if(!ls) return {};
-  auto x=ls->GetLayerByNumber(n); if(!x) x=ls->Add();
-  if(!x) return {};
-  x->SetLayerNumber(n); x->SetName(name); x->SetVisible(true);
-  x->SetBackground(false); x->SetPrintable(true); x->SetCurrent();
-  if(!x->Update()) return {};
+  auto ls=view->GetLayers();
+  if(!ls){ log("LAYER "+std::to_string(n)+" FAIL GetLayers"); return {}; }
+
+  auto x=ls->GetLayerByNumber(n);
+  bool created=false;
+  if(!x){
+    x=ls->Add();
+    created=true;
+  }
+  if(!x){ log("LAYER "+std::to_string(n)+" FAIL Add"); return {}; }
+
+  x->SetLayerNumber(n);
+  x->SetName(name);
+  x->SetVisible(true);
+  x->SetBackground(false);
+  x->SetPrintable(true);
+
+  // ASCON SDK: a layer returned by ILayers::Add is created in the
+  // document only after IDrawingObject::Update.
+  if(!x->Update()){
+    log("LAYER "+std::to_string(n)+" FAIL Update created="+std::to_string(created));
+    return {};
+  }
+
+  x->SetCurrent();
+  log("LAYER "+std::to_string(n)+" PASS name="+std::to_string((int)name.size()));
   return x;
 }
 
