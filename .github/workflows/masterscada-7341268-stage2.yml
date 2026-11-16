@@ -86,8 +86,40 @@ jobs:
             $app = New-Object -ComObject MasterSCADA.Application
             "COM_CREATED=true" | Out-File -Encoding utf8 $out
             "CALL CreateProject location=1 folder=$projectsFolder id=$projectID" | Add-Content -Encoding utf8 $out
+
+            $watchLog = "$env:GITHUB_WORKSPACE\masterscada-7341268-stage2\modal-watcher.txt"
+            $watcher = Start-Job -ScriptBlock {
+              param($watchLog)
+              Add-Type -AssemblyName System.Windows.Forms
+              $ws = New-Object -ComObject WScript.Shell
+              for ($i=0; $i -lt 45; $i++) {
+                try {
+                  $ps = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "MasterSCADA" }
+                  foreach ($proc in $ps) {
+                    $title = $proc.MainWindowTitle
+                    "$(Get-Date -Format o) PID=$($proc.Id) TITLE=$title" | Add-Content -Encoding utf8 $watchLog
+                    if ($title) {
+                      try {
+                        if ($ws.AppActivate($proc.Id)) {
+                          Start-Sleep -Milliseconds 200
+                          $ws.SendKeys("{ENTER}")
+                          "$(Get-Date -Format o) ENTER_SENT PID=$($proc.Id)" | Add-Content -Encoding utf8 $watchLog
+                        }
+                      } catch {
+                        "$(Get-Date -Format o) SEND_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $watchLog
+                      }
+                    }
+                  }
+                } catch {}
+                Start-Sleep -Seconds 1
+              }
+            } -ArgumentList $watchLog
+
             $app.CreateProject(1, $projectsFolder, $projectID, "Система водяного отопления - вариант 7", "")
             "CREATE_SUCCESS=true" | Add-Content -Encoding utf8 $out
+            try { Stop-Job $watcher -ErrorAction SilentlyContinue | Out-Null } catch {}
+            try { Receive-Job $watcher -ErrorAction SilentlyContinue | Out-Null } catch {}
+            try { Remove-Job $watcher -Force -ErrorAction SilentlyContinue } catch {}
             Start-Sleep -Seconds 3
             $p = $app.CurrentProject
             if ($null -eq $p) { throw "CurrentProject is null after CreateProject" }
