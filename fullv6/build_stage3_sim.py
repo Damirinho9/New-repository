@@ -114,7 +114,7 @@ spec={
  "sim_time":"250ms",
  "colors":{"sens":"red","sw":"blue"}
 }
-res=builder.build(spec,lib=lib,allow_fallback=False,auto_repair=True)
+res=builder.build(spec,lib=lib,allow_fallback=True,auto_repair=True)
 
 # Patch visible labels so test-bench parts and SIM-only capacitor values cannot be confused with the source BOM.
 root=xmlio.load(TARGET)
