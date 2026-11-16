@@ -75,59 +75,49 @@ jobs:
       - name: Create native empty project and inspect project object model
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
+          $ErrorActionPreference = "Stop"
           $out = "$env:GITHUB_WORKSPACE\masterscada-7341268-stage2\project-model.txt"
-          $projectRoot = "C:\MasterSCADA Projects\Projects\7341268_Variant7"
-          New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
+          $projectsFolder = "C:\MasterSCADA Projects\Projects"
+          $projectID = "7341268_Variant7"
+          $projectFolder = Join-Path $projectsFolder $projectID
+          if (Test-Path $projectFolder) { Remove-Item $projectFolder -Recurse -Force -ErrorAction SilentlyContinue }
           $app = $null
           try {
             $app = New-Object -ComObject MasterSCADA.Application
             "COM_CREATED=true" | Out-File -Encoding utf8 $out
-            $created = $false
-            foreach ($loc in @(0,1,2,3)) {
-              try {
-                "TRY_LOCATION=$loc" | Add-Content -Encoding utf8 $out
-                $app.CreateProject($loc, $projectRoot, "7341268_Variant7", "Система водяного отопления - вариант 7", "")
-                "CREATE_LOCATION=$loc SUCCESS" | Add-Content -Encoding utf8 $out
-                $created = $true
-                break
-              } catch {
-                "CREATE_LOCATION=$loc ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
-              }
-            }
-            "PROJECTS_COUNT=$($app.Projects.Count)" | Add-Content -Encoding utf8 $out
+            "CALL CreateProject location=1 folder=$projectsFolder id=$projectID" | Add-Content -Encoding utf8 $out
+            $app.CreateProject(1, $projectsFolder, $projectID, "Система водяного отопления - вариант 7", "")
+            "CREATE_SUCCESS=true" | Add-Content -Encoding utf8 $out
+            Start-Sleep -Seconds 3
             $p = $app.CurrentProject
-            if ($null -eq $p) {
-              "CURRENT_PROJECT_NULL=true" | Add-Content -Encoding utf8 $out
-            } else {
-              "CURRENT_PROJECT_NULL=false" | Add-Content -Encoding utf8 $out
-              "=== CurrentProject Get-Member ===" | Add-Content -Encoding utf8 $out
-              $p | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $out
-              "=== CurrentProject property probes ===" | Add-Content -Encoding utf8 $out
-              foreach ($prop in @("Name","ID","ProjectID","Folder","Path","FileName","System","SystemTree","Objects","ObjectTree","TreeItemHlp","Root","Computer","Computers","Parameters","Variables")) {
-                try {
-                  $v = $p.$prop
-                  "$prop = $v" | Add-Content -Encoding utf8 $out
-                  if ($null -ne $v) {
-                    "TYPE[$prop]=$($v.GetType().FullName)" | Add-Content -Encoding utf8 $out
-                    $v | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $out
-                  }
-                } catch {
-                  "$prop ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
-                }
-              }
+            if ($null -eq $p) { throw "CurrentProject is null after CreateProject" }
+            "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $out
+            "PROJECT_PATH=$($p.Path)" | Add-Content -Encoding utf8 $out
+            "PROJECT_GUID=$($p.ProjectGUID)" | Add-Content -Encoding utf8 $out
+            "COMPUTER_COUNT=$($p.ComputerCount)" | Add-Content -Encoding utf8 $out
+            "=== CurrentProject ===" | Add-Content -Encoding utf8 $out
+            $p | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $out
+
+            foreach ($pair in @(@("SystemRoot",$p.SystemRoot), @("SysTree",$p.SysTree), @("ObjTree",$p.ObjTree), @("ObjRoot",$p.ObjTree.Root))) {
+              $name=$pair[0]; $v=$pair[1]
+              "=== $name ===" | Add-Content -Encoding utf8 $out
+              try {
+                "NAME=$($v.Name) COUNT=$($v.Count) ITEMTYPE=$($v.ItemType) OBJECTTYPE=$($v.ObjectType) FULL=$($v.FullName)" | Add-Content -Encoding utf8 $out
+              } catch {}
+              $v | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $out
             }
-            "=== Files after CreateProject ===" | Add-Content -Encoding utf8 $out
-            Get-ChildItem $projectRoot -Recurse -Force -ErrorAction SilentlyContinue |
+
+            $p.Save()
+            "SAVE_SUCCESS=true" | Add-Content -Encoding utf8 $out
+            "=== Files ===" | Add-Content -Encoding utf8 $out
+            Get-ChildItem $projectFolder -Recurse -Force -ErrorAction SilentlyContinue |
               ForEach-Object { "$($_.FullName)`t$($_.Length)" } |
               Add-Content -Encoding utf8 $out
-            Get-ChildItem "C:\MasterSCADA Projects" -Recurse -Filter "*7341268*.vav" -File -ErrorAction SilentlyContinue |
-              ForEach-Object { "FOUND_VAV=$($_.FullName)`t$($_.Length)" } |
+            Get-ChildItem $projectsFolder -Recurse -Filter "$projectID.vav" -File -ErrorAction SilentlyContinue |
+              ForEach-Object { "FOUND_VAV=$($_.FullName)`t$($_.Length)`tSHA256=$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" } |
               Add-Content -Encoding utf8 $out
-          } catch {
-            "FATAL=$($_.Exception.ToString())" | Add-Content -Encoding utf8 $out
           } finally {
-            if ($null -ne $app) {
+            if ($app) {
               try { $app.ExitScada() } catch {}
               try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
             }
@@ -161,5 +151,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: masterscada-7341268-stage2-diagnostics
-          path: masterscada-7341268-stage2/**
+          path: |
+            masterscada-7341268-stage2/**
+            C:/MasterSCADA Projects/Projects/7341268_Variant7/**
           if-no-files-found: warn
