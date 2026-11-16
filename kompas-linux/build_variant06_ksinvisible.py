@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import hashlib, json, math, sys
+import hashlib, json, math, sys, time
 from pathlib import Path
 
 BIN = Path("/opt/ascon/kompas3d-v25/Bin")
@@ -161,7 +161,30 @@ def main():
     ev("app", name=app.GetApplicationName(True), build=app.GetBuildNumber())
     app.SetHideMessage(c.ksHideMessageYes)
 
-    doc=req(app.GetDocuments().Add(c.ksDocumentFragment, True), "Create fragment")
+    docs=req(app.GetDocuments(), "Documents")
+    doc=None
+    attempts=[]
+    for attempt in range(20):
+        for method, visible in (
+            ("AddWithDefaultSettings", False),
+            ("Add", False),
+            ("AddWithDefaultSettings", True),
+            ("Add", True),
+        ):
+            try:
+                fn=getattr(docs, method)
+                candidate=fn(c.ksDocumentFragment, visible)
+                attempts.append({"attempt":attempt,"method":method,"visible":visible,"ok":bool(candidate)})
+                if candidate:
+                    doc=candidate
+                    break
+            except Exception as exc:
+                attempts.append({"attempt":attempt,"method":method,"visible":visible,"error":type(exc).__name__})
+        if doc:
+            break
+        time.sleep(1)
+    ev("fragment-create", attempts=attempts[-12:])
+    doc=req(doc, "Create fragment after retries")
     doc2d=req(ksapi.IKompasDocument2D(doc), "IKompasDocument2D")
     doc2d.SetParametricMode(True)
     req(doc2d.IsParametricMode(), "Parametric mode")
