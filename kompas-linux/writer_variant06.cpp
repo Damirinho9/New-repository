@@ -61,8 +61,14 @@ static ILineSegmentPtr line(const IDrawingContainerPtr& dc,P a,P b,int lay,int s
   auto col=dc->GetLineSegments(); if(!col) return {};
   auto s=col->Add(); if(!s) return {};
   s->SetX1(a.x); s->SetY1(a.y); s->SetX2(b.x); s->SetY2(b.y);
-  s->SetLayerNumber(lay); s->SetStyle(style);
-  if(!s->Update()) return {};
+  if(lay>0) s->SetLayerNumber(lay);
+  s->SetStyle(style);
+  if(!s->Update()){
+    log("line Update FAIL x1="+std::to_string(a.x)+" y1="+std::to_string(a.y)+
+        " x2="+std::to_string(b.x)+" y2="+std::to_string(b.y)+
+        " style="+std::to_string(style)+" layer="+std::to_string(lay));
+    return {};
+  }
   return s;
 }
 
@@ -87,7 +93,7 @@ static ILineDimensionPtr lin_dim(const ISymbols2DContainerPtr& sc,const ILineSeg
   d->SetX1(x1);d->SetY1(y1);d->SetX2(x2);d->SetY2(y2);
   d->SetX3((x1+x2)/2+nx*off); d->SetY3((y1+y2)/2+ny*off);
   d->SetAngle(std::atan2(dy,dx)*180.0/PI);
-  d->SetOrientation(ksLinDParallel); d->SetLayerNumber(lay);
+  d->SetOrientation(ksLinDParallel); if(lay>0) d->SetLayerNumber(lay);
   if(!d->Update())return {};
   if(!constr(d,ksCMergePoints,0,seg,0))return {};
   if(!constr(d,ksCMergePoints,1,seg,1))return {};
@@ -109,7 +115,7 @@ static IAngleDimensionPtr angle_dim(const ISymbols2DContainerPtr& sc,
   d->SetX2(crank->GetX2());d->SetY2(crank->GetY2());
   d->SetBaseObject1(ref); d->SetBaseObject2(crank);
   d->SetRadius(12.0); d->SetDimensionType(ksADMinAngle);
-  d->SetDirection(false); d->SetLayerNumber(lay);
+  d->SetDirection(false); if(lay>0) d->SetLayerNumber(lay);
   if(!d->Update())return {};
   if(!d->Associate()) log("WARN angle Associate false");
   if(!constr(d,ksCFixedDim))return {};
