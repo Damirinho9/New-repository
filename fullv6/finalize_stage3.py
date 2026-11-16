@@ -66,16 +66,17 @@ def build_and_sim(label,uA,duration=0.40,rate=7000,cfg=None):
 candidates=[]
 for kpflip in (0,1):
     for vt3flip in (0,1):
-        for bswap in (0,1):
-            cfg={"KP501_MODEL":"2N6659","KP501_FLIP":kpflip,"VT3_FLIP":vt3flip,"BRIDGE_SWAP":bswap,"VD20_SWAP":0}
-            samples=[]
-            for j,u in enumerate((0.0,15.0)):
-                rec=build_and_sim(f"cfg_k{kpflip}_v{vt3flip}_b{bswap}_{j}",u,duration=0.22,rate=4500,cfg=cfg)
-                samples.append(rec)
-            good=[r for r in samples if r.get("metrics")]
-            span=abs(good[-1]["metrics"]["load_v"]["rms"]-good[0]["metrics"]["load_v"]["rms"]) if len(good)==2 else -1.0
-            candidates.append({"cfg":cfg,"samples":samples,"load_span_Vrms":span})
-            (OUT/"candidate_progress.json").write_text(json.dumps(candidates,ensure_ascii=False,indent=2),encoding="utf-8")
+        for bridge_mode in ("dc_tb","ac_tb"):
+            for bswap in (0,1):
+                cfg={"KP501_MODEL":"2N6659","KP501_FLIP":kpflip,"VT3_FLIP":vt3flip,"BRIDGE_MODE":bridge_mode,"BRIDGE_SWAP":bswap,"VD20_SWAP":0}
+                samples=[]
+                for j,u in enumerate((0.0,15.0)):
+                    rec=build_and_sim(f"cfg_k{kpflip}_v{vt3flip}_{bridge_mode}_b{bswap}_{j}",u,duration=0.22,rate=4500,cfg=cfg)
+                    samples.append(rec)
+                good=[r for r in samples if r.get("metrics")]
+                span=abs(good[-1]["metrics"]["load_v"]["rms"]-good[0]["metrics"]["load_v"]["rms"]) if len(good)==2 else -1.0
+                candidates.append({"cfg":cfg,"samples":samples,"load_span_Vrms":span})
+                (OUT/"candidate_progress.json").write_text(json.dumps(candidates,ensure_ascii=False,indent=2),encoding="utf-8")
 
 selected_candidate=max(candidates,key=lambda x:x["load_span_Vrms"])
 selected_cfg=selected_candidate["cfg"]

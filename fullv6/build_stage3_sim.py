@@ -42,6 +42,7 @@ def xline(ref,nets,model):
 kp501_flip=os.environ.get("KP501_FLIP","0")=="1"
 vt3_flip=os.environ.get("VT3_FLIP","0")=="1"
 bridge_swap=os.environ.get("BRIDGE_SWAP","0")=="1"
+bridge_mode=os.environ.get("BRIDGE_MODE","dc_tb")
 vd20_swap=os.environ.get("VD20_SWAP","0")=="1"
 
 vt1_pins={"D":"sens","S":"t1"} if kp501_flip else {"D":"t1","S":"sens"}
@@ -81,10 +82,20 @@ net.append(xline("FU1",["drv","br_top"],models["fuse"]))
 # Only +/- assignment is source-ambiguous, so test both mappings while keeping AC terminals fixed.
 bridge_pins=set(lib.index[models["bridge"]]["pins"])
 if {"V+","V-","AC1","AC2"}<=bridge_pins:
-    if bridge_swap:
-        net.append(named("VD6",models["bridge"],**{"AC1":"br_top","AC2":"0","V+":"g25","V-":"g18"}))
+    if bridge_mode=="dc_tb":
+        # Controlled current enters the bridge DC side; AC pins feed the two thyristor gate networks.
+        if bridge_swap:
+            net.append(named("VD6",models["bridge"],**{"V+":"br_top","V-":"0","AC1":"g25","AC2":"g18"}))
+        else:
+            net.append(named("VD6",models["bridge"],**{"V+":"br_top","V-":"0","AC1":"g18","AC2":"g25"}))
+    elif bridge_mode=="ac_tb":
+        # Alternative allowed by the source drawing because RB154 +/-/~ are not labelled there.
+        if bridge_swap:
+            net.append(named("VD6",models["bridge"],**{"AC1":"br_top","AC2":"0","V+":"g25","V-":"g18"}))
+        else:
+            net.append(named("VD6",models["bridge"],**{"AC1":"br_top","AC2":"0","V+":"g18","V-":"g25"}))
     else:
-        net.append(named("VD6",models["bridge"],**{"AC1":"br_top","AC2":"0","V+":"g18","V-":"g25"}))
+        raise RuntimeError(f"Unsupported BRIDGE_MODE={bridge_mode}")
 else:
     pins=lib.index[models["bridge"]]["pins"]
     if len(pins)!=4:
@@ -101,7 +112,7 @@ net += [
 ]
 hp=set(lib.index[models["header5"]]["pins"])
 if {"P1","P2","P3","P4","P5"}<=hp:
-    net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n",P5="0"))
+    net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n",P5="case"))
 else:
     net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n"))
 
@@ -186,7 +197,7 @@ manifest={
  "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"control_supply_V":12,"control_series_Ohm":100,"Rline_Ohm":10,"Rload_Ohm":2200},
  "models":models,
  "model_patch_notes":model_patch_notes,
- "source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},
+ "source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},
  "check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
