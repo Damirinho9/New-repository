@@ -109,7 +109,6 @@ spec={
  "net_names":True,
  "wire_width":2,
  "sheet":[21.0,9.5],
- "instruments":{"XSC1":{"timebase":"10ms","a_scale":"10V","b_scale":"200V","trigger":"none"}},
  "sim_time":"250ms",
  "colors":{"sens":"red","sw":"blue"}
 }
