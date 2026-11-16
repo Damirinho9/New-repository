@@ -111,8 +111,9 @@ jobs:
               # non-injected process before the actual KsAPI run.
               cd "$BIN"
               timeout 20s dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config QT_QPA_PLATFORM=offscreen ./kKompas -automation >/tmp/kompas-profile-init.out 2>/tmp/kompas-profile-init.err || true
-              pkill -f "$BIN/kKompas" 2>/dev/null || true
+              pkill -x kKompas 2>/dev/null || true
               test -d "$CFG"
+              test -d "$BIN"
 
               BIN=/opt/ascon/kompas3d-v25/Bin
               test -x "$BIN/kKompas"
