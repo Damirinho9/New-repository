@@ -79,6 +79,64 @@ jobs:
             $_.Groups[1].Value
           } | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.txt"
 
+      - name: Download exact MasterSCADA 3.11 installer set
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","checksum.md5","data.msi","setup.bmp","setup.exe")) {
+            Write-Host "Downloading $name"
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "curl failed for $name" }
+          }
+          Get-ChildItem $dest | Select-Object Name,Length,LastWriteTime | Format-Table -AutoSize |
+            Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\installer-files.txt"
+          Get-Content (Join-Path $dest "checksum.md5") |
+            Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-checksum.md5"
+          Get-FileHash (Join-Path $dest "Data1.cab") -Algorithm MD5 |
+            Format-List | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\hash-data1.txt"
+          Get-FileHash (Join-Path $dest "data.msi") -Algorithm MD5 |
+            Format-List | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\hash-msi.txt"
+          Get-FileHash (Join-Path $dest "setup.exe") -Algorithm MD5 |
+            Format-List | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\hash-setup.txt"
+
+      - name: Install MasterSCADA 3.11 from MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          $log = "$env:GITHUB_WORKSPACE\masterscada-7341268\msi-install.log"
+          $args = @("/i", (Join-Path $dest "data.msi"), "/qn", "/norestart", "/L*v", $log)
+          $p = Start-Process -FilePath "msiexec.exe" -ArgumentList $args -Wait -PassThru
+          "MSI_EXIT_CODE=$($p.ExitCode)" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\install-status.txt"
+          if ($p.ExitCode -notin @(0,3010,1641)) {
+            throw "MasterSCADA MSI install failed with exit code $($p.ExitCode)"
+          }
+
+      - name: Inventory installed MasterSCADA files and create project folder
+        if: always()
+        shell: pwsh
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\masterscada-7341268\installed-files.txt"
+          $roots = @("C:\Program Files (x86)\MPSSoft","C:\Program Files\MPSSoft","C:\MasterSCADA Projects")
+          foreach ($r in $roots) {
+            "=== $r ===" | Add-Content -Encoding utf8 $out
+            if (Test-Path $r) {
+              Get-ChildItem $r -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Extension -in @(".exe",".dll",".vav",".xml",".ini",".config") } |
+                ForEach-Object {
+                  $v = $_.VersionInfo.FileVersion
+                  "$($_.FullName)`t$v`t$($_.Length)"
+                } | Add-Content -Encoding utf8 $out
+            } else {
+              "MISSING" | Add-Content -Encoding utf8 $out
+            }
+          }
+          $project = "C:\MasterSCADA Projects\7341268_Variant7"
+          New-Item -ItemType Directory -Force -Path $project | Out-Null
+          "PROJECT_FOLDER=$project" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\install-status.txt"
+
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -91,4 +149,12 @@ jobs:
             masterscada-7341268/dropmefiles-page.html
             masterscada-7341268/official-311.txt
             masterscada-7341268/official-311.html
+            masterscada-7341268/installer-files.txt
+            masterscada-7341268/official-checksum.md5
+            masterscada-7341268/hash-data1.txt
+            masterscada-7341268/hash-msi.txt
+            masterscada-7341268/hash-setup.txt
+            masterscada-7341268/msi-install.log
+            masterscada-7341268/install-status.txt
+            masterscada-7341268/installed-files.txt
           if-no-files-found: warn
