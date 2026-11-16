@@ -19,7 +19,7 @@ def pick(*names):
 
 models={
  "photo":pick("PHOTO_DIODE_RATED","PHOTODIODE","DIODE_RATED"),
- "kp501":pick("ZVN2106A","ZVN0124A","MTD4N20E","IRFD110","2N6659"),
+ "kp501":pick("VOLTAGE_CONTROLLED_SPST_BOUNCE"),
  "kp707":pick("BUZ90","IRFD110","2N6659"),
  "zener12":pick("1N4742A","DIODE_RATED"),
  "rectifier":pick("1N4007","MUR1510G","1N4003G","1N4001"),
@@ -42,10 +42,10 @@ net=[
  named("VD1",models["photo"],A="0",K="sens"),
  "C1 sens 0 47n CAP_ELECTROLIT_VIRTUAL",
  "C2 u_ctrl 0 1u CAP_ELECTROLIT_VIRTUAL",
- named("VT1",models["kp501"],D="t1",G="g12",S="sens"),
+ named("VT1",models["kp501"],ctrlp="0",ctrln="sens",sw1="t1",sw2="sens"),
  "R3 g12 0 330",
  "R4 u_ctrl t1 10k",
- named("VT2",models["kp501"],D="t2",G="g12",S="t1"),
+ named("VT2",models["kp501"],ctrlp="0",ctrln="t1",sw1="t2",sw2="t1"),
  named("VD2",models["zener12"],A="0",K="u_ctrl"),
  "R5 u_ctrl t2 5.1k",
  named("VT3",models["kp707"],D="t2",G="0",S="vt3_r6"),
@@ -116,19 +116,49 @@ spec={
 }
 res=builder.build(spec,lib=lib,allow_fallback=True,auto_repair=True)
 
-# Patch visible labels so test-bench parts and SIM-only capacitor values cannot be confused with the source BOM.
+# Patch the two KP501A simulation equivalents before any screenshots/results are made.
+# The source drawing specifies the gate but does not specify an intrinsic body diode.
+# Generic imported N-MOS models force body-diode current through the cascade even when "off".
+# Use Multisim's native 4-terminal voltage-controlled switch symbol/model container and
+# replace only its internal behavioral body with a VGS-controlled, diode-free switch.
 root=xmlio.load(TARGET)
 comp_ref={}
+comp_by_ref={}
 for item in root.iter("Item"):
     if item.get("Class")=="CiComponent" and len(item):
-        comp_ref[item.get("CiID")]=xmlio.text(item[0].get("LocalName") or "").strip()
+        ref=xmlio.text(item[0].get("LocalName") or "").strip()
+        comp_ref[item.get("CiID")]=ref
+        comp_by_ref[ref]=item[0]
+
+kp501_body="""Ectrl ctrl 0 in+ in- 1
+S1 sw1 sw2 ctrl 0 vsw0
+.model vsw0 vswitch(Roff=1e9 Ron=10 Voff=0.9 Von=1.0)
+"""
+kp501_patched=[]
+for ref in ("VT1","VT2"):
+    comp=comp_by_ref.get(ref)
+    if comp is None:
+        raise RuntimeError(f"{ref}: behavioral KP501A component missing")
+    hits=0
+    for plist in comp.iter("CiaParamList"):
+        strings=plist.find("strings")
+        if strings is None:
+            continue
+        for entry in strings:
+            raw=xmlio.text(entry.get("Value") or "")
+            if "Ebounce" in raw or "triggered_pwl" in raw or "SWBOUNCE" in raw:
+                entry.set("Value",xmlio.asc(kp501_body))
+                hits+=1
+    if hits!=1:
+        raise RuntimeError(f"{ref}: expected one native switch model body, patched {hits}")
+    kp501_patched.append(ref)
 labels={
  "VD1":f"FD320 -> {models['photo']} + I_PH",
  "C1":"K50-35 | SIM-only 47 nF",
  "C2":"K73 | SIM-only 1 uF",
  "C3":"K73 | SIM-only 47 nF",
- "VT1":f"KP501A -> {models['kp501']}",
- "VT2":f"KP501A -> {models['kp501']}",
+ "VT1":"KP501A -> native VGS switch | SIM: VON=1.0V Ron=10Ω no body diode",
+ "VT2":"KP501A -> native VGS switch | SIM: VON=1.0V Ron=10Ω no body diode",
  "VT3":f"KP707V2 -> {models['kp707']}",
  "VD2":f"KS512A -> {models['zener12']}",
  "VD3":f"KD243Zh -> {models['rectifier']}",
@@ -157,7 +187,7 @@ report=check.check_file(TARGET)
 manifest={
  "state":state,"photocurrent_A":iph,"photocurrent_uA":iph*1e6,
  "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"control_supply_V":12,"control_series_Ohm":100,"Rline_Ohm":10,"Rload_Ohm":220},
- "models":models,"check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
+ "models":models,"kp501_behavioral":{"refs":kp501_patched,"container":models["kp501"],"Von_V":1.0,"Voff_V":0.9,"Ron_Ohm":10,"Roff_Ohm":1e9,"body_diode":False},"check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
 (OUT/f"{TARGET.stem}_netlist.txt").write_text(spec["netlist"],encoding="utf-8")
