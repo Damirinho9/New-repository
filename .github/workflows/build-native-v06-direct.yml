@@ -22,16 +22,21 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          curl -fL --retry 5 --retry-delay 2 -o /tmp/graphic.rpm             'https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/graphic.rpm             'https://repo.ascon.ru/stable/rpm/redos/8.0/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
           mkdir -p /tmp/kroot
           (cd /tmp/kroot && rpm2cpio /tmp/graphic.rpm | cpio -idm --quiet)
-          BIN=/tmp/kroot/opt/ascon/kompas3d-v25/Bin
-          test -x "$BIN/kKompas"
-          test -f "$BIN/libksAPI.so"
+          KOMPAS_BIN="$(find /tmp/kroot -type f -name kKompas -print -quit)"
+          KSAPI_LIB="$(find /tmp/kroot -type f -name libksAPI.so -print -quit)"
+          echo "KOMPAS_BIN=$KOMPAS_BIN"
+          echo "KSAPI_LIB=$KSAPI_LIB"
+          test -n "$KOMPAS_BIN"
+          test -n "$KSAPI_LIB"
+          chmod +x "$KOMPAS_BIN"
+          dirname "$KOMPAS_BIN" > /tmp/kompas_bin_dir.txt
           echo "=== RPM ==="; ls -lh /tmp/graphic.rpm
-          echo "=== KOMPAS ==="; file "$BIN/kKompas"; ls -lh "$BIN/kKompas"
+          echo "=== KOMPAS ==="; file "$KOMPAS_BIN"; ls -lh "$KOMPAS_BIN"
           echo "=== unresolved ==="
-          LD_LIBRARY_PATH="$BIN" ldd "$BIN/kKompas" | grep 'not found' || true
+          LD_LIBRARY_PATH="$(dirname "$KOMPAS_BIN")" ldd "$KOMPAS_BIN" | grep 'not found' || true
 
       - name: Download precompiled injector
         shell: bash
@@ -39,14 +44,14 @@ jobs:
           set -euxo pipefail
           curl -fL --retry 5 -o /tmp/inject_variant06.so             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/bin/inject_variant06.so'
           file /tmp/inject_variant06.so
-          BIN=/tmp/kroot/opt/ascon/kompas3d-v25/Bin
+          BIN="$(cat /tmp/kompas_bin_dir.txt)"
           LD_LIBRARY_PATH="$BIN" ldd /tmp/inject_variant06.so | grep 'not found' || true
 
       - name: Run extracted KOMPAS with native injector
         shell: bash
         run: |
           set +e
-          BIN=/tmp/kroot/opt/ascon/kompas3d-v25/Bin
+          BIN="$(cat /tmp/kompas_bin_dir.txt)"
           rm -f /tmp/work1_v6_inject.log /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw /tmp/kompas_v6.log
           export LANG=C.UTF-8 LC_ALL=C.UTF-8
           export QT_QPA_PLATFORM=offscreen
