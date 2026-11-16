@@ -84,7 +84,7 @@ net += [
  "V2 vctrl 0 12",
  "RCTRL vctrl u_ctrl 100",
  "RLINE ac_src l 10",
- "RLOAD l sw 2.2k",
+ "RLOAD l sw 220",
  "XSC1 sens sw 0 nc_trig 0 nc_b OSCILLOSCOPE",
 ]
 
@@ -142,7 +142,7 @@ labels={
  "V2":"SIM CTRL SUPPLY: 12 V",
  "RCTRL":"SIM CTRL SUPPLY: 100 Ohm",
  "RLINE":"TEST BENCH: source R=10 Ohm",
- "RLOAD":"TEST LOAD: 2.2 kOhm",
+ "RLOAD":"TEST LOAD: 220 Ohm (SIM-only, ~1 A RMS)",
  "XSC1":"XSC1: A=SENS, B=SW",
 }
 for item in root.iter("Item"):
@@ -156,7 +156,7 @@ xmlio.save(root,TARGET,compress=True)
 report=check.check_file(TARGET)
 manifest={
  "state":state,"photocurrent_A":iph,"photocurrent_uA":iph*1e6,
- "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"control_supply_V":12,"control_series_Ohm":100,"Rline_Ohm":10,"Rload_Ohm":2200},
+ "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"control_supply_V":12,"control_series_Ohm":100,"Rline_Ohm":10,"Rload_Ohm":220},
  "models":models,"check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
