@@ -66,6 +66,19 @@ jobs:
             throw
           }
 
+      - name: Inspect official MasterSCADA 3.11 archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $r = Invoke-WebRequest -Uri $url -UseBasicParsing -MaximumRedirection 10
+          "OFFICIAL_HTTP=$($r.StatusCode)" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.txt"
+          "OFFICIAL_LENGTH=$($r.Content.Length)" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.txt"
+          $r.Links | ForEach-Object {
+            "$($_.innerText)`t$($_.href)"
+          } | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.txt"
+          $r.Content | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.html"
+
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -76,4 +89,6 @@ jobs:
             masterscada-7341268/windows-info.txt
             masterscada-7341268/download-diagnostics.txt
             masterscada-7341268/dropmefiles-page.html
+            masterscada-7341268/official-311.txt
+            masterscada-7341268/official-311.html
           if-no-files-found: warn
