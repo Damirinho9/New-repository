@@ -124,15 +124,14 @@ jobs:
 
               export LANG=C.UTF-8
               export LC_ALL=C.UTF-8
-              export QT_QPA_PLATFORM=xcb
+              # The native KOMPAS binary runs reliably with the offscreen Qt backend
+              # in this container; it still exposes the same KsAPI document service.
+              export QT_QPA_PLATFORM=offscreen
               export LD_LIBRARY_PATH="$BIN"
-              Xvfb :99 -screen 0 1920x1080x24 -ac >/tmp/xvfb.out 2>/tmp/xvfb.err &
-              XVFB_PID=$!
-              export DISPLAY=:99
-              unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+              unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
               cd "$BIN"
-              dbus-run-session -- sh -c "LD_PRELOAD=/tmp/bootstrap_variant06_qt.so exec ./ksinvisible -automation"                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
+              dbus-run-session -- sh -c "LD_PRELOAD=/tmp/bootstrap_variant06_qt.so exec ./kKompas -automation"                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
               KP=$!
               echo "KOMPAS_PID=$KP"
 
@@ -176,7 +175,6 @@ jobs:
               cp /tmp/work1_bootstrap.log /work/result/ 2>/dev/null || true
               cp /tmp/kompas-fast.out /work/result/ 2>/dev/null || true
               cp /tmp/kompas-fast.err /work/result/ 2>/dev/null || true
-              kill "$XVFB_PID" 2>/dev/null || true
               echo "RESULT=FAIL_FAST_NATIVE_VARIANT06"
               exit 30
             '
