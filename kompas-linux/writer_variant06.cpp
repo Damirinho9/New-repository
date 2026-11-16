@@ -85,23 +85,54 @@ static bool constr(const IDrawingObjectPtr& o,ksConstraintTypeEnum t,int idx=-1,
 
 static ILineDimensionPtr lin_dim(const ISymbols2DContainerPtr& sc,const ILineSegmentPtr& seg,
                                  const std::wstring& var,double val,int lay,double off){
-  auto col=sc->GetLineDimensions(); if(!col) return {};
-  auto d=col->Add(); if(!d) return {};
+  const std::string vn(var.begin(),var.end());
+  log("lin_dim "+vn+" begin");
+  auto col=sc->GetLineDimensions();
+  if(!col){ log("lin_dim "+vn+" FAIL GetLineDimensions"); return {}; }
+  auto d=col->Add();
+  if(!d){ log("lin_dim "+vn+" FAIL Add"); return {}; }
+
   double x1=seg->GetX1(),y1=seg->GetY1(),x2=seg->GetX2(),y2=seg->GetY2();
-  double dx=x2-x1,dy=y2-y1,le=std::hypot(dx,dy); if(le<1e-9)return {};
+  double dx=x2-x1,dy=y2-y1,le=std::hypot(dx,dy);
+  if(le<1e-9){ log("lin_dim "+vn+" FAIL zero length"); return {}; }
   double nx=-dy/le,ny=dx/le;
+
   d->SetX1(x1);d->SetY1(y1);d->SetX2(x2);d->SetY2(y2);
   d->SetX3((x1+x2)/2+nx*off); d->SetY3((y1+y2)/2+ny*off);
   d->SetAngle(std::atan2(dy,dx)*180.0/PI);
-  d->SetOrientation(ksLinDParallel); if(lay>0) d->SetLayerNumber(lay);
-  if(!d->Update())return {};
-  if(!constr(d,ksCMergePoints,0,seg,0))return {};
-  if(!constr(d,ksCMergePoints,1,seg,1))return {};
-  if(!constr(d,ksCFixedDim))return {};
-  auto v=d->NewConstraint(); if(!v)return {};
-  v->SetConstraintType(ksCDimWithVariable); v->SetConstraintValue(val);
-  v->SetVariable(var); v->SetComment(L"Управляющий размер");
-  if(!v->Create())return {};
+  d->SetOrientation(ksLinDParallel);
+  if(lay>0) d->SetLayerNumber(lay);
+
+  if(!d->Update()){ log("lin_dim "+vn+" FAIL Update"); return {}; }
+  log("lin_dim "+vn+" dimension Update PASS");
+
+  // Measured KOMPAS route for a linear driving dimension:
+  // dimension object -> ksCAssociation(partner array containing measured segment)
+  // -> ksCFixedDim -> ksCDimWithVariable.
+  if(!constr(d,ksCAssociation,-1,seg,-1)){
+    log("lin_dim "+vn+" FAIL ksCAssociation");
+    return {};
+  }
+  log("lin_dim "+vn+" association PASS");
+
+  if(!constr(d,ksCFixedDim)){
+    log("lin_dim "+vn+" FAIL ksCFixedDim");
+    return {};
+  }
+  log("lin_dim "+vn+" fixed-dim PASS");
+
+  auto v=d->NewConstraint();
+  if(!v){ log("lin_dim "+vn+" FAIL NewConstraint variable"); return {}; }
+  v->SetConstraintType(ksCDimWithVariable);
+  v->SetConstraintValue(val);
+  v->SetVariable(var);
+  v->SetComment(L"Управляющий размер");
+  if(!v->Create()){
+    log("lin_dim "+vn+" FAIL ksCDimWithVariable Create");
+    v->Delete();
+    return {};
+  }
+  log("lin_dim "+vn+" variable PASS");
   return d;
 }
 
