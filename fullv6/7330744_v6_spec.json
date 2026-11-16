@@ -1,0 +1,197 @@
+{
+  "netlist": "R1 U_CTRL N_R1 4.7Meg\nR2 N_R1 SENS 47k\nXVD1 DIODE A=0 K=SENS\nC1 SENS 0 0.47u CAP_ELECTROLIT_VIRTUAL\nC2 U_CTRL 0 0.1u CAPACITOR_VIRTUAL\nXVT1 IRFD110 D=T1 G=G12 S=SENS\nR3 G12 0 330\nR4 U_CTRL T1 10k\nXVT2 IRFD110 D=T2 G=G12 S=T1\nXVD2 DIODE A=0 K=U_CTRL\nR5 U_CTRL T2 5.1k\nXVT3 IRFD110 D=T2 G=0 S=VT3_R6\nR6 VT3_R6 DRV 51\nXHL1 LED_red A=LED_A K=U_CTRL\nXVD3 1N4003G A=LED_R K=LED_A\nRU1 DRV 0 10Meg\nR7 LED_R L 58k\nXVS1 SCR A=SW K=0 G=G1\nR8 G1 0 56\nXVD4 1N4003G A=0 K=G1\nXFU1 RESISTOR_VIRTUAL 1=DRV 2=BR_A\nXVD6 1B4B42 V+=G1 AC1=BR_A V-=G2 AC2=0\nXVD5 1N4003G A=SW K=G2\nR9 G2 SW 56\nXVS2 SCR A=0 K=SW G=G2\nC3 L 0 0.047u CAPACITOR_VIRTUAL\nXFU2 RESISTOR_VIRTUAL 1=0 2=N\nXXP1 HDR1X4 P1=SW P2=L P3=L P4=N\nVMAINS L N SIN(0 311.13 50)\nRLOAD SW L 1k\nIPH SENS 0 2u\nXSC1 U_CTRL SW 0 nc_trig 0 nc_b OSCILLOSCOPE\n",
+  "output": "fullv6-out/7330744_PhotoRelay_V6_FULL.ms14",
+  "layout": {
+    "R1": [
+      126,
+      126,
+      90
+    ],
+    "R2": [
+      126,
+      234,
+      90
+    ],
+    "XVD1": [
+      126,
+      360,
+      90
+    ],
+    "C1": [
+      225,
+      360,
+      90
+    ],
+    "C2": [
+      225,
+      126,
+      90
+    ],
+    "XVT1": [
+      360,
+      270
+    ],
+    "R3": [
+      360,
+      396,
+      90
+    ],
+    "R4": [
+      450,
+      144,
+      90
+    ],
+    "XVT2": [
+      486,
+      270
+    ],
+    "XVD2": [
+      558,
+      126,
+      90
+    ],
+    "R5": [
+      594,
+      180,
+      90
+    ],
+    "XVT3": [
+      630,
+      324
+    ],
+    "R6": [
+      720,
+      324
+    ],
+    "XHL1": [
+      702,
+      126
+    ],
+    "XVD3": [
+      810,
+      126
+    ],
+    "RU1": [
+      810,
+      342,
+      90
+    ],
+    "R7": [
+      900,
+      126
+    ],
+    "XVS1": [
+      918,
+      342
+    ],
+    "R8": [
+      1008,
+      396,
+      90
+    ],
+    "XVD4": [
+      1080,
+      396,
+      90
+    ],
+    "XFU1": [
+      900,
+      270
+    ],
+    "XVD6": [
+      1035,
+      270
+    ],
+    "XVD5": [
+      1170,
+      198,
+      90
+    ],
+    "R9": [
+      1170,
+      306,
+      90
+    ],
+    "XVS2": [
+      1170,
+      414
+    ],
+    "C3": [
+      1260,
+      342,
+      90
+    ],
+    "XFU2": [
+      1260,
+      450
+    ],
+    "XXP1": [
+      1350,
+      216,
+      90
+    ],
+    "VMAINS": [
+      1440,
+      450,
+      90
+    ],
+    "RLOAD": [
+      1350,
+      108
+    ],
+    "IPH": [
+      270,
+      270,
+      90
+    ],
+    "XSC1": [
+      810,
+      540
+    ],
+    "GND": [
+      [
+        126,
+        486
+      ],
+      [
+        360,
+        486
+      ],
+      [
+        630,
+        486
+      ],
+      [
+        918,
+        486
+      ],
+      [
+        1080,
+        486
+      ],
+      [
+        1260,
+        486
+      ]
+    ]
+  },
+  "instruments": {
+    "XSC1": {
+      "timebase": "5ms",
+      "a_scale": "20V",
+      "b_scale": "200V",
+      "trigger": "none"
+    }
+  },
+  "sim_time": "40ms",
+  "net_names": true,
+  "colors": {
+    "u_ctrl": "red",
+    "sw": "blue"
+  },
+  "wire_width": 2,
+  "sheet": [
+    17,
+    8
+  ]
+}
