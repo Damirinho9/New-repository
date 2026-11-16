@@ -38,7 +38,7 @@ jobs:
           echo "=== RPM ==="; ls -lh /tmp/graphic.rpm /tmp/core.rpm
           echo "=== KOMPAS ==="; file "$KOMPAS_BIN"; ls -lh "$KOMPAS_BIN"
           echo "=== unresolved ==="
-          LD_LIBRARY_PATH="$(dirname "$KOMPAS_BIN")" ldd "$KOMPAS_BIN" | grep 'not found' || true
+          LD_LIBRARY_PATH="$(dirname "$KOMPAS_BIN"):/usr/lib/llvm-18/lib:/usr/lib/x86_64-linux-gnu" ldd "$KOMPAS_BIN" | grep 'not found' || true
 
       - name: Download precompiled injector
         shell: bash
@@ -47,7 +47,7 @@ jobs:
           curl -fL --retry 5 -o /tmp/inject_variant06.so             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/bin/inject_variant06.so'
           file /tmp/inject_variant06.so
           BIN="$(cat /tmp/kompas_bin_dir.txt)"
-          LD_LIBRARY_PATH="$BIN" ldd /tmp/inject_variant06.so | grep 'not found' || true
+          LD_LIBRARY_PATH="$BIN:/usr/lib/llvm-18/lib:/usr/lib/x86_64-linux-gnu" ldd /tmp/inject_variant06.so | grep 'not found' || true
 
       - name: Run extracted KOMPAS with native injector
         shell: bash
@@ -57,7 +57,7 @@ jobs:
           rm -f /tmp/work1_v6_inject.log /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw /tmp/kompas_v6.log
           export LANG=C.UTF-8 LC_ALL=C.UTF-8
           export QT_QPA_PLATFORM=offscreen
-          export LD_LIBRARY_PATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN:/usr/lib/llvm-18/lib:/usr/lib/x86_64-linux-gnu"
           unset LD_PRELOAD
           unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
           cd "$BIN"
