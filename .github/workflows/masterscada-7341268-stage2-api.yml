@@ -1,0 +1,102 @@
+name: MasterSCADA 7341268 Stage 2 API probe
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-api.yml"
+  workflow_dispatch:
+
+jobs:
+  api-probe:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\msapi" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\MasterSCADA_7341268\installer" | Out-Null
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Inspect CLSID TypeLib registry
+        shell: pwsh
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\msapi\registry.txt"
+          $clsid = "{E4993185-D1A2-11D2-95B8-000000000000}"
+          "=== CLSID ROOT ===" | Out-File -Encoding utf8 $out
+          try { Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\$clsid" | Format-List * | Out-String -Width 300 | Add-Content -Encoding utf8 $out } catch { $_ | Out-String | Add-Content $out }
+          foreach ($sub in @("InprocServer32","LocalServer32","ProgID","TypeLib","Version","VersionIndependentProgID")) {
+            "=== $sub ===" | Add-Content -Encoding utf8 $out
+            try {
+              Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\$clsid\$sub" | Format-List * | Out-String -Width 300 | Add-Content -Encoding utf8 $out
+            } catch { "ERR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+          }
+          try {
+            $tl = (Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\$clsid\TypeLib").'(default)'
+            "TYPELIB_GUID=$tl" | Add-Content -Encoding utf8 $out
+            if ($tl) {
+              Get-ChildItem "Registry::HKEY_CLASSES_ROOT\TypeLib\$tl" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                "KEY=$($_.Name)" | Add-Content -Encoding utf8 $out
+                try { Get-ItemProperty $_.PSPath | Format-List * | Out-String -Width 300 | Add-Content -Encoding utf8 $out } catch {}
+              }
+            }
+          } catch { "TYPELIB_ERR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+
+      - name: Convert type library to .NET interop and dump interfaces
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $out = "$env:GITHUB_WORKSPACE\msapi\interop.txt"
+          $exe = "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          "EXE=$exe" | Out-File -Encoding utf8 $out
+          $candidates = @()
+          $candidates += Get-Command tlbimp.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          $candidates += Get-ChildItem "C:\Program Files (x86)\Microsoft SDKs" -Recurse -Filter tlbimp.exe -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          $candidates += Get-ChildItem "C:\Program Files (x86)\Windows Kits" -Recurse -Filter tlbimp.exe -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          $tlbimp = $candidates | Select-Object -First 1
+          "TLBIMP=$tlbimp" | Add-Content -Encoding utf8 $out
+          if ($tlbimp) {
+            $dll = "$env:GITHUB_WORKSPACE\msapi\MasterSCADA.Interop.dll"
+            & $tlbimp $exe "/out:$dll" "/namespace:MasterSCADAInterop" "/silent" 2>&1 | Out-String | Add-Content -Encoding utf8 $out
+            "TLBIMP_EXIT=$LASTEXITCODE" | Add-Content -Encoding utf8 $out
+            if (Test-Path $dll) {
+              $asm = [Reflection.Assembly]::LoadFrom($dll)
+              foreach ($t in ($asm.GetTypes() | Sort-Object FullName)) {
+                if ($t.Name -match "EProjectLocation|Project|Tree|Computer|Object|Variable|Parameter|Application") {
+                  "=== TYPE $($t.FullName) Kind=$($t.Attributes) ===" | Add-Content -Encoding utf8 $out
+                  if ($t.IsEnum) {
+                    [Enum]::GetNames($t) | ForEach-Object {
+                      "$_=$([Convert]::ToInt64([Enum]::Parse($t,$_)))"
+                    } | Add-Content -Encoding utf8 $out
+                  }
+                  foreach ($m in $t.GetMembers() | Sort-Object MemberType,Name) {
+                    "$($m.MemberType)	$($m.ToString())" | Add-Content -Encoding utf8 $out
+                  }
+                }
+              }
+            }
+          }
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-api
+          path: msapi/**
+          if-no-files-found: warn
