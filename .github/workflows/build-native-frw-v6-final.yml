@@ -26,7 +26,7 @@ jobs:
 
           # Switch ALT p11 from the very slow ftp.altlinux.org to Yandex mirror.
           # First replace the standard full base path, then any remaining host.
-          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             -e 's#http://ftp.altlinux.org/pub/distributions/ALTLinux#https://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org/pub/distributions/ALTLinux#https://mirror.yandex.ru/altlinux#g'             -e 's#http://ftp.altlinux.org#https://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org#https://mirror.yandex.ru/altlinux#g'
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             -e 's#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g'             -e 's#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g'
 
           # KOMPAS is x86_64; the x86_64-i586 package index is not needed here.
           find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             '/x86_64-i586/s/^[[:space:]]*rpm/# rpm/'
@@ -40,7 +40,7 @@ jobs:
           bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
 
           # ASCON script can rewrite ALT sources. Force Yandex again before update.
-          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             -e 's#http://ftp.altlinux.org/pub/distributions/ALTLinux#https://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org/pub/distributions/ALTLinux#https://mirror.yandex.ru/altlinux#g'             -e 's#http://ftp.altlinux.org#https://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org#https://mirror.yandex.ru/altlinux#g'
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             -e 's#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g'             -e 's#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g'
           find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             '/x86_64-i586/s/^[[:space:]]*rpm/# rpm/'
 
           echo "=== SOURCES BEFORE KOMPAS INSTALL ==="
