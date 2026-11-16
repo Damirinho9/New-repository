@@ -53,6 +53,11 @@ static void bootstrap_init(void){
   if(strcmp(base,"kKompas")!=0){
     return;
   }
+  int lockfd=open("/tmp/work1_bootstrap_once.lock",O_WRONLY|O_CREAT|O_EXCL,0644);
+  if(lockfd<0){
+    return;
+  }
+  close(lockfd);
   blog("BOOTSTRAP_CONSTRUCTOR_MAIN_KOMPAS");
   pthread_t t;
   if(pthread_create(&t,NULL,worker,NULL)==0){
