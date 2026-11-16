@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/word-pr13-autocorrect.yml"
       - "pr13/autocorrect_tests.json"
+      - "pr13/autocorrect_ui_test.py"
 
 jobs:
   autocorrect:
@@ -53,116 +54,8 @@ jobs:
         shell: powershell
         timeout-minutes: 4
         run: |
-          $ErrorActionPreference = "Stop"
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type @'
-          using System;
-          using System.Runtime.InteropServices;
-          using System.Threading;
-          public static class NativeKeyboard {
-              [StructLayout(LayoutKind.Sequential)]
-              struct INPUT { public uint type; public InputUnion U; }
-              [StructLayout(LayoutKind.Explicit)]
-              struct InputUnion { [FieldOffset(0)] public KEYBDINPUT ki; }
-              [StructLayout(LayoutKind.Sequential)]
-              struct KEYBDINPUT {
-                  public ushort wVk; public ushort wScan; public uint dwFlags;
-                  public uint time; public UIntPtr dwExtraInfo;
-              }
-              const uint INPUT_KEYBOARD = 1;
-              const uint KEYEVENTF_KEYUP = 0x0002;
-              const uint KEYEVENTF_UNICODE = 0x0004;
-              [DllImport("user32.dll", SetLastError=true)]
-              static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-              [DllImport("user32.dll")]
-              public static extern bool SetForegroundWindow(IntPtr hWnd);
-              public static void SendUnicode(string text) {
-                  foreach (char ch in text) {
-                      INPUT[] inputs = new INPUT[2];
-                      inputs[0].type = INPUT_KEYBOARD;
-                      inputs[0].U.ki.wScan = ch;
-                      inputs[0].U.ki.dwFlags = KEYEVENTF_UNICODE;
-                      inputs[1].type = INPUT_KEYBOARD;
-                      inputs[1].U.ki.wScan = ch;
-                      inputs[1].U.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
-                      SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
-                      Thread.Sleep(60);
-                  }
-              }
-          }
-          '@
-          function Retry-Action([scriptblock]$Action) {
-            for ($i=0; $i -lt 10; $i++) {
-              try { return & $Action } catch {
-                if ($i -eq 9) { throw }
-                Start-Sleep -Milliseconds 400
-              }
-            }
-          }
-
-          $word = New-Object -ComObject Word.Application
-          $word.Visible = $true
-          $word.DisplayAlerts = 0
-          $ac = $word.AutoCorrect
-          $ac.ReplaceText = $true
-          $ac.ReplaceTextFromSpellingChecker = $true
-          $ac.CorrectSentenceCaps = $true
-          $ac.CorrectCapsLock = $true
-          $tests = Get-Content (Join-Path $env:GITHUB_WORKSPACE "pr13\autocorrect_tests.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-          $lines = New-Object System.Collections.Generic.List[string]
-          $lines.Add("WORD_VERSION=$($word.Version)")
-          $lines.Add("AUTOCORRECT_REPLACE_TEXT=$($ac.ReplaceText)")
-          $lines.Add("AUTOCORRECT_SPELLING_SUGGESTIONS=$($ac.ReplaceTextFromSpellingChecker)")
-          $doc = $word.Documents.Add()
-          $failed = $false
-          try {
-            $doc.Content.LanguageID = 1049
-            $doc.Activate()
-            $hwnd = [IntPtr]$word.ActiveWindow.Hwnd
-            foreach ($t in $tests) {
-              Retry-Action { $doc.Content.Text = "" } | Out-Null
-              Retry-Action { $doc.Range(0,0).Select() } | Out-Null
-              [NativeKeyboard]::SetForegroundWindow($hwnd) | Out-Null
-              Start-Sleep -Milliseconds 400
-              [NativeKeyboard]::SendUnicode([string]$t.input)
-              [NativeKeyboard]::SendUnicode(" ")
-              Start-Sleep -Milliseconds 1200
-              $actual = Retry-Action { $doc.Content.Text.Trim() }
-              $lines.Add("FIRST:$($t.input) -> $actual")
-              if ($actual -cne [string]$t.expected) {
-                $lines.Add("BUILTIN_MISS:$($t.input)")
-                try {
-                  $existing = $ac.Entries.Item([string]$t.input)
-                  $existing.Delete()
-                } catch {}
-                $ac.Entries.Add([string]$t.input,[string]$t.expected) | Out-Null
-                Start-Sleep -Milliseconds 500
-                Retry-Action { $doc.Content.Text = "" } | Out-Null
-                Retry-Action { $doc.Range(0,0).Select() } | Out-Null
-                [NativeKeyboard]::SetForegroundWindow($hwnd) | Out-Null
-                Start-Sleep -Milliseconds 400
-                [NativeKeyboard]::SendUnicode([string]$t.input)
-                [NativeKeyboard]::SendUnicode(" ")
-                Start-Sleep -Milliseconds 1200
-                $actual2 = Retry-Action { $doc.Content.Text.Trim() }
-                $lines.Add("AFTER_MANUAL:$($t.input) -> $actual2")
-                if ($actual2 -cne [string]$t.expected) {
-                  $lines.Add("FINAL_FAIL:$($t.input)")
-                  $failed = $true
-                } else {
-                  $lines.Add("MANUAL_OK:$($t.input)")
-                }
-              } else {
-                $lines.Add("BUILTIN_OK:$($t.input)")
-              }
-              $lines | Set-Content -Encoding UTF8 autocorrect-results.txt
-            }
-            $lines | Set-Content -Encoding UTF8 autocorrect-results.txt
-            if ($failed) { throw "One or more AutoCorrect tests failed after manual configuration" }
-          } finally {
-            try { Retry-Action { $doc.Close(0) } | Out-Null } catch {}
-            try { Retry-Action { $word.Quit() } | Out-Null } catch {}
-          }
+          py -m pip install pywin32 pywinauto
+          py .\pr13\autocorrect_ui_test.py
 
       - uses: actions/upload-artifact@v4
         if: always()
