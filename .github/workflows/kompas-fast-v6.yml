@@ -1,0 +1,181 @@
+name: KOMPAS fast native variant06
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/kompas-fast-v6.yml'
+      - 'kompas-linux/writer_variant06.cpp'
+      - 'kompas-linux/bootstrap_variant06_qt.cpp'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Prepare compiler and fast downloader
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y aria2 rpm2cpio cpio clang libc++-dev libc++abi-dev qt6-base-dev pkg-config
+
+      - name: Download KOMPAS payload in parallel and compile writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p fastbuild sdkroot gfxroot result
+
+          GFX_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          SDK_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
+
+          aria2c --allow-overwrite=true --auto-file-renaming=false             -x 16 -s 16 -k 4M --max-tries=8 --retry-wait=2             -d fastbuild -o graphic.rpm "$GFX_URL"
+          aria2c --allow-overwrite=true --auto-file-renaming=false             -x 8 -s 8 -k 2M --max-tries=8 --retry-wait=2             -d fastbuild -o sdk.rpm "$SDK_URL"
+
+          ls -lh fastbuild/*.rpm
+
+          (cd sdkroot && rpm2cpio ../fastbuild/sdk.rpm | cpio -idm --quiet)
+          (cd gfxroot && rpm2cpio ../fastbuild/graphic.rpm | cpio -idm --quiet './opt/ascon/kompas3d-v25/Bin/libksAPI.so')
+
+          INC="$PWD/sdkroot/opt/ascon/kompas3d-v25/SDK/KsAPI/Include"
+          LIB="$PWD/gfxroot/opt/ascon/kompas3d-v25/Bin"
+          test -f "$INC/KsAPI.h"
+          test -f "$LIB/libksAPI.so"
+
+          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" kompas-linux/writer_variant06.cpp             -L"$LIB" -Wl,-rpath,/opt/ascon/kompas3d-v25/Bin             -lksAPI -lc++abi             -o fastbuild/writer_variant06.so
+
+          g++ -std=c++20 -O2 -fPIC -shared -pthread             kompas-linux/bootstrap_variant06_qt.cpp             $(pkg-config --cflags --libs Qt6Core) -ldl             -o fastbuild/bootstrap_variant06_qt.so
+
+          file fastbuild/*.so
+          ldd fastbuild/writer_variant06.so | head -100 || true
+          ldd fastbuild/bootstrap_variant06_qt.so | head -100 || true
+
+      - name: Run KOMPAS in ALT using cached graphic RPM
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf result
+          mkdir -p result
+
+          docker run --rm             -v "$PWD:/work"             alt:p11             bash -lc '
+              set -euxo pipefail
+
+              find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i                 -e "s#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"                 -e "s#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"
+              find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i                 "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
+
+              apt-get update
+              apt-get install -y wget ca-certificates dbus procps iproute2 glibc-i18ndata                 fontconfig libxcbutil-icccm libxcbutil-keysyms libxcbutil-image                 libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
+
+              bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+
+              find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i                 -e "s#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"                 -e "s#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"
+              find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i                 "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
+
+              apt-get update
+
+              mkdir -p /var/cache/apt/archives
+              PRINT=$(apt-get --print-uris install ascon-kompas-graphic-v25 2>/dev/null || true)
+              echo "$PRINT"
+              CACHE_NAME=$(printf "%s\n" "$PRINT" | awk "/ascon-kompas-graphic-v25/ {gsub(/\x27/,\"\",\$2); print \$2; exit}")
+              if [ -z "$CACHE_NAME" ]; then
+                CACHE_NAME="ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm"
+              fi
+              echo "CACHE_NAME=$CACHE_NAME"
+              cp /work/fastbuild/graphic.rpm "/var/cache/apt/archives/$CACHE_NAME"
+
+              apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 || true
+
+              BIN=/opt/ascon/kompas3d-v25/Bin
+              test -x "$BIN/kKompas"
+              test -f "$BIN/libksAPI.so"
+
+              cp /work/fastbuild/writer_variant06.so /tmp/writer_variant06.so
+              cp /work/fastbuild/bootstrap_variant06_qt.so /tmp/bootstrap_variant06_qt.so
+              rm -f /tmp/work1_v6_inject.log /tmp/work1_bootstrap.log                     /tmp/work1_bootstrap_once.lock                     /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw                     /tmp/kompas-fast.out /tmp/kompas-fast.err
+
+              export LANG=C.UTF-8
+              export LC_ALL=C.UTF-8
+              export QT_QPA_PLATFORM=offscreen
+              export LD_LIBRARY_PATH="$BIN"
+              unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+              cd "$BIN"
+              dbus-run-session -- sh -c "LD_PRELOAD=/tmp/bootstrap_variant06_qt.so exec ./kKompas -automation"                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
+              KP=$!
+              echo "KOMPAS_PID=$KP"
+
+              PASS=0
+              for i in $(seq 1 120); do
+                sleep 2
+                echo "poll=$i"
+                tail -80 /tmp/work1_bootstrap.log 2>/dev/null || true
+                tail -80 /tmp/work1_v6_inject.log 2>/dev/null || true
+                if grep -q "RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06" /tmp/work1_v6_inject.log 2>/dev/null; then
+                  PASS=1
+                  break
+                fi
+                if ! kill -0 "$KP" 2>/dev/null; then
+                  echo "KOMPAS process exited"
+                  break
+                fi
+              done
+
+              echo "=== BOOTSTRAP LOG ==="
+              cat /tmp/work1_bootstrap.log 2>/dev/null || true
+              echo "=== WRITER LOG ==="
+              cat /tmp/work1_v6_inject.log 2>/dev/null || true
+              echo "=== KOMPAS STDERR ==="
+              tail -250 /tmp/kompas-fast.err 2>/dev/null || true
+
+              OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+              if [ "$PASS" = "1" ] && [ -s "$OUT" ]; then
+                sha256sum "$OUT"
+                ls -lh "$OUT"
+                cp "$OUT" /work/result/
+                cp /tmp/work1_v6_inject.log /work/result/
+                cp /tmp/work1_bootstrap.log /work/result/
+                cp /tmp/kompas-fast.out /work/result/ || true
+                cp /tmp/kompas-fast.err /work/result/ || true
+                echo "RESULT=PASS_FAST_NATIVE_VARIANT06"
+                exit 0
+              fi
+
+              cp /tmp/work1_v6_inject.log /work/result/ 2>/dev/null || true
+              cp /tmp/work1_bootstrap.log /work/result/ 2>/dev/null || true
+              cp /tmp/kompas-fast.out /work/result/ 2>/dev/null || true
+              cp /tmp/kompas-fast.err /work/result/ 2>/dev/null || true
+              echo "RESULT=FAIL_FAST_NATIVE_VARIANT06"
+              exit 30
+            '
+
+      - name: Verify output
+        if: success()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OUT=result/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          test -s "$OUT"
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path("result/01_Mekhanizm_Variant_06_PARAMETRIC.frw")
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              print([(i.filename,i.file_size) for i in z.infolist()])
+              assert "Contents" in names and "FileInfo" in names
+          print("size",p.stat().st_size)
+          print("sha256",hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+          grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' result/work1_v6_inject.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-work1-v6-fast-native
+          if-no-files-found: ignore
+          path: result/**
