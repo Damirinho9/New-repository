@@ -1,5 +1,5 @@
 from __future__ import annotations
-import math, pathlib, hashlib, json, sys, traceback
+import math, pathlib, hashlib, json, sys, traceback, shutil
 
 import ksapi
 from constants import constants as c
@@ -111,7 +111,10 @@ def main():
     app=require(ksapi.GetKompas(),"GetKompas")
     log("APP="+str(app.GetApplicationName(True)))
     docs=require(app.GetDocuments(),"Documents")
-    doc=require(docs.AddWithDefaultSettings(c.ksDocumentFragment,True),"Create fragment")
+    template=pathlib.Path("/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw")
+    work=pathlib.Path("/tmp/variant06_base.frw")
+    shutil.copy2(template,work)
+    doc=require(docs.Open(str(work),True,False),"Open writable fragment template")
     doc.SetActive()
     d2=require(ksapi.IKompasDocument2D(doc),"IKompasDocument2D")
     d2.SetParametricMode(True)
