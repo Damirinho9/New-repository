@@ -1,0 +1,103 @@
+name: 7330744 stage3 direct native sim
+
+on:
+  push:
+    branches: [multisim-7330744-stage3-direct]
+    paths:
+      - ".github/workflows/7330744-stage3-direct.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: 7330744-stage3-direct
+  cancel-in-progress: true
+
+jobs:
+  direct:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built stage3 MS14 files
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-stage3-sweep
+          path: coarse
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43844649965
+
+      - name: Download harvested Multisim library
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-full-v6-discovery
+          path: dep-library
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43835690292
+
+      - name: Prepare library and output
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force direct-lib,direct-out | Out-Null
+          Expand-Archive -Path dep-library\parts-library.zip -DestinationPath direct-lib -Force
+          Copy-Item coarse\*.ms14 direct-out\
+
+      - name: Install NI Multisim 14.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $installer=Join-Path $env:RUNNER_TEMP 'ni-cds-educational_14.3_online.exe'
+          Invoke-WebRequest 'https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe' -OutFile $installer -UseBasicParsing
+          if((Get-AuthenticodeSignature $installer).Status -ne 'Valid'){throw 'Invalid NI signature'}
+          $p=Start-Process $installer -ArgumentList @('--quiet','--accept-eulas','--prevent-reboot') -PassThru
+          if(-not $p.WaitForExit(480000)){try{Stop-Process -Id $p.Id -Force}catch{}}
+          $ms=Get-ChildItem 'C:\Program Files (x86)\National Instruments','C:\Program Files\National Instruments' -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue|Select-Object -First 1
+          if(-not $ms){throw 'Multisim.exe absent'}
+
+      - name: Install x86 Python and MultisimForge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $py=Join-Path $env:RUNNER_TEMP 'python-3.11.9-x86.exe'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.11.9/python-3.11.9.exe' -OutFile $py -UseBasicParsing
+          if((Get-AuthenticodeSignature $py).Status -ne 'Valid'){throw 'Invalid Python signature'}
+          $p=Start-Process $py -ArgumentList @('/quiet','InstallAllUsers=1','TargetDir=C:\Python311-32','PrependPath=0','Include_launcher=0','Include_test=0','Include_pip=1') -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "Python x86 installer exit=$($p.ExitCode)"}
+          & 'C:\Python311-32\python.exe' -m pip install --disable-pip-version-check --quiet pywin32
+          git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m pip install --disable-pip-version-check -e ".[capture]"
+
+      - name: Run selected native transient points directly
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Continue'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\direct-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $files=@(
+            '7330744_PhotoRelay_V6_SIM_scan_0p0uA.ms14',
+            '7330744_PhotoRelay_V6_SIM_scan_1p0uA.ms14',
+            '7330744_PhotoRelay_V6_SIM_scan_2p5uA.ms14',
+            '7330744_PhotoRelay_V6_SIM_scan_4p0uA.ms14'
+          )
+          foreach($name in $files){
+            $f="$env:GITHUB_WORKSPACE\direct-out\$name"
+            $stem=[IO.Path]::GetFileNameWithoutExtension($name)
+            $csv="$env:GITHUB_WORKSPACE\direct-out\csv_$stem"
+            python -m multisimforge sim "$f" --nets sens,u_ctrl,t1,t2,drv,g1,g2,l,sw --tran 0.4,7000 --csv "$csv" 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\direct-out\sim_$stem.txt"
+            "exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\direct-out\sim_$stem.txt"
+          }
+          python -m multisimforge com stop | Out-File "$env:GITHUB_WORKSPACE\direct-out\com-stop.txt"
+          exit 0
+
+      - name: Upload direct simulation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-stage3-direct
+          path: direct-out/
+          if-no-files-found: error
+          retention-days: 7
