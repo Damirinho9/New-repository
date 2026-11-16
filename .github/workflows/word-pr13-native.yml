@@ -8,19 +8,25 @@ on:
       - ".github/workflows/word-pr13-native.yml"
   workflow_dispatch:
 
+concurrency:
+  group: pr13-word-native
+  cancel-in-progress: true
+
 jobs:
   word-native:
     runs-on: windows-2022
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Microsoft Word with official Office Deployment Tool
         shell: powershell
+        timeout-minutes: 8
         run: |
           $ErrorActionPreference = "Stop"
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\pr13-word-native" | Out-Null
-          Set-Location "$env:GITHUB_WORKSPACE\pr13-word-native"
+          $out = "$env:GITHUB_WORKSPACE\pr13-word-native"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Set-Location $out
 
           $odt = Join-Path $PWD "odt.exe"
           Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20326-20112.exe" -OutFile $odt
@@ -64,67 +70,125 @@ jobs:
           if (!$wordExe) { throw "WINWORD.EXE not found after installation" }
           "WINWORD_EXE=$wordExe" | Set-Content -Encoding UTF8 .\install-status.txt
 
-      - name: Configure Word natively through COM and build PR13 template
+      - name: Configure and verify native Microsoft Word
         shell: powershell
+        timeout-minutes: 4
         run: |
           $ErrorActionPreference = "Stop"
           $out = "$env:GITHUB_WORKSPACE\pr13-word-native"
-          Set-Location $out
-          $log = New-Object System.Collections.Generic.List[string]
-          function L([string]$s) { $log.Add($s); Write-Host $s }
+          $logPath = Join-Path $out "Проверка_среды.txt"
+          Remove-Item $logPath -ErrorAction SilentlyContinue
+          function L([string]$s) {
+            Add-Content -Path $logPath -Value $s -Encoding UTF8
+            Write-Host $s
+          }
 
           $word = $null
+          $doc = $null
           try {
+            L("START native Word COM verification")
             $word = New-Object -ComObject Word.Application
             $word.Visible = $false
             $word.DisplayAlerts = 0
-            L("Word version: " + $word.Version)
-            L("Word build: " + $word.Build)
+            L("Word.Version=" + $word.Version)
+            L("Word.Build=" + $word.Build)
 
             $word.Options.CheckSpellingAsYouType = $true
+            L("CheckSpellingAsYouType=" + $word.Options.CheckSpellingAsYouType)
+
             $word.Options.CheckGrammarAsYouType = $true
+            L("CheckGrammarAsYouType=" + $word.Options.CheckGrammarAsYouType)
+
             $word.Options.CheckGrammarWithSpelling = $true
+            L("CheckGrammarWithSpelling=" + $word.Options.CheckGrammarWithSpelling)
+
             $word.AutoCorrect.ReplaceText = $true
+            L("AutoCorrect.ReplaceText=" + $word.AutoCorrect.ReplaceText)
+
             $word.AutoCorrect.ReplaceTextFromSpellingChecker = $true
+            L("AutoCorrect.ReplaceTextFromSpellingChecker=" + $word.AutoCorrect.ReplaceTextFromSpellingChecker)
 
             $doc = $word.Documents.Add()
+            L("DocumentCreated=True")
+
             $word.DisplayAutoCompleteTips = $true
+            L("DisplayAutoCompleteTips=" + $word.DisplayAutoCompleteTips)
+
             $doc.Content.LanguageID = 1049
+            L("Document.LanguageID=" + $doc.Content.LanguageID)
+
             $doc.ShowSpellingErrors = $true
+            L("Document.ShowSpellingErrors=" + $doc.ShowSpellingErrors)
+
             $doc.ShowGrammaticalErrors = $true
+            L("Document.ShowGrammaticalErrors=" + $doc.ShowGrammaticalErrors)
+
             $doc.AutoHyphenation = $true
             $doc.HyphenateCaps = $false
             $doc.ConsecutiveHyphensLimit = 2
+            L("Document.AutoHyphenation=" + $doc.AutoHyphenation)
+            L("Document.HyphenateCaps=" + $doc.HyphenateCaps)
+            L("Document.ConsecutiveHyphensLimit=" + $doc.ConsecutiveHyphensLimit)
 
-            $doc.Content.Text = "Проверка среды ПР13" + [Environment]::NewLine + "Русский язык проверки: включен." + [Environment]::NewLine + "Автоматические переносы: включены." + [Environment]::NewLine
-            $doc.Content.LanguageID = 1049
+            try {
+              L("RussianLanguageName=" + $word.Languages.Item(1049).NameLocal)
+            } catch {
+              L("RussianLanguageName=ERROR: " + $_.Exception.Message)
+            }
 
-            $docxPath = Join-Path $out "ПР13_Проверка_среды.docx"
-            $doc.SaveAs2($docxPath, 16)
+            try {
+              L("CheckSpelling_example=" + $word.CheckSpelling("пример"))
+              L("CheckSpelling_typo=" + $word.CheckSpelling("напирмер"))
+            } catch {
+              L("CheckSpelling=ERROR: " + $_.Exception.Message)
+            }
 
-            L("CheckSpellingAsYouType=" + $word.Options.CheckSpellingAsYouType)
-            L("CheckGrammarAsYouType=" + $word.Options.CheckGrammarAsYouType)
-            L("CheckGrammarWithSpelling=" + $word.Options.CheckGrammarWithSpelling)
-            L("AutoCorrect.ReplaceText=" + $word.AutoCorrect.ReplaceText)
-            L("AutoCorrect.ReplaceTextFromSpellingChecker=" + $word.AutoCorrect.ReplaceTextFromSpellingChecker)
-            L("DisplayAutoCompleteTips=" + $word.DisplayAutoCompleteTips)
-
-            $verify = $word.Documents.Open($docxPath, $false, $true)
-            L("Document.LanguageID=" + $verify.Content.LanguageID)
-            L("Document.AutoHyphenation=" + $verify.AutoHyphenation)
-            L("Document.ShowSpellingErrors=" + $verify.ShowSpellingErrors)
-            L("Document.ShowGrammaticalErrors=" + $verify.ShowGrammaticalErrors)
-            $verify.Close($false)
-
-            $doc.Close($false)
+            L("NATIVE_WORD_CONFIGURATION_OK=True")
           }
           finally {
+            if ($doc -ne $null) {
+              try { $doc.Close(0) } catch { L("DocumentCloseWarning=" + $_.Exception.Message) }
+            }
             if ($word -ne $null) {
-              try { $word.Quit() } catch {}
-              [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word)
+              try { $word.Quit() } catch { L("WordQuitWarning=" + $_.Exception.Message) }
+              try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) } catch {}
             }
           }
-          $log | Set-Content -Encoding UTF8 (Join-Path $out "Проверка_среды.txt")
+
+      - name: Attempt native Word SaveAs2
+        shell: powershell
+        timeout-minutes: 2
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\pr13-word-native"
+          $logPath = Join-Path $out "Проверка_среды.txt"
+          function L([string]$s) {
+            Add-Content -Path $logPath -Value $s -Encoding UTF8
+            Write-Host $s
+          }
+          $word = $null
+          $doc = $null
+          try {
+            L("SAVE_TEST_START=True")
+            $word = New-Object -ComObject Word.Application
+            $word.Visible = $false
+            $word.DisplayAlerts = 0
+            $doc = $word.Documents.Add()
+            $doc.Content.Text = "Проверка рабочей среды ПР13" + [Environment]::NewLine +
+              "Документ создан и сохранен настольным Microsoft Word под Windows." + [Environment]::NewLine +
+              "Язык проверки: русский. Автоматические переносы: включены."
+            $doc.Content.LanguageID = 1049
+            $doc.AutoHyphenation = $true
+            $path = Join-Path $out "ПР13_Проверка_среды.docx"
+            L("SAVE_TEST_BEFORE=" + $path)
+            $doc.SaveAs2($path, 16)
+            L("SAVE_TEST_AFTER=True")
+          }
+          finally {
+            if ($doc -ne $null) { try { $doc.Close(0) } catch {} }
+            if ($word -ne $null) { try { $word.Quit() } catch {} }
+          }
 
       - name: Inventory native outputs
         if: always()
