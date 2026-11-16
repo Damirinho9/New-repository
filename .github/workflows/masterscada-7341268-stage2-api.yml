@@ -78,7 +78,7 @@ jobs:
             if (Test-Path $dll) {
               $asm = [Reflection.Assembly]::LoadFrom($dll)
               foreach ($t in ($asm.GetTypes() | Sort-Object FullName)) {
-                if ($t.Name -match "EProjectLocation|Project|Tree|Computer|Object|Variable|Parameter|Application") {
+                if ($t.Name -match "EProjectLocation|Project|Tree|Computer|Object|Variable|Parameter|Application|Value|Scale|Property|Parent") {
                   "=== TYPE $($t.FullName) Kind=$($t.Attributes) ===" | Add-Content -Encoding utf8 $out
                   if ($t.IsEnum) {
                     [Enum]::GetNames($t) | ForEach-Object {
@@ -87,9 +87,72 @@ jobs:
                   }
                   foreach ($m in $t.GetMembers() | Sort-Object MemberType,Name) {
                     "$($m.MemberType)	$($m.ToString())" | Add-Content -Encoding utf8 $out
+                    if ($m -is [Reflection.MethodInfo]) {
+                      $pars = $m.GetParameters() | ForEach-Object { "$($_.ParameterType.FullName) $($_.Name)" }
+                      if ($pars) { "PARAMS: $($pars -join '; ')" | Add-Content -Encoding utf8 $out }
+                    }
                   }
                 }
               }
+            }
+          }
+
+      - name: Inspect a stock MasterSCADA demo tree and class IDs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $out = "$env:GITHUB_WORKSPACE\msapi\demo-tree.txt"
+          function Dump-Item($item, [string]$prefix, [int]$depth) {
+            if ($null -eq $item -or $depth -gt 6) { return }
+            try {
+              $ci = $null
+              try { $ci = $item.ClassInfoObject } catch {}
+              $clsid = ""
+              try { if ($ci) { $clsid = $ci.clsid } } catch {}
+              "$prefix NAME=$($item.Name) DISPLAY=$($item.DisplayName) ITEMTYPE=$($item.ItemType) OBJECTTYPE=$($item.ObjectType) ID=$($item.Id) CLSID=$clsid FULL=$($item.FullName)" |
+                Add-Content -Encoding utf8 $out
+              try {
+                $children = @($item._NewEnum())
+                foreach ($ch in $children) { Dump-Item $ch ($prefix + "  ") ($depth+1) }
+              } catch {
+                try {
+                  foreach ($ch in $item) { Dump-Item $ch ($prefix + "  ") ($depth+1) }
+                } catch {}
+              }
+            } catch {
+              "$prefix ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
+          }
+
+          $app = $null
+          try {
+            $app = New-Object -ComObject MasterSCADA.Application
+            $demoFolder = "C:\MasterSCADA Projects\Projects\Tutorials\Demo"
+            $app.OpenProject(1, $demoFolder, "Demo", $false, "", "", $false)
+            Start-Sleep -Seconds 3
+            $p = $app.CurrentProject
+            "PROJECT=$($p.Name) PATH=$($p.Path) COMPUTERS=$($p.ComputerCount)" | Out-File -Encoding utf8 $out
+            "=== SYSTEM ROOT ===" | Add-Content -Encoding utf8 $out
+            Dump-Item $p.SystemRoot "" 0
+            "=== OBJECT ROOT ===" | Add-Content -Encoding utf8 $out
+            Dump-Item $p.ObjTree.Root "" 0
+            "=== COMPUTER COLLECTION ===" | Add-Content -Encoding utf8 $out
+            for ($i=0; $i -lt $p.ComputerCount; $i++) {
+              try {
+                $comp=$p.Computer($i)
+                $ci=$comp.ClassInfoObject
+                "COMPUTER[$i] NAME=$($comp.Name) TYPE=$($comp.ObjectType) ITEMTYPE=$($comp.ItemType) CLSID=$($ci.clsid) FULL=$($comp.FullName)" | Add-Content -Encoding utf8 $out
+                "COMPUTER_MEMBER:" | Add-Content -Encoding utf8 $out
+                $comp | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $out
+              } catch { "COMPUTER[$i] ERR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+            }
+          } catch {
+            "FATAL=$($_.Exception.ToString())" | Out-File -Encoding utf8 $out
+          } finally {
+            if ($app) {
+              try { $app.CloseProject("Demo") } catch {}
+              try { $app.ExitScada() } catch {}
+              try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
             }
           }
 
