@@ -1,0 +1,133 @@
+name: MasterSCADA 7341268 Stage 2 Reopen Probe
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-reopen.yml"
+  workflow_dispatch:
+
+jobs:
+  reopen:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\msreopen" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Create native VAV without UI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Continue"
+          $log="$env:GITHUB_WORKSPACE\msreopen\create.txt"
+          $baseProjects="C:\MasterSCADA Projects\Projects"
+          $id="7341268_Variant7"
+          $folder=Join-Path $baseProjects $id
+          if(Test-Path $folder){Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue}
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          $target=Join-Path $folder "$id.vav"
+          $app=New-Object -ComObject MasterSCADA.Application
+          try {
+            try { $null=$app.CreateProjectTemp(1,$baseProjects,$id,"Система водяного отопления - вариант 7","") }
+            catch { "CREATE_TEMP_EXCEPTION=$($_.Exception.Message)" | Out-File -Encoding utf8 $log }
+          } finally {
+            try{$app.ExitScada()}catch{}
+            try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
+          }
+          Start-Sleep -Seconds 3
+          if(!(Test-Path $target)){throw "VAV was not created"}
+          $fi=Get-Item $target
+          "VAV=$target" | Add-Content -Encoding utf8 $log
+          "SIZE=$($fi.Length)" | Add-Content -Encoding utf8 $log
+          "SHA256=$((Get-FileHash $target -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $log
+
+      - name: Open VAV in editor and attach COM
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Continue"
+          $log="$env:GITHUB_WORKSPACE\msreopen\reopen.txt"
+          $target="C:\MasterSCADA Projects\Projects\7341268_Variant7\7341268_Variant7.vav"
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $proc=Start-Process $exe -ArgumentList @($target) -PassThru
+          "START_PID=$($proc.Id)" | Out-File -Encoding utf8 $log
+          Start-Sleep -Seconds 12
+          "ALIVE=$(($null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)))" | Add-Content -Encoding utf8 $log
+
+          $app=$null
+          try {
+            $app=New-Object -ComObject MasterSCADA.Application
+            "COM_ATTACHED=true" | Add-Content -Encoding utf8 $log
+            "PROJECTS_COUNT=$($app.Projects.Count)" | Add-Content -Encoding utf8 $log
+            $p=$app.CurrentProject
+            "CURRENT_NULL=$($null -eq $p)" | Add-Content -Encoding utf8 $log
+            if($p){
+              "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $log
+              "PROJECT_PATH=$($p.Path)" | Add-Content -Encoding utf8 $log
+              "PROJECT_GUID=$($p.ProjectGUID)" | Add-Content -Encoding utf8 $log
+              "COMPUTER_COUNT=$($p.ComputerCount)" | Add-Content -Encoding utf8 $log
+              "=== PROJECT MEMBERS ===" | Add-Content -Encoding utf8 $log
+              $p | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+              foreach($n in @("SystemRoot","SysTree","ObjTree")){
+                try{
+                  $v=$p.$n
+                  "=== $n ===" | Add-Content -Encoding utf8 $log
+                  "NAME=$($v.Name) COUNT=$($v.Count) ITEMTYPE=$($v.ItemType) OBJECTTYPE=$($v.ObjectType) FULL=$($v.FullName)" | Add-Content -Encoding utf8 $log
+                  $v | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+                }catch{"$n ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+              }
+            }
+
+            "=== PALETTE ===" | Add-Content -Encoding utf8 $log
+            try{
+              $pal=$app.ObjPalette
+              $pal | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+              foreach($name in @("Компьютер","Объект","Переменная","Значение","Computer","Object","Variable","Value")){
+                try{
+                  $o=$pal.GetObject($name)
+                  "GET[$name]=$o" | Add-Content -Encoding utf8 $log
+                  if($o){
+                    $o | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+                    foreach($pr in @("Name","clsid","CLSID","ObjectType","ItemType","DisplayName","ClassInfoObject")){
+                      try{"GET[$name].$pr=$($o.$pr)"|Add-Content -Encoding utf8 $log}catch{}
+                    }
+                  }
+                }catch{"GET[$name] ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+              }
+            }catch{"PALETTE_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+          } finally {
+            if($app){
+              try{$app.ExitScada()}catch{}
+              try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
+            }
+            try{Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue}catch{}
+          }
+
+      - name: Copy native project
+        shell: pwsh
+        run: |
+          $src="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          $dst="$env:GITHUB_WORKSPACE\msreopen\7341268_Variant7"
+          Copy-Item $src $dst -Recurse -Force
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-reopen
+          path: msreopen/**
+          if-no-files-found: warn
