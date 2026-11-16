@@ -1,0 +1,188 @@
+name: PR13 native Word environment
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/word-pr13-native.yml"
+  workflow_dispatch:
+
+jobs:
+  word-native:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Microsoft Word with official Office Deployment Tool
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\pr13-word-native" | Out-Null
+          Set-Location "$env:GITHUB_WORKSPACE\pr13-word-native"
+
+          $odt = Join-Path $PWD "odt.exe"
+          Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20326-20112.exe" -OutFile $odt
+          Start-Process -FilePath $odt -ArgumentList "/quiet /extract:$PWD\odt" -Wait
+          $setup = Join-Path $PWD "odt\setup.exe"
+          if (!(Test-Path $setup)) { throw "ODT setup.exe not extracted" }
+
+          @'
+          <Configuration>
+            <Add OfficeClientEdition="64" Channel="Current">
+              <Product ID="O365ProPlusRetail">
+                <Language ID="ru-ru" />
+                <ExcludeApp ID="Access" />
+                <ExcludeApp ID="Excel" />
+                <ExcludeApp ID="Groove" />
+                <ExcludeApp ID="Lync" />
+                <ExcludeApp ID="OneDrive" />
+                <ExcludeApp ID="OneNote" />
+                <ExcludeApp ID="Outlook" />
+                <ExcludeApp ID="PowerPoint" />
+                <ExcludeApp ID="Publisher" />
+                <ExcludeApp ID="Teams" />
+              </Product>
+            </Add>
+            <Property Name="AUTOACTIVATE" Value="0" />
+            <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+            <Updates Enabled="FALSE" />
+            <Display Level="None" AcceptEULA="TRUE" />
+          </Configuration>
+          '@ | Set-Content -Encoding UTF8 .\word-only.xml
+
+          & $setup /configure .\word-only.xml
+          if ($LASTEXITCODE -ne 0) { throw "ODT configure failed: $LASTEXITCODE" }
+
+          $pf86 = (Get-Item Env:'ProgramFiles(x86)' -ErrorAction SilentlyContinue).Value
+          $candidates = @(
+            "$env:ProgramFiles\Microsoft Office\root\Office16\WINWORD.EXE",
+            "$pf86\Microsoft Office\root\Office16\WINWORD.EXE"
+          )
+          $wordExe = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (!$wordExe) { throw "WINWORD.EXE not found after installation" }
+          "WINWORD_EXE=$wordExe" | Set-Content -Encoding UTF8 .\install-status.txt
+
+      - name: Configure Word natively through COM and build PR13 template
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\pr13-word-native"
+          Set-Location $out
+          $log = New-Object System.Collections.Generic.List[string]
+          function L([string]$s) { $log.Add($s); Write-Host $s }
+
+          $word = $null
+          try {
+            $word = New-Object -ComObject Word.Application
+            $word.Visible = $false
+            $word.DisplayAlerts = 0
+            L("Word version: " + $word.Version)
+            L("Word build: " + $word.Build)
+
+            $word.Options.CheckSpellingAsYouType = $true
+            $word.Options.CheckGrammarAsYouType = $true
+            $word.Options.CheckGrammarWithSpelling = $true
+            $word.AutoCorrect.ReplaceText = $true
+            $word.AutoCorrect.ReplaceTextFromSpellingChecker = $true
+            $word.DisplayAutoCompleteTips = $true
+
+            $doc = $word.Documents.Add()
+            $doc.Content.LanguageID = 1049
+            $doc.Styles.Item("Normal").LanguageID = 1049
+            $doc.ShowSpellingErrors = $true
+            $doc.ShowGrammaticalErrors = $true
+            $doc.AutoHyphenation = $true
+            $doc.HyphenateCaps = $false
+            $doc.ConsecutiveHyphensLimit = 2
+
+            $doc.Content.Text = "Проверка среды ПР13" + [Environment]::NewLine + "Русский язык проверки: включен." + [Environment]::NewLine + "Автоматические переносы: включены." + [Environment]::NewLine
+            $doc.Content.LanguageID = 1049
+
+            $docxPath = Join-Path $out "ПР13_Проверка_среды.docx"
+            $doc.SaveAs2($docxPath, 16)
+
+            $tplPath = Join-Path $out "ПР13.dotx"
+            $tplSeed = $word.Documents.Add()
+            $tplSeed.Content.LanguageID = 1049
+            $tplSeed.Styles.Item("Normal").LanguageID = 1049
+            $tplSeed.AutoHyphenation = $true
+            $tplSeed.SaveAs2($tplPath, 14)
+            $tplSeed.Close($false)
+
+            $based = $word.Documents.Add($tplPath, $false, 0, $false)
+            $based.Content.LanguageID = 1049
+            $based.AutoHyphenation = $true
+            $tpl = $based.AttachedTemplate
+
+            $entries = @(
+              @{Name="Пятница"; Value="Пятница"},
+              @{Name="Апрель"; Value="Апрель"},
+              @{Name="Текущая дата"; Value="16.11.2026"}
+            )
+            foreach ($e in $entries) {
+              $based.Content.Text = $e.Value
+              $r = $based.Content.Duplicate
+              try {
+                $old = $tpl.AutoTextEntries.Item($e.Name)
+                $old.Delete()
+              } catch {}
+              [void]$tpl.AutoTextEntries.Add($e.Name, $r)
+              L("AutoText added: " + $e.Name + " = " + $e.Value)
+            }
+            $tpl.Save()
+            $based.Close($false)
+
+            L("CheckSpellingAsYouType=" + $word.Options.CheckSpellingAsYouType)
+            L("CheckGrammarAsYouType=" + $word.Options.CheckGrammarAsYouType)
+            L("CheckGrammarWithSpelling=" + $word.Options.CheckGrammarWithSpelling)
+            L("AutoCorrect.ReplaceText=" + $word.AutoCorrect.ReplaceText)
+            L("AutoCorrect.ReplaceTextFromSpellingChecker=" + $word.AutoCorrect.ReplaceTextFromSpellingChecker)
+            L("DisplayAutoCompleteTips=" + $word.DisplayAutoCompleteTips)
+
+            $verify = $word.Documents.Open($docxPath, $false, $true)
+            L("Document.LanguageID=" + $verify.Content.LanguageID)
+            L("Document.AutoHyphenation=" + $verify.AutoHyphenation)
+            L("Document.ShowSpellingErrors=" + $verify.ShowSpellingErrors)
+            L("Document.ShowGrammaticalErrors=" + $verify.ShowGrammaticalErrors)
+            $verify.Close($false)
+
+            $test = $word.Documents.Add($tplPath)
+            $attached = $test.AttachedTemplate
+            foreach ($name in @("Пятница","Апрель","Текущая дата")) {
+              $item = $attached.AutoTextEntries.Item($name)
+              L("AutoText verified: " + $item.Name + " = " + $item.Value)
+            }
+            $test.Close($false)
+
+            $doc.Close($false)
+          }
+          finally {
+            if ($word -ne $null) {
+              try { $word.Quit() } catch {}
+              [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($word)
+            }
+          }
+          $log | Set-Content -Encoding UTF8 (Join-Path $out "Проверка_среды.txt")
+
+      - name: Inventory native outputs
+        if: always()
+        shell: powershell
+        run: |
+          Get-ChildItem "$env:GITHUB_WORKSPACE\pr13-word-native" -Recurse |
+            Select-Object FullName,Length,LastWriteTime |
+            Format-Table -AutoSize
+
+      - name: Upload native Word outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr13-native-word-environment
+          path: |
+            pr13-word-native/ПР13.dotx
+            pr13-word-native/ПР13_Проверка_среды.docx
+            pr13-word-native/Проверка_среды.txt
+            pr13-word-native/install-status.txt
+          if-no-files-found: warn
+          retention-days: 7
