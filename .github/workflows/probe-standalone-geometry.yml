@@ -52,6 +52,8 @@ jobs:
             if(!h2){std::fprintf(stderr,"dlopen k2DDoc: %s\n",dlerror());return 10;}
             void* ha=dlopen("/opt/ascon/kompas3d-v25/Bin/libkAPI2DCore.so",RTLD_NOW|RTLD_GLOBAL);
             if(!ha){std::fprintf(stderr,"dlopen API2D: %s\n",dlerror());return 11;}
+            void* hc=dlopen("/opt/ascon/kompas3d-v25/Bin/libksAPIC.so",RTLD_NOW|RTLD_GLOBAL);
+            if(!hc){std::fprintf(stderr,"dlopen ksAPIC: %s\n",dlerror());return 21;}
 
             using CreatorCtor=void(*)(void*,const wchar_t*,bool);
             using CreatorCreate=void*(*)(void*);
@@ -63,11 +65,11 @@ jobs:
             using ManagerGetViews=void*(*)(void*);
             using GetActive=void*(*)(void*);
             using GetObjects=void*(*)(void*);
-            using GetCollection=void*(*)(void*,int);
-            using AddObject=void*(*)(void*,int);
+            using GetLineSegments=void*(*)(void*);
+            using AddLine=void*(*)(void*);
             using SetD=void(*)(void*,double);
             using SetI=void(*)(void*,int);
-            using Update=void(*)(void*);
+            using Update=int(*)(void*);
 
             auto creatorCtor=sym<CreatorCtor>(h2,"_ZN15GrEditorCreaterC1EPKwb");
             auto creatorCreate=sym<CreatorCreate>(h2,"_ZN15GrEditorCreater6CreateEv");
@@ -80,14 +82,14 @@ jobs:
             // Returned pointers are interface subobjects; use ABI adjustment thunks.
             auto getActive=sym<GetActive>(ha,"_ZThn160_N7LtViews13GetActiveViewEv");
             auto getObjects=sym<GetObjects>(ha,"_ZThn208_N6LtView19GetObjectsContainerEv");
-            auto getCollection=sym<GetCollection>(ha,"_ZThn80_N25LtDrawingObjectsContainer13GetCollectionE23KompasAPIObjectTypeEnum");
-            auto addObject=sym<AddObject>(ha,"_ZThn112_N16LtDrawingObjects3AddE21DrawingObjectTypeEnum");
-            auto setX1=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetX1Ed");
-            auto setY1=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetY1Ed");
-            auto setX2=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetX2Ed");
-            auto setY2=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetY2Ed");
-            auto setStyle=sym<SetI>(ha,"_ZThn112_N17LtSelfLineSegment8SetStyleEi");
-            auto update=sym<Update>(ha,"_ZThn208_N17LtSelfLineSegment13ContourUpdateEv");
+            auto getLineSegments=sym<GetLineSegments>(hc,"IDrawingContainer_GetLineSegments");
+            auto addLine=sym<AddLine>(hc,"ILineSegments_Add");
+            auto setX1=sym<SetD>(hc,"ILineSegment_SetX1");
+            auto setY1=sym<SetD>(hc,"ILineSegment_SetY1");
+            auto setX2=sym<SetD>(hc,"ILineSegment_SetX2");
+            auto setY2=sym<SetD>(hc,"ILineSegment_SetY2");
+            auto setStyle=sym<SetI>(hc,"IDrawingObject_SetStyle");
+            auto update=sym<Update>(hc,"IDrawingObject_Update");
 
             std::vector<unsigned char> creator(4096); std::memset(creator.data(),0,creator.size());
             creatorCtor(creator.data(),L"/tmp/template.frw",false);
@@ -110,9 +112,9 @@ jobs:
             std::printf("VIEW_IF=%p\n",view); if(!view)return 14;
             void* objs=getObjects(view);
             std::printf("OBJECTS_IF=%p\n",objs); if(!objs)return 15;
-            void* lines=getCollection(objs,13024); // KompasAPIObjectTypeEnum::ksObjectLineSegments
+            void* lines=getLineSegments(objs);
             std::printf("LINES_IF=%p\n",lines); if(!lines)return 19;
-            void* line=addObject(lines,1); // DrawingObjectTypeEnum::ksDrLineSeg
+            void* line=addLine(lines);
             std::printf("LINE_IF=%p\n",line); if(!line)return 16;
 
             setX1(line,0.0); setY1(line,0.0); setX2(line,75.0); setY2(line,0.0);
