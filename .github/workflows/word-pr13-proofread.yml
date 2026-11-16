@@ -62,12 +62,14 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           choco install libreoffice-fresh --no-progress -y
-          $soffice = "C:\Program Files\LibreOffice\program\soffice.exe"
+          $soffice = "C:\Program Files\LibreOffice\program\soffice.com"
           if (-not (Test-Path $soffice)) { throw "LibreOffice executable missing" }
           & $soffice --headless --convert-to "doc:MS Word 97" --outdir "$env:GITHUB_WORKSPACE" "$env:GITHUB_WORKSPACE\PR13_1_source.docx"
+          if ($LASTEXITCODE -ne 0) { throw "LibreOffice conversion failed with exit code $LASTEXITCODE" }
           $src = Join-Path $env:GITHUB_WORKSPACE "PR13_1_source.doc"
           $dst = Join-Path $env:GITHUB_WORKSPACE "PR13_2.doc"
-          if (-not (Test-Path $src)) { throw "Binary DOC source missing" }
+          for ($i = 0; $i -lt 30 -and -not (Test-Path $src); $i++) { Start-Sleep -Seconds 1 }
+          if (-not (Test-Path $src)) { throw "Binary DOC source missing after conversion" }
           Copy-Item $src $dst -Force
 
       - name: Proofread and save in native Microsoft Word
