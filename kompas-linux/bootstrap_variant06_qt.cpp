@@ -115,7 +115,7 @@ static void bootstrap_init(){
   if(n>0) exe[n]='\0';
   const char* base=strrchr(exe,'/');
   base=base?base+1:exe;
-  if(strcmp(base,"kKompas")!=0) return;
+  if(strcmp(base,"kKompas")!=0 && strcmp(base,"ksinvisible")!=0) return;
 
   int lockfd=open("/tmp/work1_bootstrap_once.lock",O_WRONLY|O_CREAT|O_EXCL,0644);
   if(lockfd<0) return;
