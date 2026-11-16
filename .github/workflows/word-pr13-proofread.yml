@@ -56,6 +56,20 @@ jobs:
           '@ | Set-Content -Encoding UTF8 "$env:RUNNER_TEMP\word.xml"
           & "$dir\setup.exe" /configure "$env:RUNNER_TEMP\word.xml"
 
+      - name: Prepare binary Word 97-2003 source
+        shell: powershell
+        timeout-minutes: 8
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install libreoffice-fresh --no-progress -y
+          $soffice = "C:\Program Files\LibreOffice\program\soffice.exe"
+          if (-not (Test-Path $soffice)) { throw "LibreOffice executable missing" }
+          & $soffice --headless --convert-to "doc:MS Word 97" --outdir "$env:GITHUB_WORKSPACE" "$env:GITHUB_WORKSPACE\PR13_1_source.docx"
+          $src = Join-Path $env:GITHUB_WORKSPACE "PR13_1_source.doc"
+          $dst = Join-Path $env:GITHUB_WORKSPACE "PR13_2.doc"
+          if (-not (Test-Path $src)) { throw "Binary DOC source missing" }
+          Copy-Item $src $dst -Force
+
       - name: Proofread and save in native Microsoft Word
         shell: powershell
         timeout-minutes: 4
