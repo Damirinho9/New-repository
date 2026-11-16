@@ -23,8 +23,10 @@ jobs:
         run: |
           set -euxo pipefail
           curl -fL --retry 5 --retry-delay 2 -o /tmp/graphic.rpm             'https://repo.ascon.ru/stable/rpm/redos/8.0/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/core.rpm             'https://repo.ascon.ru/stable/rpm/redos/8.0/ascon-kompas-v25-25.0.5.2780-0.x86_64.rpm'
           mkdir -p /tmp/kroot
           (cd /tmp/kroot && rpm2cpio /tmp/graphic.rpm | cpio -idm --quiet)
+          (cd /tmp/kroot && rpm2cpio /tmp/core.rpm | cpio -idm --quiet)
           KOMPAS_BIN="$(find /tmp/kroot -type f -name kKompas -print -quit)"
           KSAPI_LIB="$(find /tmp/kroot -type f -name libksAPI.so -print -quit)"
           echo "KOMPAS_BIN=$KOMPAS_BIN"
@@ -33,7 +35,7 @@ jobs:
           test -n "$KSAPI_LIB"
           chmod +x "$KOMPAS_BIN"
           dirname "$KOMPAS_BIN" > /tmp/kompas_bin_dir.txt
-          echo "=== RPM ==="; ls -lh /tmp/graphic.rpm
+          echo "=== RPM ==="; ls -lh /tmp/graphic.rpm /tmp/core.rpm
           echo "=== KOMPAS ==="; file "$KOMPAS_BIN"; ls -lh "$KOMPAS_BIN"
           echo "=== unresolved ==="
           LD_LIBRARY_PATH="$(dirname "$KOMPAS_BIN")" ldd "$KOMPAS_BIN" | grep 'not found' || true
