@@ -23,7 +23,9 @@ jobs:
           apt-get install -y wget ca-certificates fontconfig dbus procps file coreutils
           bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
           apt-get update
-          apt-get install -y clang18.1 libcxx libcxx-devel libcxxabi libcxxabi-devel || true
+          apt-get install -y clang18.1 libcxx libcxx-devel libcxxabi libcxxabi-devel \
+            libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util \
+            libXv libXScrnSaver libxkbfile libfontenc || true
           ldconfig -p | grep -E 'libc\+\+|libc\+\+abi' || true
           apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-sdk-v25 ascon-kompas-v25 || true
           test -x /opt/ascon/kompas3d-v25/Bin/kKompas
