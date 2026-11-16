@@ -111,7 +111,7 @@ def main():
     app=require(ksapi.GetKompas(),"GetKompas")
     log("APP="+str(app.GetApplicationName(True)))
     docs=require(app.GetDocuments(),"Documents")
-    doc=require(docs.Add(c.ksDocumentFragment,True),"Create fragment")
+    doc=require(docs.AddWithDefaultSettings(c.ksDocumentFragment,True),"Create fragment")
     doc.SetActive()
     d2=require(ksapi.IKompasDocument2D(doc),"IKompasDocument2D")
     d2.SetParametricMode(True)
