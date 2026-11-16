@@ -1,0 +1,159 @@
+name: 7330744 stage3 bridge-final native simulation
+
+on:
+  push:
+    branches: [multisim-7330744-stage3-bridge-final]
+    paths:
+      - ".github/workflows/7330744-stage3-bridge-final.yml"
+      - "fullv6/**"
+  workflow_dispatch:
+
+concurrency:
+  group: 7330744-stage3-bridge-final
+  cancel-in-progress: true
+
+jobs:
+  final:
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download harvested Multisim library
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-full-v6-discovery
+          path: dep-library
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43835690292
+
+      - name: Download decoded master DB index
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-dbnode
+          path: dep-db
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43836264959
+
+      - name: Prepare component library
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force fullv6-lib,stage3-out,stage3-final | Out-Null
+          Expand-Archive -Path dep-library\parts-library.zip -DestinationPath fullv6-lib -Force
+          Copy-Item dep-db\db_index.json fullv6-lib\db_index.json -Force
+
+      - name: Install NI Multisim 14.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $installer=Join-Path $env:RUNNER_TEMP 'ni-cds-educational_14.3_online.exe'
+          Invoke-WebRequest 'https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe' -OutFile $installer -UseBasicParsing
+          if((Get-AuthenticodeSignature $installer).Status -ne 'Valid'){throw 'Invalid NI signature'}
+          $p=Start-Process $installer -ArgumentList @('--quiet','--accept-eulas','--prevent-reboot') -PassThru
+          if(-not $p.WaitForExit(480000)){try{Stop-Process -Id $p.Id -Force}catch{}}
+          $ms=Get-ChildItem 'C:\Program Files (x86)\National Instruments','C:\Program Files\National Instruments' -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue|Select-Object -First 1
+          if(-not $ms){throw 'Multisim.exe absent'}
+          $ms.FullName|Out-File stage3-final\multisim-path.txt
+
+      - name: Install x86 Python COM bridge and MultisimForge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $py=Join-Path $env:RUNNER_TEMP 'python-3.11.9-x86.exe'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.11.9/python-3.11.9.exe' -OutFile $py -UseBasicParsing
+          if((Get-AuthenticodeSignature $py).Status -ne 'Valid'){throw 'Invalid Python signature'}
+          $p=Start-Process $py -ArgumentList @('/quiet','InstallAllUsers=1','TargetDir=C:\Python311-32','PrependPath=0','Include_launcher=0','Include_test=0','Include_pip=1') -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "Python x86 installer exit=$($p.ExitCode)"}
+          & 'C:\Python311-32\python.exe' -m pip install --disable-pip-version-check --quiet pywin32
+          git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m pip install --disable-pip-version-check -e ".[capture]"
+          python -m pip install --disable-pip-version-check --quiet pyautogui pywinauto pywin32 pillow
+
+      - name: Patch helper to wait for complete native transient
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python fullv6\patch_multisimforge_wait.py "$env:RUNNER_TEMP\MultisimForge" | Tee-Object -FilePath stage3-final\helper-patch.txt
+
+      - name: Fetch exact simulation models
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Continue'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $models=@('PHOTO_DIODE_RATED','ZVN0124A','ZVN2106A','BUZ90','1N4742A','1N4007','MDA2504','30_AMP','HDR1X5','2N6509','BT151_500R')
+          foreach($m in $models){
+            "===== $m =====" | Add-Content "$env:GITHUB_WORKSPACE\stage3-final\fetch.txt"
+            python -m multisimforge parts fetch "$m" 2>&1 | Add-Content "$env:GITHUB_WORKSPACE\stage3-final\fetch.txt"
+          }
+
+      - name: Real Multisim coarse and fine photocurrent sweep
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          $env:PYTHONPATH="$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:GITHUB_WORKSPACE"
+          python fullv6\finalize_stage3.py 2>&1 | Tee-Object -FilePath stage3-final\finalize-console.txt
+          if($LASTEXITCODE -ne 0){throw "adaptive stage3 failed exit=$LASTEXITCODE"}
+
+      - name: Structural check of three native states
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          foreach($s in @('DARK','THRESHOLD','LIGHT')){
+            $f="$env:GITHUB_WORKSPACE\stage3-final\7330744_PhotoRelay_V6_$s.ms14"
+            python -m multisimforge check "$f" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\stage3-final\check_$s.json"
+            "check_exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\stage3-final\check_$s.txt"
+            python -m multisimforge inspect "$f" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\stage3-final\inspect_$s.json"
+          }
+
+      - name: Genuine Multisim previews and oscilloscope captures
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          foreach($s in @('DARK','THRESHOLD','LIGHT')){
+            $f="$env:GITHUB_WORKSPACE\stage3-final\7330744_PhotoRelay_V6_$s.ms14"
+            $preview="$env:GITHUB_WORKSPACE\stage3-final\Multisim_${s}_schematic.png"
+            python -m multisimforge preview "$f" "$preview" 2>&1 | Out-File "$env:GITHUB_WORKSPACE\stage3-final\preview_$s.txt"
+            if($LASTEXITCODE -ne 0){throw "$s preview failed"}
+            python -m multisimforge capture "$f" "$env:GITHUB_WORKSPACE\stage3-final\capture_$s" --wait 1.5 --timeout 90 2>&1 | Out-File "$env:GITHUB_WORKSPACE\stage3-final\capture_$s.txt"
+            if($LASTEXITCODE -ne 0){throw "$s capture failed"}
+          }
+          python -m multisimforge com stop | Out-File "$env:GITHUB_WORKSPACE\stage3-final\com-stop.txt"
+
+      - name: Save run and reopen all three files in real Multisim GUI
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ms=(Get-Content stage3-final\multisim-path.txt -Raw).Trim()
+          python fullv6\native_verify_stage3.py "$ms" "$env:GITHUB_WORKSPACE\stage3-final" 2>&1 | Tee-Object -FilePath stage3-final\native-verify-console.txt
+          if($LASTEXITCODE -ne 0){throw "native GUI verification failed exit=$LASTEXITCODE"}
+
+      - name: Final hashes
+        shell: powershell
+        run: |
+          Get-ChildItem stage3-final -Filter *.ms14 | ForEach-Object {
+            "$($_.Name)  size=$($_.Length)  sha256=$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)"
+          } | Out-File stage3-final\sha256.txt
+
+      - name: Upload final stage 3
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-stage3-bridge-native-final
+          path: stage3-final/
+          if-no-files-found: error
+          retention-days: 7
