@@ -4,7 +4,7 @@ on:
   push:
     branches: [multisim-7330744-stage3-model2]
     paths:
-      - ".github/workflows/7330744-stage3-final.yml"
+      - ".github/workflows/7330744-stage3-model2.yml"
       - "fullv6/**"
   workflow_dispatch:
 
