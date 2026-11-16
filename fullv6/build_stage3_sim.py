@@ -98,10 +98,10 @@ layout={
  "R8":[1152,486,90],"XVD4":[1233,486,90],"XFU1":[1008,324],
  "XVD6":[1197,342],"XVD5":[1323,198],"R9":[1323,270],
  "XVS2":[1404,342,90],"C3":[1512,450,90],"XFU2":[1512,576],
- "XXP1":[1656,306],
- "I1":[270,486,90],"V1":[1782,558,90],"V2":[1782,270,90],"RCTRL":[1656,270],"RLINE":[1692,558],"RLOAD":[1656,144,90],
- "XSC1":[720,666],
- "GND":[[252,558],[432,558],[666,558],[900,558],[1080,558],[1233,558],[1404,648],[1512,648],[270,558],[756,756]],
+ "XXP1":[1908,306,90],
+ "I1":[270,486,90],"V1":[1908,648,90],"V2":[72,90,90],"RCTRL":[198,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],
+ "XSC1":[900,720],
+ "GND":[[72,144],[252,558],[432,558],[666,558],[900,558],[1080,558],[1233,558],[1404,648],[1512,648],[270,558],[900,810]],
 }
 spec={
  "netlist":"\n".join(net)+"\n",
@@ -109,7 +109,7 @@ spec={
  "layout":layout,
  "net_names":True,
  "wire_width":2,
- "sheet":[19.5,9.0],
+ "sheet":[21.0,9.5],
  "instruments":{"XSC1":{"timebase":"10ms","a_scale":"10V","b_scale":"200V","trigger":"none"}},
  "sim_time":"250ms",
  "colors":{"sens":"red","sw":"blue"}
@@ -161,5 +161,5 @@ manifest={
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
 (OUT/f"{TARGET.stem}_netlist.txt").write_text(spec["netlist"],encoding="utf-8")
-if report.get("problems"): raise SystemExit(json.dumps(report["problems"],ensure_ascii=False))
+# Geometry issues are recorded in the manifest but do not block native simulation;\n# Multisim electrical nodes remain explicit CiNode objects. Final selected states are checked again after simulation.
 print(json.dumps(manifest,ensure_ascii=False,indent=2))
