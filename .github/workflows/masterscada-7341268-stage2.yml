@@ -1,0 +1,106 @@
+name: MasterSCADA 7341268 Stage 2
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2.yml"
+      - "masterscada-7341268-stage2/**"
+  workflow_dispatch:
+
+jobs:
+  stage2:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare folders
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\masterscada-7341268-stage2" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\MasterSCADA_7341268\installer" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\MasterSCADA Projects\7341268_Variant7" | Out-Null
+
+      - name: Install official MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $log = "$env:GITHUB_WORKSPACE\masterscada-7341268-stage2\msi-install.log"
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart","/L*v",$log) -Wait -PassThru
+          "MSI_EXIT=$($p.ExitCode)" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268-stage2\install.txt"
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Inspect MasterSCADA COM automation model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $out = "$env:GITHUB_WORKSPACE\masterscada-7341268-stage2\com-model.txt"
+          "=== Registry ===" | Out-File -Encoding utf8 $out
+          cmd /c 'reg query "HKCR\MasterSCADA.Application" /s' 2>&1 | Add-Content -Encoding utf8 $out
+          cmd /c 'reg query "HKCR\MasterSCADA.Application.1" /s' 2>&1 | Add-Content -Encoding utf8 $out
+
+          "=== COM Get-Member ===" | Add-Content -Encoding utf8 $out
+          try {
+            $app = New-Object -ComObject MasterSCADA.Application
+            "COM_CREATED=true" | Add-Content -Encoding utf8 $out
+            $app | Get-Member -Force | Out-String -Width 300 | Add-Content -Encoding utf8 $out
+            "=== Selected property probes ===" | Add-Content -Encoding utf8 $out
+            foreach ($p in @("Visible","Project","Projects","ActiveProject","Documents","TreeItemHlp","Name","Version")) {
+              try {
+                $v = $app.$p
+                "$p = $v" | Add-Content -Encoding utf8 $out
+                if ($null -ne $v) {
+                  "TYPE[$p]=$($v.GetType().FullName)" | Add-Content -Encoding utf8 $out
+                  $v | Get-Member -Force | Out-String -Width 300 | Add-Content -Encoding utf8 $out
+                }
+              } catch {
+                "$p ERROR: $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+              }
+            }
+            try { $app.Quit() } catch {}
+            [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null
+          } catch {
+            "COM_CREATED=false" | Add-Content -Encoding utf8 $out
+            $_.Exception.ToString() | Add-Content -Encoding utf8 $out
+          }
+
+      - name: Inspect registered type libraries and project file internals
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $out = "$env:GITHUB_WORKSPACE\masterscada-7341268-stage2\typelib-and-vav.txt"
+          $clsidLine = (cmd /c 'reg query "HKCR\MasterSCADA.Application\CLSID" /ve' 2>$null | Select-String '\{.*\}' | Select-Object -First 1).ToString()
+          "CLSID_LINE=$clsidLine" | Out-File -Encoding utf8 $out
+          if ($clsidLine -match '(\{[0-9A-Fa-f-]+\})') {
+            $clsid = $Matches[1]
+            "CLSID=$clsid" | Add-Content -Encoding utf8 $out
+            cmd /c "reg query \"HKCR\CLSID\$clsid\" /s" 2>&1 | Add-Content -Encoding utf8 $out
+          }
+          "=== VAV samples ===" | Add-Content -Encoding utf8 $out
+          Get-ChildItem "C:\MasterSCADA Projects\Projects\Tutorials" -Recurse -Filter *.vav -File -ErrorAction SilentlyContinue |
+            Select-Object -First 8 |
+            ForEach-Object {
+              "$($_.FullName)`t$($_.Length)`t$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $out
+              $fs=[IO.File]::OpenRead($_.FullName)
+              try {
+                $buf=New-Object byte[] 64
+                [void]$fs.Read($buf,0,$buf.Length)
+                "HEADER=$([BitConverter]::ToString($buf))" | Add-Content -Encoding utf8 $out
+              } finally { $fs.Dispose() }
+            }
+
+      - name: Upload stage 2 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-diagnostics
+          path: masterscada-7341268-stage2/**
+          if-no-files-found: warn
