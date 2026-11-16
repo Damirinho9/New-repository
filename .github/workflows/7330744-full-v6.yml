@@ -6,7 +6,6 @@ on:
       - multisim-7330744-full-v6
     paths:
       - ".github/workflows/7330744-full-v6.yml"
-      - "fullv6/**"
   workflow_dispatch:
 
 concurrency:
