@@ -1,0 +1,159 @@
+name: Native Word proofread PR13_2
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - word-pr13-native-20261116
+    paths:
+      - "pr13/make_error_copy.py"
+      - ".github/workflows/word-pr13-proofread.yml"
+
+jobs:
+  proofread:
+    runs-on: windows-2022
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate exact error-content source
+        shell: powershell
+        run: |
+          py -m pip install python-docx
+          py .\pr13\verify_roslavl.py
+          py .\pr13\make_error_copy.py
+
+      - name: Install Microsoft Word LTSC 2024 volume
+        shell: powershell
+        timeout-minutes: 9
+        run: |
+          $ErrorActionPreference = "Stop"
+          $odt = "$env:RUNNER_TEMP\odt.exe"
+          Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20326-20112.exe" -OutFile $odt
+          $dir = "$env:RUNNER_TEMP\odt"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Start-Process -FilePath $odt -ArgumentList "/quiet /extract:$dir" -Wait
+          @'
+          <Configuration>
+            <Add OfficeClientEdition="64" Channel="PerpetualVL2024">
+              <Product ID="ProPlus2024Volume">
+                <Language ID="ru-ru" />
+                <ExcludeApp ID="Access" />
+                <ExcludeApp ID="Excel" />
+                <ExcludeApp ID="Groove" />
+                <ExcludeApp ID="Lync" />
+                <ExcludeApp ID="OneDrive" />
+                <ExcludeApp ID="OneNote" />
+                <ExcludeApp ID="Outlook" />
+                <ExcludeApp ID="PowerPoint" />
+                <ExcludeApp ID="Publisher" />
+                <ExcludeApp ID="Teams" />
+              </Product>
+            </Add>
+            <Property Name="AUTOACTIVATE" Value="0" />
+            <Display Level="None" AcceptEULA="TRUE" />
+          </Configuration>
+          '@ | Set-Content -Encoding UTF8 "$env:RUNNER_TEMP\word.xml"
+          & "$dir\setup.exe" /configure "$env:RUNNER_TEMP\word.xml"
+
+      - name: Proofread and save in native Microsoft Word
+        shell: powershell
+        timeout-minutes: 4
+        run: |
+          $ErrorActionPreference = "Stop"
+          $word = New-Object -ComObject Word.Application
+          $word.Visible = $false
+          $word.DisplayAlerts = 0
+          $word.Options.CheckSpellingAsYouType = $true
+          $word.Options.CheckGrammarAsYouType = $true
+          $word.Options.CheckGrammarWithSpelling = $true
+          $in = Join-Path $env:GITHUB_WORKSPACE "PR13_1_source.docx"
+          $out = Join-Path $env:GITHUB_WORKSPACE "PR13_2.doc"
+          $items = Get-Content (Join-Path $env:GITHUB_WORKSPACE "corrections.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+          $log = New-Object System.Collections.Generic.List[string]
+          try {
+            $doc = $word.Documents.Open($in, $false, $false)
+            try {
+              $doc.Content.LanguageID = 1049
+              $doc.ShowSpellingErrors = $true
+              $doc.ShowGrammaticalErrors = $true
+              $doc.AutoHyphenation = $false
+              $log.Add("WORD_VERSION=$($word.Version)")
+              $log.Add("SPELLING_BEFORE=$($doc.SpellingErrors.Count)")
+              $log.Add("GRAMMAR_BEFORE=$($doc.GrammaticalErrors.Count)")
+              $fixed = 0
+              foreach ($item in $items) {
+                $rng = $doc.Content.Duplicate
+                $find = $rng.Find
+                $find.ClearFormatting()
+                $find.Text = [string]$item.wrong
+                $find.Forward = $true
+                $find.Wrap = 0
+                if (-not $find.Execute()) { throw "Word did not find: $($item.wrong)" }
+                if ([string]$item.type -eq "орфографическая") {
+                  try {
+                    $sugs = $word.GetSpellingSuggestions([string]$item.wrong)
+                    $names = @()
+                    foreach ($s in $sugs) { $names += $s.Name }
+                    $log.Add("WORD_SUGGEST:$($item.wrong) -> $($names -join '; ')")
+                  } catch {
+                    $log.Add("WORD_SUGGEST:$($item.wrong) -> unavailable")
+                  }
+                }
+                $rng.Text = [string]$item.correct
+                $fixed++
+              }
+              $doc.AutoHyphenation = $true
+              $doc.HyphenateCaps = $false
+              $doc.ConsecutiveHyphensLimit = 2
+              $doc.Repaginate()
+              $log.Add("FIXED=$fixed")
+              $log.Add("SPELLING_AFTER=$($doc.SpellingErrors.Count)")
+              $log.Add("GRAMMAR_AFTER=$($doc.GrammaticalErrors.Count)")
+              $log.Add("AUTO_HYPHENATION=$($doc.AutoHyphenation)")
+              $log.Add("PAGES_BEFORE_SAVE=$($doc.ComputeStatistics(2))")
+              $log | Set-Content -Encoding UTF8 "word-proofing.txt"
+              $doc.SaveAs2($out, 0)
+              "SAVEAS2_OK=True" | Add-Content -Encoding UTF8 "word-proofing.txt"
+            } finally {
+              $doc.Close(0)
+            }
+          } finally {
+            $word.Quit()
+          }
+
+      - name: Reopen and verify native DOC
+        shell: powershell
+        timeout-minutes: 2
+        run: |
+          $ErrorActionPreference = "Stop"
+          $word = New-Object -ComObject Word.Application
+          $word.Visible = $false
+          $word.DisplayAlerts = 0
+          try {
+            $p = Join-Path $env:GITHUB_WORKSPACE "PR13_2.doc"
+            if (-not (Test-Path $p)) { throw "PR13_2.doc missing" }
+            $doc = $word.Documents.Open($p, $false, $true)
+            try {
+              $doc.Repaginate()
+              "REOPEN_OK=True" | Add-Content -Encoding UTF8 "word-proofing.txt"
+              "SAVE_FORMAT=$($doc.SaveFormat)" | Add-Content -Encoding UTF8 "word-proofing.txt"
+              "PAGES=$($doc.ComputeStatistics(2))" | Add-Content -Encoding UTF8 "word-proofing.txt"
+              "FONT=$($doc.Paragraphs.Item(2).Range.Font.Name)" | Add-Content -Encoding UTF8 "word-proofing.txt"
+              "SIZE=$($doc.Paragraphs.Item(2).Range.Font.Size)" | Add-Content -Encoding UTF8 "word-proofing.txt"
+              "AUTO_HYPHENATION_REOPEN=$($doc.AutoHyphenation)" | Add-Content -Encoding UTF8 "word-proofing.txt"
+              foreach ($item in (Get-Content "corrections.json" -Raw -Encoding UTF8 | ConvertFrom-Json)) {
+                if ($doc.Content.Text.Contains([string]$item.wrong)) { throw "Uncorrected error remains: $($item.wrong)" }
+              }
+              "ALL_24_INTENTIONAL_ERRORS_REMOVED=True" | Add-Content -Encoding UTF8 "word-proofing.txt"
+            } finally { $doc.Close(0) }
+          } finally { $word.Quit() }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr13-2-native-word
+          path: |
+            PR13_2.doc
+            word-proofing.txt
+          retention-days: 7
