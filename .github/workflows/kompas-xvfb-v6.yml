@@ -33,11 +33,16 @@ jobs:
           echo "=== EXECUTABLES IN KOMPAS BIN ==="
           find /opt/ascon -type f -perm -111 -path '*/Bin/*' -printf '%p\n' | sort | head -200 || true
           KOMPAS_EXE=$(find /opt/ascon -type f \( -name kKompas -o -name kHome -o -name kStudy \) -perm -111 | head -1)
+          KOMPAS_LAUNCHER=$(command -v kompas-v25 || true)
           KSAPI_PY=$(find /opt/ascon -type f -name ksapi.py | head -1)
-          test -n "$KOMPAS_EXE"
           test -n "$KSAPI_PY"
+          if [ -z "$KOMPAS_EXE" ] && [ -z "$KOMPAS_LAUNCHER" ]; then
+            echo "No professional KOMPAS launcher found"
+            exit 3
+          fi
           echo "KOMPAS_EXE=$KOMPAS_EXE" | tee -a "$GITHUB_ENV"
-          echo "KOMPAS_BIN=$(dirname "$KOMPAS_EXE")" | tee -a "$GITHUB_ENV"
+          echo "KOMPAS_LAUNCHER=$KOMPAS_LAUNCHER" | tee -a "$GITHUB_ENV"
+          echo "KOMPAS_BIN=$(dirname "$KSAPI_PY")" | tee -a "$GITHUB_ENV"
 
       - name: Launch real KOMPAS under Xvfb
         shell: bash
@@ -49,14 +54,14 @@ jobs:
           export LC_ALL=C.UTF-8
           unset QT_QPA_PLATFORM
 
-          dbus-run-session -- xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             "$KOMPAS_EXE" >/tmp/kompas-live.out 2>/tmp/kompas-live.err &
+          dbus-run-session -- xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             ${KOMPAS_EXE:-$KOMPAS_LAUNCHER} >/tmp/kompas-live.out 2>/tmp/kompas-live.err &
           WRAPPER_PID=$!
           echo "$WRAPPER_PID" >/tmp/wrapper.pid
 
           KP=""
           for i in $(seq 1 60); do
             sleep 1
-            KP=$(pgrep -x "$(basename "$KOMPAS_EXE")" | head -1 || true)
+            KP=$(pgrep -x kKompas | head -1 || pgrep -x kHome | head -1 || pgrep -x kStudy | head -1 || true)
             [ -n "$KP" ] && break
           done
           echo "KPID=$KP"
