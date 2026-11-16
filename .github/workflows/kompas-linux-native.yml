@@ -1,44 +1,10 @@
-name: KOMPAS native Work1 no-actions
+name: KOMPAS native Work1 legacy
 
 on:
-  push:
-    branches:
-      - kompas-7335493-native-work1
-    paths:
-      - '.github/workflows/kompas-linux-native.yml'
-      - 'kompas-linux/**'
+  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
-    container: alt:p11
-    timeout-minutes: 20
+  legacy:
+    runs-on: ubuntu-latest
     steps:
-      - name: Native build without Node actions
-        shell: bash
-        run: |
-          set -u
-          mkdir -p /work/kompas-linux
-          cd /work
-          apt-get update
-          apt-get install -y wget ca-certificates
-          wget -O kompas-linux/run_pro.sh 'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/run_pro.sh'
-          wget -O kompas-linux/build_native.py 'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/build_native.py'
-          chmod +x kompas-linux/run_pro.sh
-          set +e
-          bash kompas-linux/run_pro.sh
-          rc=$?
-          set -e
-          echo "=== RUN_RC=$rc ==="
-          if [ -s "kompas-linux/Работа_1_параметрическая.frw" ]; then
-            echo "=== FRW_SHA256 ==="
-            sha256sum "kompas-linux/Работа_1_параметрическая.frw"
-            echo "=== FRW_BASE64_BEGIN ==="
-            base64 -w 76 "kompas-linux/Работа_1_параметрическая.frw"
-            echo "=== FRW_BASE64_END ==="
-          fi
-          echo "=== VERIFICATION ==="
-          cat kompas-linux/verification.txt 2>/dev/null || true
-          echo "=== KOMPAS_LOG ==="
-          tail -300 kompas-linux/logs/kompas.log 2>/dev/null || true
-          exit $rc
+      - run: echo "Legacy pipeline disabled; use build-native-frw-v6-final.yml"
