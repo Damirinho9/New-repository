@@ -97,6 +97,68 @@ jobs:
           "scan_rc=$LASTEXITCODE" | Out-File stage3-out\scan-rc.txt
           exit 0
 
+      - name: Select real dark threshold light states
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\\Python311-32\\python.exe'
+          $env:PYTHONPATH="$env:RUNNER_TEMP\\MultisimForge"
+          Set-Location "$env:GITHUB_WORKSPACE"
+          python fullv6\\finalize_stage3_selection.py 2>&1 | Tee-Object -FilePath stage3-out\\selection-console.txt
+          if($LASTEXITCODE -ne 0){ throw "state selection failed exit=$LASTEXITCODE" }
+
+      - name: Rebuild and simulate final three states
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\\Python311-32\\python.exe'
+          $env:PYTHONPATH="$env:RUNNER_TEMP\\MultisimForge"
+          Set-Location "$env:GITHUB_WORKSPACE"
+          python fullv6\\run_stage3_final.py 2>&1 | Tee-Object -FilePath stage3-final\\final-console.txt
+          if($LASTEXITCODE -ne 0){ throw "final three-state simulation failed exit=$LASTEXITCODE" }
+
+      - name: Capture genuine Multisim scopes for three states
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\\Python311-32\\python.exe'
+          Set-Location "$env:RUNNER_TEMP\\MultisimForge"
+          $root="$env:GITHUB_WORKSPACE\\stage3-final"
+          foreach($state in @('DARK','THRESHOLD','LIGHT')){
+            $f="$root\\7330744_PhotoRelay_V6_SIM_$state.ms14"
+            $o="$root\\Screenshots\\$state"
+            python -m multisimforge capture "$f" "$o" --timeout 120 2>&1 | Tee-Object -FilePath "$root\\capture_$state.txt"
+            if($LASTEXITCODE -ne 0){ throw "Multisim capture failed for $state exit=$LASTEXITCODE" }
+          }
+          python -m multisimforge com stop | Out-File "$root\\com-stop.txt"
+
+      - name: Final native checks and hashes
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\\Python311-32\\python.exe'
+          Set-Location "$env:RUNNER_TEMP\\MultisimForge"
+          $root="$env:GITHUB_WORKSPACE\\stage3-final"
+          foreach($state in @('DARK','THRESHOLD','LIGHT')){
+            $f="$root\\7330744_PhotoRelay_V6_SIM_$state.ms14"
+            python -m multisimforge check "$f" | Out-File -Encoding utf8 "$root\\check_$state.json"
+            if($LASTEXITCODE -ne 0){ throw "final structural check failed for $state" }
+            "$((Get-FileHash $f -Algorithm SHA256).Hash)  $([IO.Path]::GetFileName($f))" | Add-Content "$root\\sha256.txt"
+          }
+
+      - name: Upload final Stage 3
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-stage3-final
+          path: stage3-final/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload sweep diagnostics
         if: always()
         uses: actions/upload-artifact@v4
