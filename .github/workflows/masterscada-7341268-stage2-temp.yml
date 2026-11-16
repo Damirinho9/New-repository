@@ -30,7 +30,7 @@ jobs:
           $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
           if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
 
-      - name: CreateProjectTemp and save native VAV
+      - name: CreateProjectTemp, recover project object and inspect palette
         shell: pwsh
         run: |
           $ErrorActionPreference="Stop"
@@ -38,43 +38,70 @@ jobs:
           $baseProjects="C:\MasterSCADA Projects\Projects"
           $id="7341268_Variant7"
           $folder=Join-Path $baseProjects $id
+          if(Test-Path $folder){Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue}
           New-Item -ItemType Directory -Force $folder | Out-Null
           $target=Join-Path $folder "$id.vav"
-          if(Test-Path $target){Remove-Item $target -Force}
           $app=$null
           try {
             $app=New-Object -ComObject MasterSCADA.Application
             "COM=true" | Out-File -Encoding utf8 $log
-            $p=$app.CreateProjectTemp(1,$baseProjects,$id,"Система водяного отопления - вариант 7","")
-            "TEMP_RETURN_NULL=$($null -eq $p)" | Add-Content -Encoding utf8 $log
-            if($null -eq $p){throw "CreateProjectTemp returned null"}
-            "=== PROJECT MEMBERS ===" | Add-Content -Encoding utf8 $log
-            $p | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
-            foreach($name in @("Name","Path","ProjectGUID","ComputerCount","SystemRoot","SysTree","ObjTree")){
-              try{
-                $v=$p.$name
-                "$name=$v" | Add-Content -Encoding utf8 $log
-                if($v -and $name -in @("SystemRoot","SysTree","ObjTree")){
-                  $v | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
-                }
-              }catch{"$name ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            try {
+              $tmp=$app.CreateProjectTemp(1,$baseProjects,$id,"Система водяного отопления - вариант 7","")
+              "CREATE_TEMP_RETURN=$tmp" | Add-Content -Encoding utf8 $log
+            } catch {
+              "CREATE_TEMP_EXCEPTION=$($_.Exception.Message)" | Add-Content -Encoding utf8 $log
             }
-            "CALL_SAVEAS=$target" | Add-Content -Encoding utf8 $log
-            $p.SaveAs($target,$false)
-            "SAVEAS_RETURNED=true" | Add-Content -Encoding utf8 $log
-            $p.Save()
-            "SAVE_RETURNED=true" | Add-Content -Encoding utf8 $log
             Start-Sleep -Seconds 2
-            "TARGET_EXISTS=$(Test-Path $target)" | Add-Content -Encoding utf8 $log
+            "TARGET_EXISTS_AFTER_CREATE=$(Test-Path $target)" | Add-Content -Encoding utf8 $log
             if(Test-Path $target){
               $fi=Get-Item $target
-              "TARGET_SIZE=$($fi.Length)" | Add-Content -Encoding utf8 $log
-              "SHA256=$((Get-FileHash $target -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $log
+              "TARGET_SIZE_AFTER_CREATE=$($fi.Length)" | Add-Content -Encoding utf8 $log
+              "TARGET_SHA256_AFTER_CREATE=$((Get-FileHash $target -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $log
             }
-            "=== FOLDER ===" | Add-Content -Encoding utf8 $log
+
+            "PROJECTS_COUNT=$($app.Projects.Count)" | Add-Content -Encoding utf8 $log
+            $p=$null
+            try {$p=$app.CurrentProject} catch {"CURRENT_PROJECT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            if($null -eq $p){
+              try {$p=$app.Projects.Item($id)} catch {"PROJECT_ITEM_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            }
+            "PROJECT_RECOVERED=$($null -ne $p)" | Add-Content -Encoding utf8 $log
+            if($p){
+              "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $log
+              "PROJECT_PATH=$($p.Path)" | Add-Content -Encoding utf8 $log
+              "PROJECT_GUID=$($p.ProjectGUID)" | Add-Content -Encoding utf8 $log
+              "COMPUTER_COUNT=$($p.ComputerCount)" | Add-Content -Encoding utf8 $log
+              "=== PROJECT MEMBERS ===" | Add-Content -Encoding utf8 $log
+              $p | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+              foreach($name in @("SystemRoot","SysTree","ObjTree")){
+                try{
+                  $v=$p.$name
+                  "=== $name ===" | Add-Content -Encoding utf8 $log
+                  "NAME=$($v.Name) COUNT=$($v.Count) ITEMTYPE=$($v.ItemType) OBJECTTYPE=$($v.ObjectType) FULL=$($v.FullName)" | Add-Content -Encoding utf8 $log
+                  $v | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+                }catch{"$name ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+              }
+              try {$p.Save(); "SAVE_RETURNED=true"|Add-Content -Encoding utf8 $log} catch {"SAVE_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            }
+
+            "=== OBJPALETTE MEMBERS ===" | Add-Content -Encoding utf8 $log
+            try {
+              $pal=$app.ObjPalette
+              $pal | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+              foreach($prop in @("CurrentCategory","SelectedObject")){
+                try{"PAL_$prop=$($pal.$prop)"|Add-Content -Encoding utf8 $log}catch{"PAL_$prop ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+              }
+            } catch {"PALETTE_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+
+            "=== PROJECT FOLDER ===" | Add-Content -Encoding utf8 $log
             Get-ChildItem $folder -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
               "$($_.FullName)`t$($_.Length)"
             } | Add-Content -Encoding utf8 $log
+
+            $copy="$env:GITHUB_WORKSPACE\mstemp\7341268_Variant7"
+            if(Test-Path $copy){Remove-Item $copy -Recurse -Force}
+            Copy-Item $folder $copy -Recurse -Force
+            "COPIED_TO_WORKSPACE=$copy" | Add-Content -Encoding utf8 $log
           } finally {
             if($app){
               try{$app.ExitScada()}catch{}
@@ -101,7 +128,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: masterscada-7341268-stage2-temp
-          path: |
-            mstemp/**
-            C:/MasterSCADA Projects/Projects/7341268_Variant7/**
+          path: mstemp/**
           if-no-files-found: warn
