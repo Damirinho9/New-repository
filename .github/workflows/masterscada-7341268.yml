@@ -21,6 +21,7 @@ jobs:
         shell: pwsh
         run: |
           $root = "C:\MasterSCADA_7341268"
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\masterscada-7341268" | Out-Null
           New-Item -ItemType Directory -Force -Path $root | Out-Null
           New-Item -ItemType Directory -Force -Path "$root\installer" | Out-Null
           New-Item -ItemType Directory -Force -Path "$root\project\Variant7" | Out-Null
