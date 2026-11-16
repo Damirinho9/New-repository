@@ -10,11 +10,11 @@
 
 using namespace ksapi;
 
-static std::ofstream logf("/tmp/work1_inject.log", std::ios::out | std::ios::app);
+static std::ofstream logstream("/tmp/work1_inject.log", std::ios::out | std::ios::app);
 
 static void log(const std::string& s) {
-  logf << s << std::endl;
-  logf.flush();
+  logstream << s << std::endl;
+  logstream.flush();
 }
 
 struct P { double x, y; };
@@ -312,7 +312,7 @@ static void entry() {
     catch(const std::exception& e){ log(std::string("EXCEPTION: ")+e.what()); }
     catch(...){ log("EXCEPTION: unknown"); }
     log(ok ? "THREAD_DONE_PASS" : "THREAD_DONE_FAIL");
-    logf.flush();
+    logstream.flush();
     // Give KOMPAS enough time to flush the file; workflow will terminate process.
   }).detach();
 }
