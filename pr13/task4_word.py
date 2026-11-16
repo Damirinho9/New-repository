@@ -81,10 +81,12 @@ try:
     doc = word.Documents.Open(str(INPUT), False, False)
     doc.Content.LanguageID = 1049
     doc.AutoHyphenation = True
+    autocomplete_tips = None
     try:
-        word.Options.DisplayAutoCompleteTips = True
+        word.DisplayAutoCompleteTips = True
+        autocomplete_tips = bool(word.DisplayAutoCompleteTips)
     except Exception:
-        pass
+        autocomplete_tips = "unavailable"
 
     ac = word.AutoCorrect
     ac.ReplaceText = True
@@ -93,7 +95,7 @@ try:
     ac.CorrectCapsLock = True
     lines.append(f"CORRECT_INITIAL_CAPS={ac.CorrectInitialCaps}")
     lines.append(f"CORRECT_CAPS_LOCK={ac.CorrectCapsLock}")
-    lines.append(f"DISPLAY_AUTOCOMPLETE_TIPS={word.Options.DisplayAutoCompleteTips}")
+    lines.append(f"DISPLAY_AUTOCOMPLETE_TIPS={autocomplete_tips}")
 
     # Inspect exact AutoCorrect entries before any manual adjustment.
     for token in ["ПРимер", "НОМЕР"]:
