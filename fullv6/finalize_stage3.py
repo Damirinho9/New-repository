@@ -55,7 +55,7 @@ def build_and_sim(label,uA,duration=0.40,rate=7000):
     rec["metrics"]=metrics
     return rec
 
-coarse_uA=[0.0,0.25,0.5,0.75,1.0,1.25,1.5,1.75,2.0,2.25,2.5,3.0,4.0,5.0]
+coarse_uA=[0.0,0.25,0.5,0.75,1.0,1.25,1.5,1.75,2.0,2.25,2.5,3.0,4.0,5.0,6.0,7.0,8.0,10.0]
 coarse=[]
 for i,u in enumerate(coarse_uA):
     rec=build_and_sim(f"coarse_{i:02d}_{str(u).replace('.','p')}uA",u)
