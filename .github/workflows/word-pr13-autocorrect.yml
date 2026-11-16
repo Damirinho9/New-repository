@@ -7,6 +7,7 @@ on:
       - word-pr13-native-20261116
     paths:
       - ".github/workflows/word-pr13-autocorrect.yml"
+      - "pr13/autocorrect_tests.json"
 
 jobs:
   autocorrect:
@@ -60,37 +61,44 @@ jobs:
           $ac.ReplaceText = $true
           $ac.CorrectSentenceCaps = $true
           $ac.CorrectCapsLock = $true
-          $tests = @(
-            @{ input = "пРИМЕР"; expected = "Пример" },
-            @{ input = "напирмер"; expected = "например" },
-            @{ input = "нелзя"; expected = "нельзя" }
-          )
+          $tests = Get-Content (Join-Path $env:GITHUB_WORKSPACE "pr13\autocorrect_tests.json") -Raw -Encoding UTF8 | ConvertFrom-Json
           $lines = New-Object System.Collections.Generic.List[string]
           $lines.Add("WORD_VERSION=$($word.Version)")
           $lines.Add("AUTOCORRECT_REPLACE_TEXT=$($ac.ReplaceText)")
+          $failed = $false
           try {
             foreach ($t in $tests) {
               $doc = $word.Documents.Add()
               try {
                 $doc.Content.LanguageID = 1049
+                $rng = $doc.Range(0,0)
+                $rng.Select()
                 $sel = $word.Selection
                 $sel.TypeText([string]$t.input)
                 $sel.TypeText(" ")
-                Start-Sleep -Milliseconds 250
+                Start-Sleep -Milliseconds 300
                 $actual = $doc.Content.Text.Trim()
                 $lines.Add("FIRST:$($t.input) -> $actual")
                 if ($actual -ne [string]$t.expected) {
                   $lines.Add("BUILTIN_MISS:$($t.input)")
-                  try { $ac.Entries.Add([string]$t.input,[string]$t.expected) | Out-Null } catch {}
+                  try {
+                    $existing = $ac.Entries.Item([string]$t.input)
+                    $existing.Delete()
+                  } catch {}
+                  $ac.Entries.Add([string]$t.input,[string]$t.expected) | Out-Null
                   $doc.Content.Text = ""
+                  $doc.Range(0,0).Select()
                   $sel = $word.Selection
                   $sel.TypeText([string]$t.input)
                   $sel.TypeText(" ")
-                  Start-Sleep -Milliseconds 250
+                  Start-Sleep -Milliseconds 300
                   $actual2 = $doc.Content.Text.Trim()
                   $lines.Add("AFTER_MANUAL:$($t.input) -> $actual2")
                   if ($actual2 -ne [string]$t.expected) {
-                    throw "AutoCorrect failed after manual entry for $($t.input): $actual2"
+                    $lines.Add("FINAL_FAIL:$($t.input)")
+                    $failed = $true
+                  } else {
+                    $lines.Add("MANUAL_OK:$($t.input)")
                   }
                 } else {
                   $lines.Add("BUILTIN_OK:$($t.input)")
@@ -100,6 +108,7 @@ jobs:
               }
             }
             $lines | Set-Content -Encoding UTF8 autocorrect-results.txt
+            if ($failed) { throw "One or more AutoCorrect tests failed after manual configuration" }
           } finally {
             $word.Quit()
           }
