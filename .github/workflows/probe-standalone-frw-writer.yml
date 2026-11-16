@@ -101,6 +101,9 @@ jobs:
           CPP
           g++ -std=c++17 -O0 -g /tmp/probe.cpp -ldl -o /tmp/probe
           file /tmp/probe
+          cp "/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw" /tmp/template.frw
+          test -s /tmp/template.frw
+          file /tmp/template.frw
 
       - name: Run standalone native writer
         shell: bash
