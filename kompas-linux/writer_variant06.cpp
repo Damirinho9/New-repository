@@ -139,10 +139,7 @@ static bool build(){
   IDrawingContainerPtr dc=view; ISymbols2DContainerPtr sc=view;
   if(!dc||!sc){log("FAIL containers");return false;}
 
-  if(!layer(view,1,L"Контуры механизма")||!layer(view,2,L"Размеры")||
-     !layer(view,3,L"Вспомогательные построения")||!layer(view,4,L"Исследование")){
-    log("FAIL layers");return false;
-  }
+  log("using system layer 0 for core parametric build");
 
   auto vl1=doc->AddVariable(L"l1",L1,L"Длина кривошипа AB");
   auto vl2=doc->AddVariable(L"l2",L2,L"Длина звена CD = 2L");
@@ -158,11 +155,11 @@ static bool build(){
   if(!state(FI0,B,C,D,E,X)){log("FAIL initial state");return false;}
   P A{0,0};
 
-  auto crank=line(dc,A,B,1,ksCSNormal);
-  auto rocker=line(dc,C,D,1,ksCSNormal);
-  auto rod=line(dc,D,E,1,ksCSNormal);
-  auto baseAC=line(dc,A,C,3,ksCSConstruction);
-  auto href=line(dc,A,{20,0},3,ksCSConstruction);
+  auto crank=line(dc,A,B,0,ksCSNormal);
+  auto rocker=line(dc,C,D,0,ksCSNormal);
+  auto rod=line(dc,D,E,0,ksCSNormal);
+  auto baseAC=line(dc,A,C,0,ksCSConstruction);
+  auto href=line(dc,A,{20,0},0,ksCSConstruction);
   if(!crank||!rocker||!rod||!baseAC||!href){log("FAIL geometry");return false;}
 
   if(!constr(crank,ksCFixedPoint,0)){log("FAIL fixed A");return false;}
@@ -176,11 +173,11 @@ static bool build(){
   if(!constr(crank,ksCHAlignPoints,0,rod,1)){log("FAIL E horizontal A");return false;}
   log("geometric constraints created");
 
-  if(!lin_dim(sc,crank,L"l1",L1,2,7)){log("FAIL dim l1");return false;}
-  if(!lin_dim(sc,rocker,L"l2",L2,2,-7)){log("FAIL dim l2");return false;}
-  if(!lin_dim(sc,rod,L"l3",L3,2,7)){log("FAIL dim l3");return false;}
-  if(!lin_dim(sc,baseAC,L"L",BASE,2,-8)){log("FAIL dim L");return false;}
-  if(!angle_dim(sc,href,crank,2,FI0)){log("FAIL dim fi");return false;}
+  if(!lin_dim(sc,crank,L"l1",L1,0,7)){log("FAIL dim l1");return false;}
+  if(!lin_dim(sc,rocker,L"l2",L2,0,-7)){log("FAIL dim l2");return false;}
+  if(!lin_dim(sc,rod,L"l3",L3,0,7)){log("FAIL dim l3");return false;}
+  if(!lin_dim(sc,baseAC,L"L",BASE,0,-8)){log("FAIL dim L");return false;}
+  if(!angle_dim(sc,href,crank,0,FI0)){log("FAIL dim fi");return false;}
   log("driving dimensions created");
 
   if(!doc->UpdateVariables())log("WARN UpdateVariables false");
@@ -193,7 +190,7 @@ static bool build(){
   for(int deg=0;deg<=360;deg+=5){
     P b,c,d,e,x;
     if(!state(deg==0?0.001:(double)deg,b,c,d,e,x))continue;
-    if(have && !line(dc,prev,x,4,ksCSNormal))return false;
+    if(have && !line(dc,prev,x,0,ksCSNormal))return false;
     prev=x;have=true;
   }
 
@@ -205,12 +202,12 @@ static bool build(){
     ex.push_back({(double)deg,e.x}); emin=std::min(emin,e.x);emax=std::max(emax,e.x);
   }
   const double gx=110.0,gy=-10.0,sx=0.20,sy=0.55;
-  line(dc,{gx,gy},{gx+360*sx,gy},4,ksCSConstruction);
-  line(dc,{gx,gy},{gx,gy+50},4,ksCSConstruction);
+  line(dc,{gx,gy},{gx+360*sx,gy},0,ksCSConstruction);
+  line(dc,{gx,gy},{gx,gy+50},0,ksCSConstruction);
   have=false;
   for(auto [deg,e]:ex){
     P p{gx+deg*sx,gy+(e-emin)*sy};
-    if(have && !line(dc,prev,p,4,ksCSNormal))return false;
+    if(have && !line(dc,prev,p,0,ksCSNormal))return false;
     prev=p;have=true;
   }
 
@@ -218,8 +215,8 @@ static bool build(){
   const double omega=2*PI*N_RPM/60.0;
   const double period=60.0/N_RPM;
   const double vgY=-70.0, st=280.0, sv=0.005;
-  line(dc,{gx,vgY},{gx+period*st,vgY},4,ksCSConstruction);
-  line(dc,{gx,vgY-35},{gx,vgY+35},4,ksCSConstruction);
+  line(dc,{gx,vgY},{gx+period*st,vgY},0,ksCSConstruction);
+  line(dc,{gx,vgY-35},{gx,vgY+35},0,ksCSConstruction);
   have=false; double vmax=0;
   for(int deg=5;deg<360;deg+=5){
     P b0,c0,d0,e0,x0,b1,c1,d1,e1,x1;
@@ -229,7 +226,7 @@ static bool build(){
     vmax=std::max(vmax,std::abs(vel));
     double t=deg/360.0*period;
     P p{gx+t*st,vgY+vel*sv};
-    if(have && !line(dc,prev,p,4,ksCSNormal))return false;
+    if(have && !line(dc,prev,p,0,ksCSNormal))return false;
     prev=p;have=true;
   }
 
@@ -241,8 +238,8 @@ static bool build(){
     if(th<tmin){tmin=th;phiMin=deg;}
     if(th>tmax){tmax=th;phiMax=deg;}
   }
-  line(dc,C,{C.x+L2*std::cos(tmin),C.y+L2*std::sin(tmin)},4,ksCSConstruction);
-  line(dc,C,{C.x+L2*std::cos(tmax),C.y+L2*std::sin(tmax)},4,ksCSConstruction);
+  line(dc,C,{C.x+L2*std::cos(tmin),C.y+L2*std::sin(tmin)},0,ksCSConstruction);
+  line(dc,C,{C.x+L2*std::cos(tmax),C.y+L2*std::sin(tmax)},0,ksCSConstruction);
 
   log("study layer built; E travel="+std::to_string(emax-emin)+
       " mm; CD swing="+std::to_string((tmax-tmin)*180.0/PI)+
