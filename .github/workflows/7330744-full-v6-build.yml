@@ -1,0 +1,144 @@
+name: 7330744 full native Multisim V6
+
+on:
+  push:
+    branches:
+      - multisim-7330744-full-v6
+    paths:
+      - ".github/workflows/7330744-full-v6-build.yml"
+      - "fullv6/**"
+  workflow_dispatch:
+
+concurrency:
+  group: 7330744-full-v6-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NI Multisim 14.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          New-Item -ItemType Directory -Force fullv6-out | Out-Null
+          $installer=Join-Path $env:RUNNER_TEMP 'ni-cds-educational_14.3_online.exe'
+          Invoke-WebRequest 'https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe' -OutFile $installer -UseBasicParsing
+          $sig=Get-AuthenticodeSignature $installer
+          if($sig.Status -ne 'Valid'){ throw 'Invalid official NI installer signature' }
+          $p=Start-Process $installer -ArgumentList @('--quiet','--accept-eulas','--prevent-reboot') -PassThru
+          if(-not $p.WaitForExit(480000)){ try{Stop-Process -Id $p.Id -Force}catch{} }
+          $ms=Get-ChildItem 'C:\Program Files (x86)\National Instruments','C:\Program Files\National Instruments' -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if(-not $ms){ throw 'Multisim executable absent after installation' }
+          "multisim=$($ms.FullName)" | Out-File fullv6-out\environment.txt
+
+      - name: Install 32-bit Python COM bridge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $pyInstaller=Join-Path $env:RUNNER_TEMP 'python-3.11.9-x86.exe'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.11.9/python-3.11.9.exe' -OutFile $pyInstaller -UseBasicParsing
+          $sig=Get-AuthenticodeSignature $pyInstaller
+          if($sig.Status -ne 'Valid'){ throw 'Invalid Python installer signature' }
+          $p=Start-Process $pyInstaller -ArgumentList @('/quiet','InstallAllUsers=1','TargetDir=C:\Python311-32','PrependPath=0','Include_launcher=0','Include_test=0','Include_pip=1') -PassThru -Wait
+          if($p.ExitCode -ne 0){ throw "Python x86 installer exit=$($p.ExitCode)" }
+          & 'C:\Python311-32\python.exe' -m pip install --disable-pip-version-check --quiet pywin32
+
+      - name: Install MultisimForge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m pip install --disable-pip-version-check -e ".[capture]"
+          python -m pip install --disable-pip-version-check --quiet pyautogui pywinauto pillow
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          python -m multisimforge parts init 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\parts-init.txt"
+          if($LASTEXITCODE -ne 0){ throw "parts init failed exit=$LASTEXITCODE" }
+
+      - name: Build all 27 source positions as native MS14
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          python -m multisimforge --debug build "$env:GITHUB_WORKSPACE\fullv6\7330744_v6_spec.json" 2>&1 |
+            Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\build-result.txt"
+          if($LASTEXITCODE -ne 0){ throw "build failed exit=$LASTEXITCODE" }
+
+      - name: Apply source names and declared equivalents
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $target="$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14"
+          python "$env:GITHUB_WORKSPACE\fullv6\postprocess_v6.py" "$target" 2>&1 |
+            Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\postprocess-result.txt"
+
+      - name: Offline structural check and inspect
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          $target="$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14"
+          python -m multisimforge check "$target" 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\check-result.txt"
+          if($LASTEXITCODE -ne 0){ throw "check failed exit=$LASTEXITCODE" }
+          python -m multisimforge inspect "$target" 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\inspect-result.txt"
+
+      - name: Render final schematic through real Multisim
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          $target="$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14"
+          python -m multisimforge preview "$target" "$env:GITHUB_WORKSPACE\fullv6-out\Multisim_FULL_V6_preview.png" 2>&1 |
+            Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\preview-result.txt"
+          if($LASTEXITCODE -ne 0){ throw "preview failed exit=$LASTEXITCODE" }
+
+      - name: Native open, fit sheet, run and screenshot in Multisim UI
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $target="$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14"
+          python "$env:GITHUB_WORKSPACE\fullv6\verify_v6.py" "$target" 2>&1 |
+            Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\native-verify.txt"
+          if($LASTEXITCODE -ne 0){ throw "native verification failed exit=$LASTEXITCODE" }
+
+      - name: Try real transient simulation
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          $target="$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14"
+          python -m multisimforge sim "$target" --nets u_ctrl,sw,sens,drv --tran 40m --csv "$env:GITHUB_WORKSPACE\fullv6-out\simdata" 2>&1 |
+            Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\simulation-result.txt"
+
+      - name: Final file hashes and inventory
+        if: always()
+        shell: powershell
+        run: |
+          Get-ChildItem fullv6-out -Recurse -File |
+            Select-Object FullName,Length,LastWriteTime |
+            Format-Table -AutoSize | Out-String -Width 260 |
+            Out-File fullv6-out\inventory.txt
+          Get-ChildItem fullv6-out -File |
+            ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)  $($_.Name)" } |
+            Out-File fullv6-out\sha256.txt
+
+      - name: Upload full native V6 result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-native-full-v6
+          path: fullv6-out/
+          if-no-files-found: error
+          retention-days: 7
