@@ -1,0 +1,153 @@
+name: MasterSCADA 7341268 Stage 2 Typed COM
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-typed.yml"
+  workflow_dispatch:
+
+jobs:
+  typed:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\mstyped" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Generate interop assembly
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $tlbimp=(Get-ChildItem "C:\Program Files (x86)\Microsoft SDKs" -Recurse -Filter tlbimp.exe -File -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName)
+          if(!$tlbimp){throw "tlbimp not found"}
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $dll="$env:GITHUB_WORKSPACE\mstyped\MasterSCADA.Interop.dll"
+          & $tlbimp $exe "/out:$dll" "/namespace:MasterSCADAInterop" "/silent"
+          if($LASTEXITCODE -ne 0 -or !(Test-Path $dll)){throw "tlbimp failed"}
+
+      - name: Compile and run typed COM probe
+        shell: pwsh
+        run: |
+          $src=@'
+          using System;
+          using System.IO;
+          using System.Runtime.InteropServices;
+          using MasterSCADAInterop;
+
+          class Program {
+            static void Main() {
+              string outDir=Environment.GetEnvironmentVariable("GITHUB_WORKSPACE")+"\\mstyped";
+              string log=Path.Combine(outDir,"typed.txt");
+              string baseProjects=@"C:\MasterSCADA Projects\Projects";
+              string id="7341268_Variant7";
+              string folder=Path.Combine(baseProjects,id);
+              string target=Path.Combine(folder,id+".vav");
+              Directory.CreateDirectory(folder);
+              File.WriteAllText(log,"START\r\n");
+              ApplicationClass app=null;
+              object raw=null;
+              try {
+                app=new ApplicationClass();
+                File.AppendAllText(log,"APP_CREATED=true\r\n");
+                try {
+                  raw=app.CreateProjectTemp(EProjectLocation.plFileLocation,baseProjects,id,"Система водяного отопления - вариант 7","");
+                  File.AppendAllText(log,"CALL_RETURNED=true\r\n");
+                } catch(Exception ex) {
+                  File.AppendAllText(log,"CALL_EXCEPTION="+ex.GetType().FullName+": "+ex.Message+"\r\n"+ex+"\r\n");
+                }
+                File.AppendAllText(log,"RAW_NULL="+(raw==null)+"\r\n");
+                if(raw!=null) {
+                  File.AppendAllText(log,"RAW_TYPE="+raw.GetType().FullName+"\r\n");
+                  File.AppendAllText(log,"IS_COM="+Marshal.IsComObject(raw)+"\r\n");
+                  foreach(Type t in new[]{typeof(Project),typeof(IProject)}) {
+                    try {
+                      File.AppendAllText(log,"CAST_TEST="+t.FullName+" IsInstance="+t.IsInstanceOfType(raw)+"\r\n");
+                    } catch(Exception ex){File.AppendAllText(log,"CAST_TEST_ERR="+ex.Message+"\r\n");}
+                  }
+                  try {
+                    var p=(Project)raw;
+                    File.AppendAllText(log,"PROJECT_CAST_OK Name="+p.Name+" Path="+p.Path+" Computers="+p.ComputerCount+"\r\n");
+                    DumpTree(p.SystemRoot,"SYSTEM",log);
+                    dynamic ot=p.ObjTree;
+                    object rootObj=ot.Root;
+                    var root=(TreeItem)rootObj;
+                    DumpTree(root,"OBJECTROOT",log);
+                    p.Save();
+                    File.AppendAllText(log,"SAVE_OK\r\n");
+                  } catch(Exception ex) {
+                    File.AppendAllText(log,"PROJECT_CAST_EXCEPTION="+ex.GetType().FullName+": "+ex.Message+"\r\n"+ex+"\r\n");
+                  }
+                }
+                try {
+                  object cur=app.CurrentProject;
+                  File.AppendAllText(log,"CURRENT_NULL="+(cur==null)+"\r\n");
+                  if(cur!=null) File.AppendAllText(log,"CURRENT_TYPE="+cur.GetType().FullName+"\r\n");
+                } catch(Exception ex){File.AppendAllText(log,"CURRENT_ERR="+ex+"\r\n");}
+                File.AppendAllText(log,"VAV_EXISTS="+File.Exists(target)+"\r\n");
+                if(File.Exists(target)) File.AppendAllText(log,"VAV_SIZE="+new FileInfo(target).Length+"\r\n");
+              } finally {
+                if(raw!=null && Marshal.IsComObject(raw)) try{Marshal.FinalReleaseComObject(raw);}catch{}
+                if(app!=null) {try{app.ExitScada();}catch{} try{Marshal.FinalReleaseComObject(app);}catch{}}
+              }
+              System.Threading.Thread.Sleep(2000);
+              if(File.Exists(target)) {
+                try {
+                  using(var fs=File.OpenRead(target)) {
+                    using(var sha=System.Security.Cryptography.SHA256.Create()) {
+                      File.AppendAllText(log,"SHA256="+BitConverter.ToString(sha.ComputeHash(fs)).Replace("-","")+"\r\n");
+                    }
+                  }
+                } catch(Exception ex){File.AppendAllText(log,"HASH_ERR="+ex.Message+"\r\n");}
+              }
+            }
+
+            static void DumpTree(TreeItem item,string tag,string log) {
+              if(item==null){File.AppendAllText(log,tag+"_NULL=true\r\n");return;}
+              File.AppendAllText(log,tag+" Name="+item.Name+" Display="+item.DisplayName+" Count="+item.Count+" ItemType="+item.ItemType+" ObjectType="+item.ObjectType+" CLSID="+(item.ClassInfoObject==null?"":item.ClassInfoObject.clsid)+"\r\n");
+            }
+          }
+          '@
+          $srcPath="$env:GITHUB_WORKSPACE\mstyped\Program.cs"
+          Set-Content -Path $srcPath -Value $src -Encoding UTF8
+          $csc=(Get-ChildItem "C:\Windows\Microsoft.NET\Framework64" -Recurse -Filter csc.exe -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName)
+          if(!$csc){$csc=(Get-Command csc.exe -ErrorAction SilentlyContinue).Source}
+          if(!$csc){throw "csc not found"}
+          & $csc /nologo /platform:x86 /reference:"$env:GITHUB_WORKSPACE\mstyped\MasterSCADA.Interop.dll" /out:"$env:GITHUB_WORKSPACE\mstyped\typed.exe" $srcPath
+          if($LASTEXITCODE -ne 0){throw "compile failed"}
+          Push-Location "$env:GITHUB_WORKSPACE\mstyped"
+          try { & ".\typed.exe"; $code=$LASTEXITCODE } finally { Pop-Location }
+          "EXIT_CODE=$code" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\mstyped\typed.txt"
+
+      - name: Copy project
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process MasterSCADA -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          $src="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          $dst="$env:GITHUB_WORKSPACE\mstyped\7341268_Variant7"
+          if(Test-Path $src){Copy-Item $src $dst -Recurse -Force}
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-typed
+          path: mstyped/**
+          if-no-files-found: warn
