@@ -67,12 +67,11 @@ jobs:
           $word.Options.CheckSpellingAsYouType = $true
           $word.Options.CheckGrammarAsYouType = $true
           $word.Options.CheckGrammarWithSpelling = $true
-          $in = Join-Path $env:GITHUB_WORKSPACE "PR13_1_source.docx"
           $out = Join-Path $env:GITHUB_WORKSPACE "PR13_2.doc"
           $items = Get-Content (Join-Path $env:GITHUB_WORKSPACE "corrections.json") -Raw -Encoding UTF8 | ConvertFrom-Json
           $log = New-Object System.Collections.Generic.List[string]
           try {
-            $doc = $word.Documents.Open($in, $false, $false)
+            $doc = $word.Documents.Open($out, $false, $false)
             try {
               $doc.Content.LanguageID = 1049
               $doc.ShowSpellingErrors = $true
@@ -111,8 +110,8 @@ jobs:
               $log.Add("AUTO_HYPHENATION=$($doc.AutoHyphenation)")
               $log.Add("PAGES_BEFORE_SAVE=$($doc.ComputeStatistics(2))")
               $log | Set-Content -Encoding UTF8 "word-proofing.txt"
-              $doc.SaveAs2($out, 0)
-              "SAVEAS2_OK=True" | Add-Content -Encoding UTF8 "word-proofing.txt"
+              $doc.Save()
+              "SAVE_OK=True" | Add-Content -Encoding UTF8 "word-proofing.txt"
             } finally {
               $doc.Close(0)
             }
