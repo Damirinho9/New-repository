@@ -126,6 +126,7 @@ jobs:
               export LC_ALL=C.UTF-8
               # Use the full GUI backend under Xvfb. KOMPAS's 2D document
               # editor keeps fragments pending with the offscreen backend.
+              BIN=/opt/ascon/kompas3d-v25/Bin
               export QT_QPA_PLATFORM=xcb
               export LD_LIBRARY_PATH="$BIN"
               unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
