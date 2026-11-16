@@ -47,6 +47,7 @@ jobs:
             return reinterpret_cast<T>(p);
           }
           int main(){
+            setvbuf(stdout,nullptr,_IONBF,0);
             setlocale(LC_ALL,"C.UTF-8");
             void* h2=dlopen("/opt/ascon/kompas3d-v25/Bin/libk2DDoc.so",RTLD_NOW|RTLD_GLOBAL);
             if(!h2){std::fprintf(stderr,"dlopen k2DDoc: %s\n",dlerror());return 10;}
@@ -65,6 +66,7 @@ jobs:
             using ManagerGetViews=void*(*)(void*);
             using GetActive=void*(*)(void*);
             using GetObjects=void*(*)(void*);
+            using QueryInterface=void*(*)(void*,const unsigned char*);
             using GetLineSegments=void*(*)(void*);
             using AddLine=void*(*)(void*);
             using SetD=void(*)(void*,double);
@@ -82,6 +84,7 @@ jobs:
             // Returned pointers are interface subobjects; use ABI adjustment thunks.
             auto getActive=sym<GetActive>(ha,"_ZThn160_N7LtViews13GetActiveViewEv");
             auto getObjects=sym<GetObjects>(ha,"_ZThn208_N6LtView19GetObjectsContainerEv");
+            auto queryInterface=sym<QueryInterface>(hc,"IAPIObject_QueryInterface");
             auto getLineSegments=sym<GetLineSegments>(hc,"IDrawingContainer_GetLineSegments");
             auto addLine=sym<AddLine>(hc,"ILineSegments_Add");
             auto setX1=sym<SetD>(hc,"ILineSegment_SetX1");
@@ -110,9 +113,10 @@ jobs:
             }
             void* view=getActive(views);
             std::printf("VIEW_IF=%p\n",view); if(!view)return 14;
-            void* objs=getObjects(view);
-            std::printf("OBJECTS_IF=%p\n",objs); if(!objs)return 15;
-            void* lines=getLineSegments(objs);
+            const unsigned char iidDrawingContainer[]="cc09def8-51b8-4382-9c47-72e36cc35928";
+            void* drawingContainer=queryInterface(view,iidDrawingContainer);
+            std::printf("DRAWING_CONTAINER_IF=%p\n",drawingContainer); if(!drawingContainer)return 15;
+            void* lines=getLineSegments(drawingContainer);
             std::printf("LINES_IF=%p\n",lines); if(!lines)return 19;
             void* line=addLine(lines);
             std::printf("LINE_IF=%p\n",line); if(!line)return 16;
