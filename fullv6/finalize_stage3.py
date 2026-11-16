@@ -55,10 +55,10 @@ def build_and_sim(label,uA,duration=0.40,rate=7000):
     rec["metrics"]=metrics
     return rec
 
-coarse_uA=[0.0,0.25,0.5,0.75,1.0,1.25,1.5,1.75,2.0,2.25,2.5,3.0,4.0,5.0]
+coarse_uA=[0.0,0.5,1.0,1.5,2.0,2.5,3.0,4.0,5.0]
 coarse=[]
 for i,u in enumerate(coarse_uA):
-    rec=build_and_sim(f"coarse_{i:02d}_{str(u).replace('.','p')}uA",u)
+    rec=build_and_sim(f"coarse_{i:02d}_{str(u).replace('.','p')}uA",u,duration=0.30,rate=6000)
     coarse.append(rec)
     (OUT/"coarse_progress.json").write_text(json.dumps(coarse,ensure_ascii=False,indent=2),encoding="utf-8")
 
@@ -82,10 +82,10 @@ for a,b in zip(ok,ok[1:]):
     pairs.append((dv/max(du,1e-12),a,b))
 _,pa,pb=max(pairs,key=lambda x:x[0])
 lo,hi=pa["photocurrent_uA"],pb["photocurrent_uA"]
-fine_uA=[lo+(hi-lo)*i/12 for i in range(13)]
+fine_uA=[lo+(hi-lo)*i/8 for i in range(9)]
 fine=[]
 for i,u in enumerate(fine_uA):
-    rec=build_and_sim(f"fine_{i:02d}_{u:.6f}uA".replace(".","p"),u,duration=0.50,rate=9000)
+    rec=build_and_sim(f"fine_{i:02d}_{u:.6f}uA".replace(".","p"),u,duration=0.35,rate=7000)
     fine.append(rec)
     (OUT/"fine_progress.json").write_text(json.dumps(fine,ensure_ascii=False,indent=2),encoding="utf-8")
 fine_ok=[r for r in fine if r.get("metrics")]
@@ -109,7 +109,7 @@ selected={
 # Rebuild and measure the exact selected states with a longer transient.
 final={}
 for state,info in selected.items():
-    r=build_and_sim(state,info["photocurrent_uA"],duration=0.80,rate=12000)
+    r=build_and_sim(state,info["photocurrent_uA"],duration=0.50,rate=9000)
     if not r.get("metrics"):
         raise SystemExit(f"{state} final simulation failed")
     src=Path(r["ms14"])
