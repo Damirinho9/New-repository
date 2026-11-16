@@ -90,7 +90,6 @@ jobs:
             $doc = $word.Documents.Add()
             $word.DisplayAutoCompleteTips = $true
             $doc.Content.LanguageID = 1049
-            $doc.Styles.Item(-1).LanguageID = 1049
             $doc.ShowSpellingErrors = $true
             $doc.ShowGrammaticalErrors = $true
             $doc.AutoHyphenation = $true
@@ -102,37 +101,6 @@ jobs:
 
             $docxPath = Join-Path $out "ПР13_Проверка_среды.docx"
             $doc.SaveAs2($docxPath, 16)
-
-            $tplPath = Join-Path $out "ПР13.dotx"
-            $tplSeed = $word.Documents.Add()
-            $tplSeed.Content.LanguageID = 1049
-            $tplSeed.Styles.Item(-1).LanguageID = 1049
-            $tplSeed.AutoHyphenation = $true
-            $tplSeed.SaveAs2($tplPath, 14)
-            $tplSeed.Close($false)
-
-            $based = $word.Documents.Add($tplPath, $false, 0, $false)
-            $based.Content.LanguageID = 1049
-            $based.AutoHyphenation = $true
-            $tpl = $based.AttachedTemplate
-
-            $entries = @(
-              @{Name="Пятница"; Value="Пятница"},
-              @{Name="Апрель"; Value="Апрель"},
-              @{Name="Текущая дата"; Value="16.11.2026"}
-            )
-            foreach ($e in $entries) {
-              $based.Content.Text = $e.Value
-              $r = $based.Content.Duplicate
-              try {
-                $old = $tpl.AutoTextEntries.Item($e.Name)
-                $old.Delete()
-              } catch {}
-              [void]$tpl.AutoTextEntries.Add($e.Name, $r)
-              L("AutoText added: " + $e.Name + " = " + $e.Value)
-            }
-            $tpl.Save()
-            $based.Close($false)
 
             L("CheckSpellingAsYouType=" + $word.Options.CheckSpellingAsYouType)
             L("CheckGrammarAsYouType=" + $word.Options.CheckGrammarAsYouType)
@@ -147,14 +115,6 @@ jobs:
             L("Document.ShowSpellingErrors=" + $verify.ShowSpellingErrors)
             L("Document.ShowGrammaticalErrors=" + $verify.ShowGrammaticalErrors)
             $verify.Close($false)
-
-            $test = $word.Documents.Add($tplPath)
-            $attached = $test.AttachedTemplate
-            foreach ($name in @("Пятница","Апрель","Текущая дата")) {
-              $item = $attached.AutoTextEntries.Item($name)
-              L("AutoText verified: " + $item.Name + " = " + $item.Value)
-            }
-            $test.Close($false)
 
             $doc.Close($false)
           }
@@ -180,7 +140,6 @@ jobs:
         with:
           name: pr13-native-word-environment
           path: |
-            pr13-word-native/ПР13.dotx
             pr13-word-native/ПР13_Проверка_среды.docx
             pr13-word-native/Проверка_среды.txt
             pr13-word-native/install-status.txt
