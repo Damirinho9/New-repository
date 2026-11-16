@@ -74,14 +74,7 @@ jobs:
           test -s /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw || exit 20
           file /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
           sha256sum /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
-          python3 - <<'PY'
-import zipfile, pathlib
-p=pathlib.Path('/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw')
-assert zipfile.is_zipfile(p)
-with zipfile.ZipFile(p) as z:
-    print([(i.filename,i.file_size) for i in z.infolist()])
-    assert 'Contents' in z.namelist()
-PY
+          python3 -c "import zipfile,pathlib; p=pathlib.Path('/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw'); assert zipfile.is_zipfile(p); z=zipfile.ZipFile(p); print([(i.filename,i.file_size) for i in z.infolist()]); assert 'Contents' in z.namelist(); z.close()"
           grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_inject.log || exit 21
 
       - name: Emit result as artifact
