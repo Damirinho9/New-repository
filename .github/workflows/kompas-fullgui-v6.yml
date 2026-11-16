@@ -114,6 +114,7 @@ jobs:
         run: |
           set -euxo pipefail
           export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          export KOMPAS_PORT="$(cat /tmp/kompas-port.txt)"
           python3 kompas-linux/build_variant06_python.py 2>&1 | tee /tmp/build-v6.out
           OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
           test -s "$OUT"
