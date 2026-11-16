@@ -71,13 +71,13 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $url = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
-          $r = Invoke-WebRequest -Uri $url -UseBasicParsing -MaximumRedirection 10
-          "OFFICIAL_HTTP=$($r.StatusCode)" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.txt"
-          "OFFICIAL_LENGTH=$($r.Content.Length)" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.txt"
-          $r.Links | ForEach-Object {
-            "$($_.innerText)`t$($_.href)"
+          $html = "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.html"
+          & curl.exe -k -L --fail --silent --show-error $url -o $html
+          $content = Get-Content -Raw $html
+          "OFFICIAL_LENGTH=$($content.Length)" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.txt"
+          [regex]::Matches($content, 'href="([^"]+)"') | ForEach-Object {
+            $_.Groups[1].Value
           } | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.txt"
-          $r.Content | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\official-311.html"
 
       - name: Upload diagnostics
         if: always()
