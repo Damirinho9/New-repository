@@ -37,6 +37,25 @@ def dismiss():
     pyautogui.press("esc")
     time.sleep(0.8)
 
+def dismiss_first_run_privacy():
+    # Office LTSC first run shows a native privacy modal with a "Закрыть" button
+    # at the lower-right on the fixed 1024x768 hosted desktop.
+    time.sleep(1.0)
+    pyautogui.click(916, 598)
+    time.sleep(1.5)
+    pyautogui.press("esc")
+    time.sleep(0.8)
+
+def com_retry(fn, attempts=15, pause=0.35):
+    last=None
+    for _ in range(attempts):
+        try:
+            return fn()
+        except Exception as e:
+            last=e
+            time.sleep(pause)
+    raise last
+
 def execute_candidates(word, candidates):
     for cid in candidates:
         try:
@@ -77,13 +96,15 @@ try:
     doc.ShowGrammaticalErrors=True
     doc.Activate()
     focus_word(word)
+    dismiss_first_run_privacy()
+    focus_word(word)
     try:
         word.ActiveWindow.View.Type=3  # Print layout
         word.ActiveWindow.View.Zoom.Percentage=100
     except Exception:
         pass
     # Go to a controlled misspelling near the beginning.
-    rng=doc.Content.Duplicate
+    rng=com_retry(lambda: doc.Content.Duplicate)
     find=rng.Find
     find.Text="древнейшых"
     find.Forward=True
@@ -94,7 +115,7 @@ try:
     save_shot("01_Проверка_правописания_красные_подчеркивания.png")
 
     # 2. Context menu for a misspelled word.
-    rng=doc.Content.Duplicate
+    rng=com_retry(lambda: doc.Content.Duplicate)
     find=rng.Find
     find.Text="древнейшых"
     find.Forward=True
