@@ -98,6 +98,7 @@ for ref, text_value in labels.items():
     if value is not None:
         value.set("Output", xmlio.uni(text_value))
         value.set("Hidden", "0")
+        value.set("Font-Height", "-10")
         applied[ref] = text_value
 
 # Force exact visible names for all source positions and test bench objects.
