@@ -5,6 +5,8 @@ on:
     branches: [kompas-7335493-native-work1]
     paths:
       - '.github/workflows/build-native-frw-v6-final.yml'
+      - 'kompas-linux/writer_variant06.cpp'
+      - 'kompas-linux/bootstrap_variant06.c'
   workflow_dispatch:
 
 jobs:
@@ -122,3 +124,5 @@ jobs:
           echo "RESULT=PASS_FINAL_NATIVE_FRW"
 
 # retrigger-scope-fix
+
+# retrigger-layer-fix
