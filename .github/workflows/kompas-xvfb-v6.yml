@@ -28,14 +28,20 @@ jobs:
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main'             | sudo tee /etc/apt/sources.list.d/ascon.list
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
-          test -x /opt/ascon/kompas3d-v25/Bin/kKompas
-          test -f /opt/ascon/kompas3d-v25/Bin/ksapi.py
+          echo "=== KOMPAS INSTALL TREE ==="
+          find /opt/ascon -maxdepth 5 -type f \( -name 'kKompas' -o -name 'ksapi.py' -o -name 'libksAPI.so' \) -ls || true
+          KOMPAS_EXE=$(find /opt/ascon -type f -name kKompas -perm -111 | head -1)
+          KSAPI_PY=$(find /opt/ascon -type f -name ksapi.py | head -1)
+          test -n "$KOMPAS_EXE"
+          test -n "$KSAPI_PY"
+          echo "KOMPAS_EXE=$KOMPAS_EXE" | tee -a "$GITHUB_ENV"
+          echo "KOMPAS_BIN=$(dirname "$KOMPAS_EXE")" | tee -a "$GITHUB_ENV"
 
       - name: Launch real KOMPAS under Xvfb
         shell: bash
         run: |
           set -euxo pipefail
-          BIN=/opt/ascon/kompas3d-v25/Bin
+          BIN="$KOMPAS_BIN"
           export PYTHONPATH="$BIN"
           export LANG=C.UTF-8
           export LC_ALL=C.UTF-8
@@ -67,7 +73,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          BIN=/opt/ascon/kompas3d-v25/Bin
+          BIN="$KOMPAS_BIN"
           export PYTHONPATH="$BIN"
           python3 kompas-linux/build_variant06_python.py 2>&1 | tee /tmp/build-v6.out
 
