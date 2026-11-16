@@ -1,0 +1,107 @@
+name: MasterSCADA 7341268 Stage 2 Temp Project Probe
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-temp.yml"
+  workflow_dispatch:
+
+jobs:
+  temp-project:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare and install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\mstemp" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: CreateProjectTemp and save native VAV
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $log="$env:GITHUB_WORKSPACE\mstemp\temp-project.txt"
+          $baseProjects="C:\MasterSCADA Projects\Projects"
+          $id="7341268_Variant7"
+          $folder=Join-Path $baseProjects $id
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          $target=Join-Path $folder "$id.vav"
+          if(Test-Path $target){Remove-Item $target -Force}
+          $app=$null
+          try {
+            $app=New-Object -ComObject MasterSCADA.Application
+            "COM=true" | Out-File -Encoding utf8 $log
+            $p=$app.CreateProjectTemp(1,$baseProjects,$id,"Система водяного отопления - вариант 7","")
+            "TEMP_RETURN_NULL=$($null -eq $p)" | Add-Content -Encoding utf8 $log
+            if($null -eq $p){throw "CreateProjectTemp returned null"}
+            "=== PROJECT MEMBERS ===" | Add-Content -Encoding utf8 $log
+            $p | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+            foreach($name in @("Name","Path","ProjectGUID","ComputerCount","SystemRoot","SysTree","ObjTree")){
+              try{
+                $v=$p.$name
+                "$name=$v" | Add-Content -Encoding utf8 $log
+                if($v -and $name -in @("SystemRoot","SysTree","ObjTree")){
+                  $v | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $log
+                }
+              }catch{"$name ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            }
+            "CALL_SAVEAS=$target" | Add-Content -Encoding utf8 $log
+            $p.SaveAs($target,$false)
+            "SAVEAS_RETURNED=true" | Add-Content -Encoding utf8 $log
+            $p.Save()
+            "SAVE_RETURNED=true" | Add-Content -Encoding utf8 $log
+            Start-Sleep -Seconds 2
+            "TARGET_EXISTS=$(Test-Path $target)" | Add-Content -Encoding utf8 $log
+            if(Test-Path $target){
+              $fi=Get-Item $target
+              "TARGET_SIZE=$($fi.Length)" | Add-Content -Encoding utf8 $log
+              "SHA256=$((Get-FileHash $target -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $log
+            }
+            "=== FOLDER ===" | Add-Content -Encoding utf8 $log
+            Get-ChildItem $folder -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+              "$($_.FullName)`t$($_.Length)"
+            } | Add-Content -Encoding utf8 $log
+          } finally {
+            if($app){
+              try{$app.ExitScada()}catch{}
+              try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
+            }
+          }
+
+      - name: Validate native VAV opens in MasterSCADA
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $target="C:\MasterSCADA Projects\Projects\7341268_Variant7\7341268_Variant7.vav"
+          if(!(Test-Path $target)){throw "VAV missing"}
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $p=Start-Process $exe -ArgumentList @($target) -PassThru
+          Start-Sleep -Seconds 10
+          $proc=Get-Process -Id $p.Id -ErrorAction SilentlyContinue
+          "OPEN_PROCESS_ALIVE=$($null -ne $proc)" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\mstemp\open-check.txt"
+          if($null -eq $proc){throw "MasterSCADA process exited while opening VAV"}
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-temp
+          path: |
+            mstemp/**
+            C:/MasterSCADA Projects/Projects/7341268_Variant7/**
+          if-no-files-found: warn
