@@ -1,0 +1,81 @@
+name: 7330744 full V6 - component discovery
+
+on:
+  push:
+    branches:
+      - multisim-7330744-full-v6
+    paths:
+      - ".github/workflows/7330744-full-v6.yml"
+      - "fullv6/**"
+  workflow_dispatch:
+
+concurrency:
+  group: 7330744-full-v6
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NI Multisim 14.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          New-Item -ItemType Directory -Force fullv6-out | Out-Null
+          $installer=Join-Path $env:RUNNER_TEMP 'ni-cds-educational_14.3_online.exe'
+          Invoke-WebRequest 'https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe' -OutFile $installer -UseBasicParsing
+          $sig=Get-AuthenticodeSignature $installer
+          "installer_signature=$($sig.Status)" | Tee-Object -FilePath fullv6-out\install.txt
+          if($sig.Status -ne 'Valid'){ throw 'Invalid official NI installer signature' }
+          $p=Start-Process $installer -ArgumentList @('--quiet','--accept-eulas','--prevent-reboot') -PassThru
+          if(-not $p.WaitForExit(480000)){ try{Stop-Process -Id $p.Id -Force}catch{} }
+          $ms=Get-ChildItem 'C:\Program Files (x86)\National Instruments','C:\Program Files\National Instruments' -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if(-not $ms){ throw 'Multisim executable absent after installation' }
+          "multisim=$($ms.FullName)" | Tee-Object -FilePath fullv6-out\install.txt -Append
+          Get-ChildItem (Split-Path $ms.FullName -Parent) | Select-Object Name,Length | Out-String | Add-Content fullv6-out\install.txt
+
+      - name: Install MultisimForge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m pip install --disable-pip-version-check -e ".[capture]"
+          python -m multisimforge --help | Out-File "$env:GITHUB_WORKSPACE\fullv6-out\forge-help.txt"
+
+      - name: Build local Multisim part library
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m multisimforge parts init 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\parts-init.txt"
+          "exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\fullv6-out\parts-init.txt"
+
+      - name: Query relevant installed parts
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $out="$env:GITHUB_WORKSPACE\fullv6-out"
+          $terms=@('resistor','capacitor','diode','photo','photodiode','mosfet','fet','scr','thyristor','triac','varistor','bridge','rectifier','fuse','led','connector','terminal','switch')
+          foreach($t in $terms){
+            "===== $t =====" | Add-Content "$out\parts-report.txt"
+            python -m multisimforge parts list $t 2>&1 | Add-Content "$out\parts-report.txt"
+          }
+          "===== all library paths =====" | Add-Content "$out\parts-report.txt"
+          Get-ChildItem "$env:LOCALAPPDATA\multisimforge" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object FullName,Length | Out-String -Width 240 | Add-Content "$out\parts-report.txt"
+
+      - name: Upload discovery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-full-v6-discovery
+          path: fullv6-out/
+          if-no-files-found: warn
+          retention-days: 7
