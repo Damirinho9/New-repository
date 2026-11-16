@@ -32,7 +32,7 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/ascon.list
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ascon-kompas-graphic-v25
+            ascon-kompas-graphic-v25 ascon-kompas3d-v25
 
           BIN=/opt/ascon/kompas3d-v25/Bin
           test -x "$BIN/kKompas"
