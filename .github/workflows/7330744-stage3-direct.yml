@@ -70,6 +70,12 @@ jobs:
           Set-Location "$env:RUNNER_TEMP\MultisimForge"
           python -m pip install --disable-pip-version-check -e ".[capture]"
 
+      - name: Patch helper to wait for complete transient
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          python fullv6\patch_multisimforge_wait.py "$env:RUNNER_TEMP\MultisimForge" | Tee-Object -FilePath direct-out\helper-patch.txt
+
       - name: Run selected native transient points directly
         shell: powershell
         run: |
