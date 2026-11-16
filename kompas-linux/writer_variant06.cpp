@@ -167,8 +167,9 @@ static bool build(){
   app.SetHideMessage(ksHideMessageYes);
 
   auto docs=app.GetDocuments(); if(!docs){log("FAIL docs");return false;}
-  auto base=docs->Add(ksDocumentFragment,false);
-  if(!base){log("FAIL add new fragment");return false;}
+  const std::wstring templatePath=L"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw";
+  auto base=docs->Open(templatePath,true,false);
+  if(!base){log("FAIL open visible stock fragment template");return false;}
   IKompasDocument2DPtr doc=base; if(!doc){log("FAIL cast");return false;}
   app.SetActiveDocument(base); doc->SetParametricMode(true);
 
