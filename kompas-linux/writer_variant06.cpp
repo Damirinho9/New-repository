@@ -7,6 +7,8 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <fcntl.h>
+#include <unistd.h>
 
 using namespace ksapi;
 
@@ -166,7 +168,9 @@ static bool build(){
   app.SetHideMessage(ksHideMessageYes);
 
   auto docs=app.GetDocuments(); if(!docs){log("FAIL docs");return false;}
-  auto base=docs->Add(ksDocumentFragment,true); if(!base){log("FAIL add");return false;}
+  const std::wstring templatePath=L"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw";
+  auto base=docs->Open(templatePath,false,false);
+  if(!base){log("FAIL open stock fragment template");return false;}
   IKompasDocument2DPtr doc=base; if(!doc){log("FAIL cast");return false;}
   app.SetActiveDocument(base); doc->SetParametricMode(true);
 
@@ -330,6 +334,11 @@ static bool build(){
 
 extern "C" __attribute__((visibility("default")))
 int run_variant06_writer(){
+  int once=open("/tmp/work1_writer_once.lock",O_WRONLY|O_CREAT|O_EXCL,0644);
+  if(once<0){
+    return 2;
+  }
+  close(once);
   log("run_variant06_writer entry");
   bool ok=false;
   try{ok=build();}
