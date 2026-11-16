@@ -51,35 +51,78 @@ jobs:
 
       - name: Test AutoCorrect after space
         shell: powershell
-        timeout-minutes: 3
+        timeout-minutes: 4
         run: |
           $ErrorActionPreference = "Stop"
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          using System.Threading;
+          public static class NativeKeyboard {
+              [StructLayout(LayoutKind.Sequential)]
+              struct INPUT { public uint type; public InputUnion U; }
+              [StructLayout(LayoutKind.Explicit)]
+              struct InputUnion { [FieldOffset(0)] public KEYBDINPUT ki; }
+              [StructLayout(LayoutKind.Sequential)]
+              struct KEYBDINPUT {
+                  public ushort wVk;
+                  public ushort wScan;
+                  public uint dwFlags;
+                  public uint time;
+                  public UIntPtr dwExtraInfo;
+              }
+              const uint INPUT_KEYBOARD = 1;
+              const uint KEYEVENTF_KEYUP = 0x0002;
+              const uint KEYEVENTF_UNICODE = 0x0004;
+              [DllImport("user32.dll", SetLastError=true)]
+              static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+              [DllImport("user32.dll")]
+              public static extern bool SetForegroundWindow(IntPtr hWnd);
+              public static void SendUnicode(string text) {
+                  foreach (char ch in text) {
+                      INPUT[] inputs = new INPUT[2];
+                      inputs[0].type = INPUT_KEYBOARD;
+                      inputs[0].U.ki.wScan = ch;
+                      inputs[0].U.ki.dwFlags = KEYEVENTF_UNICODE;
+                      inputs[1].type = INPUT_KEYBOARD;
+                      inputs[1].U.ki.wScan = ch;
+                      inputs[1].U.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+                      SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+                      Thread.Sleep(45);
+                  }
+              }
+          }
+          '@
           $word = New-Object -ComObject Word.Application
-          $word.Visible = $false
+          $word.Visible = $true
           $word.DisplayAlerts = 0
           $ac = $word.AutoCorrect
           $ac.ReplaceText = $true
+          $ac.ReplaceTextFromSpellingChecker = $true
           $ac.CorrectSentenceCaps = $true
           $ac.CorrectCapsLock = $true
           $tests = Get-Content (Join-Path $env:GITHUB_WORKSPACE "pr13\autocorrect_tests.json") -Raw -Encoding UTF8 | ConvertFrom-Json
           $lines = New-Object System.Collections.Generic.List[string]
           $lines.Add("WORD_VERSION=$($word.Version)")
           $lines.Add("AUTOCORRECT_REPLACE_TEXT=$($ac.ReplaceText)")
+          $lines.Add("AUTOCORRECT_SPELLING_SUGGESTIONS=$($ac.ReplaceTextFromSpellingChecker)")
           $failed = $false
           try {
             foreach ($t in $tests) {
               $doc = $word.Documents.Add()
               try {
                 $doc.Content.LanguageID = 1049
-                $rng = $doc.Range(0,0)
-                $rng.Select()
-                $sel = $word.Selection
-                $sel.TypeText([string]$t.input)
-                $sel.TypeText(" ")
-                Start-Sleep -Milliseconds 300
+                $doc.Activate()
+                $hwnd = [IntPtr]$word.ActiveWindow.Hwnd
+                [NativeKeyboard]::SetForegroundWindow($hwnd) | Out-Null
+                Start-Sleep -Milliseconds 350
+                [NativeKeyboard]::SendUnicode([string]$t.input)
+                [NativeKeyboard]::SendUnicode(" ")
+                Start-Sleep -Milliseconds 700
                 $actual = $doc.Content.Text.Trim()
                 $lines.Add("FIRST:$($t.input) -> $actual")
-                if ($actual -ne [string]$t.expected) {
+                if ($actual -cne [string]$t.expected) {
                   $lines.Add("BUILTIN_MISS:$($t.input)")
                   try {
                     $existing = $ac.Entries.Item([string]$t.input)
@@ -88,13 +131,14 @@ jobs:
                   $ac.Entries.Add([string]$t.input,[string]$t.expected) | Out-Null
                   $doc.Content.Text = ""
                   $doc.Range(0,0).Select()
-                  $sel = $word.Selection
-                  $sel.TypeText([string]$t.input)
-                  $sel.TypeText(" ")
-                  Start-Sleep -Milliseconds 300
+                  [NativeKeyboard]::SetForegroundWindow($hwnd) | Out-Null
+                  Start-Sleep -Milliseconds 250
+                  [NativeKeyboard]::SendUnicode([string]$t.input)
+                  [NativeKeyboard]::SendUnicode(" ")
+                  Start-Sleep -Milliseconds 700
                   $actual2 = $doc.Content.Text.Trim()
                   $lines.Add("AFTER_MANUAL:$($t.input) -> $actual2")
-                  if ($actual2 -ne [string]$t.expected) {
+                  if ($actual2 -cne [string]$t.expected) {
                     $lines.Add("FINAL_FAIL:$($t.input)")
                     $failed = $true
                   } else {
