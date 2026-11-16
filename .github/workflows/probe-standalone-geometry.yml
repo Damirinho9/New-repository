@@ -63,7 +63,8 @@ jobs:
             using ManagerGetViews=void*(*)(void*);
             using GetActive=void*(*)(void*);
             using GetObjects=void*(*)(void*);
-            using GetCollection=void*(*)(void*,int);\n            using AddObject=void*(*)(void*,int);
+            using GetCollection=void*(*)(void*,int);
+            using AddObject=void*(*)(void*,int);
             using SetD=void(*)(void*,double);
             using SetI=void(*)(void*,int);
             using Update=void(*)(void*);
@@ -79,7 +80,8 @@ jobs:
             // Returned pointers are interface subobjects; use ABI adjustment thunks.
             auto getActive=sym<GetActive>(ha,"_ZThn160_N7LtViews13GetActiveViewEv");
             auto getObjects=sym<GetObjects>(ha,"_ZThn208_N6LtView19GetObjectsContainerEv");
-            auto getCollection=sym<GetCollection>(ha,"_ZThn80_N25LtDrawingObjectsContainer13GetCollectionE23KompasAPIObjectTypeEnum");\n            auto addObject=sym<AddObject>(ha,"_ZThn112_N16LtDrawingObjects3AddE21DrawingObjectTypeEnum");
+            auto getCollection=sym<GetCollection>(ha,"_ZThn80_N25LtDrawingObjectsContainer13GetCollectionE23KompasAPIObjectTypeEnum");
+            auto addObject=sym<AddObject>(ha,"_ZThn112_N16LtDrawingObjects3AddE21DrawingObjectTypeEnum");
             auto setX1=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetX1Ed");
             auto setY1=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetY1Ed");
             auto setX2=sym<SetD>(ha,"_ZThn208_N17LtSelfLineSegment5SetX2Ed");
