@@ -23,7 +23,7 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y wget ca-certificates gnupg xvfb openbox xdotool dbus-x11 \
-            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 clang-18 libc++-18-dev libc++abi-18-dev
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 clang-18 libc++-18-dev libc++abi-18-dev libunwind-18-dev
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
