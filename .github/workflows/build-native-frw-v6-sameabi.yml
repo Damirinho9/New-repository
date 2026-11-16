@@ -42,7 +42,7 @@ jobs:
 
           INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
           BIN=/opt/ascon/kompas3d-v25/Bin
-          clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" /tmp/inject_variant06.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/inject_variant06.so
+          clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" /tmp/inject_variant06_lazy.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/inject_variant06.so
 
           echo "=== INJECTOR ABI ==="
           ldd /tmp/inject_variant06.so || true
