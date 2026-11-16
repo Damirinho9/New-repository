@@ -42,7 +42,7 @@ def xline(ref,nets,model):
 kp501_flip=os.environ.get("KP501_FLIP","0")=="1"
 vt3_flip=os.environ.get("VT3_FLIP","0")=="1"
 bridge_swap=os.environ.get("BRIDGE_SWAP","0")=="1"
-bridge_mode=os.environ.get("BRIDGE_MODE","dc_tb")
+bridge_mode=os.environ.get("BRIDGE_MODE","ac_tb")
 vd20_swap=os.environ.get("VD20_SWAP","0")=="1"
 
 vt1_pins={"D":"sens","S":"t1"} if kp501_flip else {"D":"t1","S":"sens"}
@@ -68,14 +68,14 @@ net=[
  named("VD3",models["rectifier"],A="led_r",K="led_a"),
  "RU1 drv 0 10meg",
  "R7 led_r l 58k",
- named("VS1",models["scr"],A="sw",K="n_int",G="g18"),
- "R8 g18 n_int 56",
+ named("VS1",models["scr"],A="sw",K="0",G="g18"),
+ "R8 g18 0 56",
 ]
 # Position 20 polarity is not explicitly marked in the source. Default is anti-parallel gate protection.
 if vd20_swap:
-    net.append(named("VD4",models["rectifier"],A="g18",K="n_int"))
+    net.append(named("VD4",models["rectifier"],A="g18",K="0"))
 else:
-    net.append(named("VD4",models["rectifier"],A="n_int",K="g18"))
+    net.append(named("VD4",models["rectifier"],A="0",K="g18"))
 net.append(xline("FU1",["drv","br_top"],models["fuse"]))
 
 # Source graph: bridge top=BR_TOP, bottom=common; left/right go to the two thyristor gate networks.
@@ -111,9 +111,9 @@ else:
 net += [
  named("VD5",models["rectifier"],A="sw",K="g25"),
  "R9 g25 sw 56",
- named("VS2",models["scr"],A="n_int",K="sw",G="g25"),
- "C3 l n_int 47n CAPACITOR_VIRTUAL",
- xline("FU2",["n_int","n"],models["fuse"]),
+ named("VS2",models["scr"],A="0",K="sw",G="g25"),
+ "C3 l 0 47n CAPACITOR_VIRTUAL",
+ xline("FU2",["0","n"],models["fuse"]),
 ]
 hp=set(lib.index[models["header5"]]["pins"])
 if {"P1","P2","P3","P4","P5"}<=hp:
@@ -123,7 +123,6 @@ else:
 
 # Simulation-only test bench. I1 is reverse photocurrent from cathode node SENS to anode/common.
 net += [
- "RREF n_int 0 1G",
  f"I1 sens 0 {iph:.12g}",
  "V1 ac_src n SIN(0 311.1269837 50)",
  "RLINE ac_src l 10",
@@ -131,10 +130,13 @@ net += [
 ]
 control_supply=os.environ.get("CTRL_SUPPLY","0")=="1"
 forced_bridge=os.environ.get("FORCE_BRIDGE","")
+add_scope=os.environ.get("ADD_SCOPE","0")=="1"
 if control_supply:
     net += ["V2 vctrl 0 12","RCTRL vctrl u_ctrl 100"]
 if forced_bridge:
     net += [f"RTEST br_top 0 {forced_bridge}"]
+if add_scope:
+    net += ["XSC1 sens sw 0 nc_trig 0 nc_b OSCILLOSCOPE"]
 
 layout={
  "R1":[144,180,90],"R2":[144,270,90],"XVD1":[144,378,90],
@@ -147,23 +149,27 @@ layout={
  "XVD6":[1197,342],"XVD5":[1323,198],"R9":[1323,270],
  "XVS2":[1404,342,90],"C3":[1512,450,90],"XFU2":[1512,576],
  "XXP1":[1908,306,90],
- "RREF":[72,198,90],"I1":[270,486,90],"V1":[1908,648,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],
+"I1":[270,486,90],"V1":[1908,648,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],
  "GND":[[72,144],[252,558],[432,558],[666,558],[900,558],[1080,558],[1233,558],[1404,648],[1512,648],[270,558],[900,810]],
 }
 if control_supply:
     layout.update({"V2":[72,90,90],"RCTRL":[198,90]})
 if forced_bridge:
     layout["RTEST"]=[990,720,90]
+if add_scope:
+    layout["XSC1"]=[756,756]
 spec={
  "netlist":"\n".join(net)+"\n",
  "output":str(TARGET),
  "layout":layout,
  "net_names":True,
  "wire_width":2,
- "sheet":[21.0,9.5],
+ "sheet":[21.0,11.0],
  "sim_time":"250ms",
  "colors":{"sens":"red","sw":"blue","g18":"green","g25":"green"}
 }
+if add_scope:
+    spec["instruments"]={"XSC1":{"timebase":"10ms","a_scale":"5V","b_scale":"200V","trigger":"none"}}
 res=builder.build(spec,lib=lib,allow_fallback=True,auto_repair=True)
 
 # Patch visible labels so test-bench parts and SIM-only capacitor values cannot be confused with the source BOM.
@@ -192,10 +198,10 @@ labels={
  "V1":"TEST BENCH: 220 Vrms / 50 Hz",
  "V2":"SIM CTRL SUPPLY: 12 V",
  "RCTRL":"SIM CTRL SUPPLY: 100 Ohm",
- "RREF":"SIM ONLY: 1 GOhm between isolated rails",
  "RLINE":"TEST BENCH: source R=10 Ohm",
  "RLOAD":"TEST LOAD: 220 Ohm",
  "RTEST":"DIAGNOSTIC ONLY: forced bridge conduction",
+ "XSC1":"XSC1: A=SENS, B=SW",
 }
 for item in root.iter("Item"):
     if item.get("Class")!="CIITSymbolComp" or not len(item): continue
@@ -208,10 +214,10 @@ xmlio.save(root,TARGET,compress=True)
 report=check.check_file(TARGET)
 manifest={
  "state":state,"photocurrent_A":iph,"photocurrent_uA":iph*1e6,
- "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"auxiliary_control_supply":control_supply,"control_supply_V":12 if control_supply else None,"control_series_Ohm":100 if control_supply else None,"forced_bridge":forced_bridge or None,"Rline_Ohm":10,"Rload_Ohm":220},
+ "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"auxiliary_control_supply":control_supply,"control_supply_V":12 if control_supply else None,"control_series_Ohm":100 if control_supply else None,"forced_bridge":forced_bridge or None,"scope":add_scope,"Rline_Ohm":10,"Rload_Ohm":220},
  "models":models,
  "model_patch_notes":model_patch_notes,
- "source_rails":{"control_common":"0","mains_return":"n_int","separated":True},"source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},
+ "source_rails":{"common":"0","mains_return_through_FU2":"0","separated":False},"source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},
  "check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")

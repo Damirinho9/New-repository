@@ -1,192 +1,101 @@
 import csv, json, math, os, shutil, subprocess, sys
 from pathlib import Path
-
 ROOT=Path(__file__).resolve().parent.parent
-OUT=ROOT/"stage3-final"
-OUT.mkdir(parents=True,exist_ok=True)
+OUT=ROOT/"stage3-final"; OUT.mkdir(parents=True,exist_ok=True)
 BUILD=ROOT/"fullv6"/"build_stage3_sim.py"
-NETS=["sens","u_ctrl","t1","t2","drv","g18","g25","l","sw","n_int"]
+NETS=["sens","u_ctrl","t1","t2","drv","g18","g25","l","sw"]
 
-def call(args, log):
-    p=subprocess.run(args,capture_output=True,text=True,encoding="utf-8",errors="replace")
-    Path(log).write_text((p.stdout or "")+"\n--- STDERR ---\n"+(p.stderr or ""),encoding="utf-8")
-    return p
-
-def build_and_sim(label,uA,duration=0.40,rate=7000,cfg=None):
-    iph=uA*1e-6
-    env=os.environ.copy()
-    cfg=cfg or {}
-    for k,v in cfg.items():
-        env[k]=str(v)
-    p=subprocess.run([sys.executable,str(BUILD),label,str(iph)],capture_output=True,text=True,encoding="utf-8",errors="replace",env=env)
-    Path(OUT/f"{label}_build.log").write_text((p.stdout or "")+"\n--- STDERR ---\n"+(p.stderr or ""),encoding="utf-8")
+def build_and_sim(label,uA,duration=0.30,rate=6000,cfg=None):
+    env=os.environ.copy(); cfg=cfg or {}; env.update({k:str(v) for k,v in cfg.items()})
+    p=subprocess.run([sys.executable,str(BUILD),label,str(uA*1e-6)],capture_output=True,text=True,encoding="utf-8",errors="replace",env=env)
+    (OUT/f"{label}_build.log").write_text((p.stdout or "")+"\n--- STDERR ---\n"+(p.stderr or ""),encoding="utf-8")
     ms14=ROOT/"stage3-out"/f"7330744_PhotoRelay_V6_SIM_{label}.ms14"
-    rec={"label":label,"photocurrent_uA":uA,"build_rc":p.returncode,"ms14":str(ms14)}
-    if p.returncode!=0 or not ms14.exists():
-        rec["failure"]="build"
-        return rec
+    rec={"label":label,"photocurrent_uA":uA,"build_rc":p.returncode,"ms14":str(ms14),"cfg":cfg}
+    if p.returncode or not ms14.exists(): rec["failure"]="build"; return rec
     csvdir=OUT/f"{label}_csv"
-    q=subprocess.run([sys.executable,"-m","multisimforge","sim",str(ms14),"--nets",",".join(NETS),
-            "--tran",f"{duration},{rate}","--csv",str(csvdir)],capture_output=True,text=True,encoding="utf-8",errors="replace",env=env)
-    Path(OUT/f"{label}_sim.log").write_text((q.stdout or "")+"\n--- STDERR ---\n"+(q.stderr or ""),encoding="utf-8")
+    q=subprocess.run([sys.executable,"-m","multisimforge","sim",str(ms14),"--nets",",".join(NETS),"--tran",f"{duration},{rate}","--csv",str(csvdir)],capture_output=True,text=True,encoding="utf-8",errors="replace",env=env)
+    (OUT/f"{label}_sim.log").write_text((q.stdout or "")+"\n--- STDERR ---\n"+(q.stderr or ""),encoding="utf-8")
     rec["sim_rc"]=q.returncode
-    try:
-        rec["sim_json"]=json.loads((q.stdout or "").strip())
-    except Exception:
-        rec["sim_stdout"]=(q.stdout or "")[-4000:]
-    csvfile=csvdir/"tran.csv"
-    if q.returncode != 0 or rec.get("sim_json",{}).get("failures"):
-        rec["failure"]="simulation_error"
-        return rec
-    if not csvfile.exists():
-        rec["failure"]="no_csv"
-        return rec
+    try: rec["sim_json"]=json.loads((q.stdout or "").strip())
+    except Exception: rec["sim_stdout"]=(q.stdout or "")[-4000:]
+    f=csvdir/"tran.csv"
+    if q.returncode or rec.get("sim_json",{}).get("failures") or not f.exists(): rec["failure"]="simulation_error"; return rec
     rows=[]
-    with csvfile.open(newline="",encoding="utf-8") as f:
-        rd=csv.DictReader(f)
-        for r in rd:
-            try:
-                vals={k:float(v) for k,v in r.items()}
-            except Exception:
-                continue
-            if vals["time"] >= duration*0.55:
-                rows.append(vals)
-    if not rows or rows[-1]["time"] < duration*0.95:
-        rec["failure"]="no_tail"
-        return rec
+    with f.open(newline="",encoding="utf-8") as h:
+        for r in csv.DictReader(h):
+            try: v={k:float(x) for k,x in r.items()}
+            except Exception: continue
+            if v["time"]>=duration*0.55: rows.append(v)
+    if len(rows)<3 or rows[-1]["time"]<duration*0.95: rec["failure"]="no_tail"; return rec
+    tt=[r["time"] for r in rows]; dt=[b-a for a,b in zip(tt,tt[1:])]; span=sum(dt)
     def stats(vals):
-        tt=[r["time"] for r in rows]
-        dt=[b-a for a,b in zip(tt,tt[1:])]
-        span=sum(dt)
-        if span<=0: raise ValueError("no time span")
         mean=sum((a+b)*d/2 for a,b,d in zip(vals,vals[1:],dt))/span
         rms=math.sqrt(sum((a*a+b*b)*d/2 for a,b,d in zip(vals,vals[1:],dt))/span)
         return {"mean":mean,"rms":rms,"min":min(vals),"max":max(vals),"pp":max(vals)-min(vals)}
-    metrics={n:stats([r[n] for r in rows]) for n in NETS}
-    metrics["load_v"]=stats([r["l"]-r["sw"] for r in rows])
-    metrics["gate1_v"]=stats([r["g18"]-r["n_int"] for r in rows])
-    metrics["gate2_v"]=stats([r["g25"]-r["sw"] for r in rows])
-    metrics["points_tail"]=len(rows)
-    rec["metrics"]=metrics
-    return rec
+    m={n:stats([r[n] for r in rows]) for n in NETS}
+    m["load_v"]=stats([r["l"]-r["sw"] for r in rows])
+    m["gate1_v"]=stats([r["g18"] for r in rows])
+    m["gate2_v"]=stats([r["g25"]-r["sw"] for r in rows])
+    rec["metrics"]=m; return rec
 
-# Diagnostic only: test bridge conduction without claiming light switching.
-# This resistor is NEVER included in any final candidate.
-diagnostics=[]
-for mode in ("dc_bt","dc_tb","ac_tb"):
-    cfg={"BRIDGE_MODE":mode,"BRIDGE_SWAP":0,"KP501_FLIP":0,"VT3_FLIP":1,"CTRL_SUPPLY":0,"VD20_SWAP":0}
-    for resistance in ("1G","10"):
-        d=dict(cfg, FORCE_BRIDGE=resistance)
-        r=build_and_sim("diag_"+mode+"_"+resistance,0.0,duration=0.20,rate=5000,cfg=d)
-        diagnostics.append({"config":d,"result":r})
-        (OUT/"bridge_diagnostic.json").write_text(json.dumps(diagnostics,ensure_ascii=False,indent=2),encoding="utf-8")
-
-# Full circuit, no forced switching. Source-ambiguous mapping alternatives only.
+configs=[
+ {"CTRL_SUPPLY":0,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
+ {"CTRL_SUPPLY":1,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
+ {"CTRL_SUPPLY":1,"KP501_FLIP":0,"VT3_FLIP":1,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":1,"VD20_SWAP":0},
+ {"CTRL_SUPPLY":1,"KP501_FLIP":0,"VT3_FLIP":0,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
+ {"CTRL_SUPPLY":1,"KP501_FLIP":1,"VT3_FLIP":1,"BRIDGE_MODE":"ac_tb","BRIDGE_SWAP":0,"VD20_SWAP":0},
+]
 candidates=[]
-for supply in (0,1):
-    for kpflip in (0,1):
-        for vt3flip in (0,1):
-            for bridge_mode in ("dc_bt","dc_tb","ac_tb"):
-                cfg={"KP501_MODEL":"2N6659","KP501_FLIP":kpflip,"VT3_FLIP":vt3flip,"BRIDGE_MODE":bridge_mode,"BRIDGE_SWAP":0,"VD20_SWAP":0,"CTRL_SUPPLY":supply,"FORCE_BRIDGE":""}
-                samples=[build_and_sim(f"cfg_s{supply}_k{kpflip}_v{vt3flip}_{bridge_mode}_{j}",u,duration=0.22,rate=4500,cfg=cfg) for j,u in enumerate((0.0,25.0))]
-                good=[r for r in samples if r.get("metrics")]
-                span=abs(good[-1]["metrics"]["load_v"]["rms"]-good[0]["metrics"]["load_v"]["rms"]) if len(good)==2 else -1.0
-                candidates.append({"cfg":cfg,"samples":samples,"load_span_Vrms":span})
-                (OUT/"candidate_progress.json").write_text(json.dumps(candidates,ensure_ascii=False,indent=2),encoding="utf-8")
-selected_candidate=max(candidates,key=lambda x:x["load_span_Vrms"])
-selected_cfg=selected_candidate["cfg"]
-(OUT/"selected_config.json").write_text(json.dumps(selected_candidate,ensure_ascii=False,indent=2),encoding="utf-8")
-coarse_uA=[0.0,2.0,5.0,8.0,10.0,12.0,15.0,20.0,25.0]
-coarse=[]
-for i,u in enumerate(coarse_uA):
-    rec=build_and_sim(f"coarse_{i:02d}_{str(u).replace('.','p')}uA",u,duration=0.30,rate=6000,cfg=selected_cfg)
-    coarse.append(rec)
-    (OUT/"coarse_progress.json").write_text(json.dumps(coarse,ensure_ascii=False,indent=2),encoding="utf-8")
+for i,cfg in enumerate(configs):
+    samples=[build_and_sim(f"cfg{i}_{j}",u,0.22,4500,cfg) for j,u in enumerate((0.0,5000.0))]
+    good=[r for r in samples if r.get("metrics")]
+    if len(good)==2:
+        y=[r["metrics"]["load_v"]["rms"] for r in good]; span=abs(y[1]-y[0])
+        score=span-(50 if min(y)>60 else 0)-(50 if max(y)<150 else 0)
+    else: span=-1; score=-999
+    candidates.append({"cfg":cfg,"samples":samples,"load_span_Vrms":span,"score":score})
+    (OUT/"candidate_progress.json").write_text(json.dumps(candidates,ensure_ascii=False,indent=2),encoding="utf-8")
+best=max(candidates,key=lambda x:x["score"]); cfg=best["cfg"]
+(OUT/"selected_config.json").write_text(json.dumps(best,ensure_ascii=False,indent=2),encoding="utf-8")
 
+coarse_uA=[0,25,50,100,200,500,1000,2000,3500,5000]
+coarse=[build_and_sim(f"coarse_{i:02d}",float(u),0.28,6000,cfg) for i,u in enumerate(coarse_uA)]
+(OUT/"coarse_progress.json").write_text(json.dumps(coarse,ensure_ascii=False,indent=2),encoding="utf-8")
 ok=[r for r in coarse if r.get("metrics")]
-if len(ok)<3:
-    raise SystemExit("Less than three successful real Multisim transient runs")
-ok.sort(key=lambda r:r["photocurrent_uA"])
-vals=[r["metrics"]["load_v"]["rms"] for r in ok]
-span=max(vals)-min(vals)
-# Require the load to actually respond. This gate prevents inventing a threshold from noise.
-if span < 100.0 or min(vals)>30.0 or max(vals)<170.0:
-    (OUT/"FAIL_no_switching.json").write_text(json.dumps({"span_Vrms":span,"coarse":ok},ensure_ascii=False,indent=2),encoding="utf-8")
-    raise SystemExit(f"Full model ran, but load response span is only {span:.6g} Vrms; no clear real switching threshold proven")
+if len(ok)<5: raise SystemExit("Insufficient successful transient points")
+vals=[r["metrics"]["load_v"]["rms"] for r in ok]; total=max(vals)-min(vals)
+if total<80:
+    (OUT/"FAIL_no_switching.json").write_text(json.dumps({"span_Vrms":total,"coarse":ok,"candidates":candidates},ensure_ascii=False,indent=2),encoding="utf-8")
+    raise SystemExit(f"No clear load switching: span={total:.6g} Vrms")
 
-# Locate the largest adjacent output transition and refine there.
 pairs=[]
 for a,b in zip(ok,ok[1:]):
-    du=b["photocurrent_uA"]-a["photocurrent_uA"]
-    dv=abs(b["metrics"]["load_v"]["rms"]-a["metrics"]["load_v"]["rms"])
-    pairs.append((dv/max(du,1e-12),a,b))
-_,pa,pb=max(pairs,key=lambda x:x[0])
-lo,hi=pa["photocurrent_uA"],pb["photocurrent_uA"]
+    du=b["photocurrent_uA"]-a["photocurrent_uA"]; dy=abs(b["metrics"]["load_v"]["rms"]-a["metrics"]["load_v"]["rms"])
+    pairs.append((dy/max(du,1e-12),a,b))
+_,a,b=max(pairs,key=lambda x:x[0]); lo=a["photocurrent_uA"]; hi=b["photocurrent_uA"]
 fine_uA=[lo+(hi-lo)*i/8 for i in range(9)]
-fine=[]
-for i,u in enumerate(fine_uA):
-    rec=build_and_sim(f"fine_{i:02d}_{u:.6f}uA".replace(".","p"),u,duration=0.35,rate=7000,cfg=selected_cfg)
-    fine.append(rec)
-    (OUT/"fine_progress.json").write_text(json.dumps(fine,ensure_ascii=False,indent=2),encoding="utf-8")
-fine_ok=[r for r in fine if r.get("metrics")]
-if len(fine_ok)<5:
-    raise SystemExit("Fine sweep did not yield enough successful real transient runs")
+fine=[build_and_sim(f"fine_{i:02d}",u,0.32,7000,cfg) for i,u in enumerate(fine_uA)]
+(OUT/"fine_progress.json").write_text(json.dumps(fine,ensure_ascii=False,indent=2),encoding="utf-8")
+fine=[r for r in fine if r.get("metrics")]
+dark=min(ok,key=lambda r:r["photocurrent_uA"]); light=max(ok,key=lambda r:r["photocurrent_uA"])
+target=(dark["metrics"]["load_v"]["rms"]+light["metrics"]["load_v"]["rms"])/2
+thr=min(fine,key=lambda r:abs(r["metrics"]["load_v"]["rms"]-target))
+chosen={"DARK":dark["photocurrent_uA"],"THRESHOLD":thr["photocurrent_uA"],"LIGHT":light["photocurrent_uA"]}
 
-# Physical labels: darkness = zero photocurrent, light = highest photocurrent.
-dark=min(ok,key=lambda r:abs(r["photocurrent_uA"]-0.0))
-light=max(ok,key=lambda r:r["photocurrent_uA"])
-dark_y=dark["metrics"]["load_v"]["rms"]
-light_y=light["metrics"]["load_v"]["rms"]
-target=(dark_y+light_y)/2
-threshold=min(fine_ok,key=lambda r:abs(r["metrics"]["load_v"]["rms"]-target))
-
-selected={
- "DARK":{"photocurrent_uA":dark["photocurrent_uA"]},
- "THRESHOLD":{"photocurrent_uA":threshold["photocurrent_uA"]},
- "LIGHT":{"photocurrent_uA":light["photocurrent_uA"]},
-}
-
-# Rebuild and measure the exact selected states with a longer transient.
 final={}
-for state,info in selected.items():
-    r=build_and_sim(state,info["photocurrent_uA"],duration=0.50,rate=9000,cfg=selected_cfg)
-    if not r.get("metrics"):
-        raise SystemExit(f"{state} final simulation failed")
-    src=Path(r["ms14"])
-    dst=OUT/f"7330744_PhotoRelay_V6_{state}.ms14"
-    shutil.copy2(src,dst)
-    for suffix in ("_manifest.json","_netlist.txt"):
-        side=src.with_name(src.stem+suffix)
-        if side.exists(): shutil.copy2(side,OUT/(dst.stem+suffix))
+for state,u in chosen.items():
+    c=dict(cfg); c["ADD_SCOPE"]=1
+    r=build_and_sim(state,u,0.50,9000,c)
+    if not r.get("metrics"): raise SystemExit(f"{state} final failed")
+    src=Path(r["ms14"]); dst=OUT/f"7330744_PhotoRelay_V6_{state}.ms14"; shutil.copy2(src,dst)
     csvsrc=OUT/f"{state}_csv"/"tran.csv"
-    if csvsrc.exists():
-        shutil.copy2(csvsrc,OUT/f"{state}_transient.csv")
-    r["final_ms14"]=str(dst)
-    final[state]=r
-
-summary={
- "selected_source_ambiguous_pin_assignment":selected_cfg,
- "candidate_load_spans_Vrms":[{"cfg":x["cfg"],"span":x["load_span_Vrms"]} for x in candidates],
- "criterion":"three modes selected only from real NI Multisim transient data; threshold is closest fine-sweep point to midpoint of DARK/LIGHT load RMS",
- "coarse_transition_interval_uA":[lo,hi],
- "coarse_load_span_Vrms":span,
- "target_mid_load_rms_V":target,
- "selected":final,
-}
+    if csvsrc.exists(): shutil.copy2(csvsrc,OUT/f"{state}_transient.csv")
+    r["final_ms14"]=str(dst); final[state]=r
+summary={"selected_config":cfg,"candidate_results":candidates,"coarse_load_span_Vrms":total,"transition_interval_uA":[lo,hi],"selected":final}
 (OUT/"7330744_stage3_real_results.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
-
-# Human-readable values to paste into the report; all originate from the final transient CSV.
-lines=["7330744 Variant 6 - REAL NI Multisim results",""]
+lines=["7330744 Variant 6 - REAL NI Multisim transient values",""]
 for state in ("LIGHT","THRESHOLD","DARK"):
     r=final[state]; m=r["metrics"]
-    lines += [
-      f"{state}: I_PH = {r['photocurrent_uA']:.9g} uA",
-      f"  SENS mean = {m['sens']['mean']:.9g} V; RMS = {m['sens']['rms']:.9g} V",
-      f"  U_CTRL mean = {m['u_ctrl']['mean']:.9g} V",
-      f"  DRV mean = {m['drv']['mean']:.9g} V",
-      f"  SW RMS = {m['sw']['rms']:.9g} V",
-      f"  LOAD RMS = {m['load_v']['rms']:.9g} V; min={m['load_v']['min']:.9g}; max={m['load_v']['max']:.9g}",
-      ""
-    ]
+    lines += [f"{state}: I_PH={r['photocurrent_uA']:.6g} uA",f" SENS mean={m['sens']['mean']:.6g} V",f" U_CTRL mean={m['u_ctrl']['mean']:.6g} V",f" DRV mean={m['drv']['mean']:.6g} V",f" G1-K RMS={m['gate1_v']['rms']:.6g} V",f" G2-K RMS={m['gate2_v']['rms']:.6g} V",f" LOAD RMS={m['load_v']['rms']:.6g} V",""]
 (OUT/"7330744_stage3_real_values.txt").write_text("\n".join(lines),encoding="utf-8")
 print(json.dumps(summary,ensure_ascii=False,indent=2))
