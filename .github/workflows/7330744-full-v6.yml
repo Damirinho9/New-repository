@@ -71,29 +71,27 @@ jobs:
       - name: Build local Multisim part library
         shell: powershell
         run: |
-          $ErrorActionPreference='Continue'
+          $ErrorActionPreference='Stop'
           Set-Location "$env:RUNNER_TEMP\MultisimForge"
           $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
           python -m multisimforge --debug parts init 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\parts-init.txt"
-          "exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\fullv6-out\parts-init.txt"
-          python -m multisimforge --debug parts dbindex 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\dbindex.txt"
-          "exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\fullv6-out\dbindex.txt"
+          if($LASTEXITCODE -ne 0){ throw "parts init failed exit=$LASTEXITCODE" }
 
-      - name: Query relevant installed parts
+      - name: Query harvested Multisim sample library
         shell: powershell
         run: |
-          $ErrorActionPreference='Continue'
+          $ErrorActionPreference='Stop'
           Set-Location "$env:RUNNER_TEMP\MultisimForge"
           $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
           $out="$env:GITHUB_WORKSPACE\fullv6-out"
-          $terms=@('resistor','capacitor','diode','photo','photodiode','2N7000','mosfet','fet','scr','thyristor','triac','varistor','mov','bridge','rectifier','fuse','led','connector','header','terminal','1N4007','1N4742','C106')
+          python -m multisimforge parts list 2>&1 | Out-File -Encoding utf8 "$out\all-parts.txt"
+          $terms=@('resistor','capacitor','diode','photo','photodiode','2N7000','mosfet','fet','scr','thyristor','triac','varistor','mov','bridge','rectifier','fuse','led','connector','header','terminal','1N4007','1N4742','C106','2N3904','2N3906')
           foreach($t in $terms){
             "===== $t =====" | Add-Content "$out\parts-report.txt"
             python -m multisimforge parts list $t 2>&1 | Add-Content "$out\parts-report.txt"
           }
-          "===== local library =====" | Add-Content "$out\parts-report.txt"
-          Get-ChildItem "$env:LOCALAPPDATA\MultisimForge" -Recurse -ErrorAction SilentlyContinue |
-            Select-Object FullName,Length | Out-String -Width 260 | Add-Content "$out\parts-report.txt"
+          Copy-Item "$env:LOCALAPPDATA\MultisimForge\parts\index.json" "$out\parts-index.json" -Force
+          Compress-Archive -Path "$env:LOCALAPPDATA\MultisimForge\parts\*" -DestinationPath "$out\parts-library.zip" -Force
 
       - name: Upload discovery
         if: always()
