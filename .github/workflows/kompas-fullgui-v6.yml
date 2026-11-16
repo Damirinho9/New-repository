@@ -42,13 +42,26 @@ jobs:
           echo "$WRAP" >/tmp/wrap.pid
 
           KP=""
-          for i in $(seq 1 90); do
+          for i in $(seq 1 20); do
             sleep 1
-            KP=$(pgrep -x kKompas | head -1 || true)
+            KP=$(pgrep -f '/opt/ascon/kompas3d-v25/Bin/kKompas|/tmp/kHome' | head -1 || true)
             [ -n "$KP" ] && break
+            if ! kill -0 "$WRAP" 2>/dev/null; then
+              echo "WRAPPER_EXITED_EARLY"
+              break
+            fi
           done
-          echo "KPID=$KP"; ps aux | grep -E "[k]Kompas|[k]Home" || true
-          test -n "$KP"
+          echo "KPID=$KP"
+          echo "=== PS ==="
+          ps aux | grep -E '[k]Kompas|[k]Home|[x]vfb' || true
+          echo "=== FULL STDOUT ==="
+          cat /tmp/kompas-full.out || true
+          echo "=== FULL STDERR ==="
+          cat /tmp/kompas-full.err || true
+          if [ -z "$KP" ]; then
+            wait "$WRAP" || echo "WRAPPER_RC=$?"
+            exit 4
+          fi
 
           for i in $(seq 1 90); do
             sleep 1
