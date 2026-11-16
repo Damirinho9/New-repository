@@ -1,0 +1,78 @@
+name: PR13 task 4 AutoText and date signature
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - word-pr13-native-20261116
+    paths:
+      - "pr13/task4_word.py"
+      - ".github/workflows/word-pr13-task4.yml"
+
+jobs:
+  task4:
+    runs-on: windows-2022
+    timeout-minutes: 18
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download exact PR13_2 from previous native Word run
+        uses: actions/download-artifact@v4
+        with:
+          name: pr13-2-native-word
+          path: input
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 43877340052
+
+      - name: Install Microsoft Word LTSC 2024 volume
+        shell: powershell
+        timeout-minutes: 9
+        run: |
+          $ErrorActionPreference = "Stop"
+          $odt = "$env:RUNNER_TEMP\odt.exe"
+          Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20326-20112.exe" -OutFile $odt
+          $dir = "$env:RUNNER_TEMP\odt"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Start-Process -FilePath $odt -ArgumentList "/quiet /extract:$dir" -Wait
+          @'
+          <Configuration>
+            <Add OfficeClientEdition="64" Channel="PerpetualVL2024">
+              <Product ID="ProPlus2024Volume">
+                <Language ID="ru-ru" />
+                <ExcludeApp ID="Access" />
+                <ExcludeApp ID="Excel" />
+                <ExcludeApp ID="Groove" />
+                <ExcludeApp ID="Lync" />
+                <ExcludeApp ID="OneDrive" />
+                <ExcludeApp ID="OneNote" />
+                <ExcludeApp ID="Outlook" />
+                <ExcludeApp ID="PowerPoint" />
+                <ExcludeApp ID="Publisher" />
+                <ExcludeApp ID="Teams" />
+              </Product>
+            </Add>
+            <Property Name="AUTOACTIVATE" Value="0" />
+            <Display Level="None" AcceptEULA="TRUE" />
+          </Configuration>
+          '@ | Set-Content -Encoding UTF8 "$env:RUNNER_TEMP\word.xml"
+          & "$dir\setup.exe" /configure "$env:RUNNER_TEMP\word.xml"
+
+      - name: Configure and verify AutoText and update PR13_2.doc in native Word
+        shell: powershell
+        timeout-minutes: 5
+        run: |
+          py -m pip install pywin32
+          py .\pr13\task4_word.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr13-task4-final
+          path: |
+            PR13_2.doc
+            stage6-results.txt
+          retention-days: 7
