@@ -69,7 +69,7 @@ jobs:
               find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i                 "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
 
               apt-get update
-              apt-get install -y wget ca-certificates dbus procps iproute2 glibc-i18ndata                 fontconfig libxcbutil-icccm libxcbutil-keysyms libxcbutil-image                 libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
+              apt-get install -y wget ca-certificates dbus procps iproute2 glibc-i18ndata                 fontconfig xvfb libxcbutil-icccm libxcbutil-keysyms libxcbutil-image                 libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
 
               bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
 
@@ -119,12 +119,15 @@ jobs:
 
               export LANG=C.UTF-8
               export LC_ALL=C.UTF-8
-              export QT_QPA_PLATFORM=offscreen
+              export QT_QPA_PLATFORM=xcb
               export LD_LIBRARY_PATH="$BIN"
-              unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+              Xvfb :99 -screen 0 1920x1080x24 -ac >/tmp/xvfb.out 2>/tmp/xvfb.err &
+              XVFB_PID=$!
+              export DISPLAY=:99
+              unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
               cd "$BIN"
-              dbus-run-session -- sh -c "LD_PRELOAD=/tmp/bootstrap_variant06_qt.so exec ./kKompas -automation"                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
+              dbus-run-session -- sh -c "LD_PRELOAD=/tmp/bootstrap_variant06_qt.so exec ./ksinvisible -automation"                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
               KP=$!
               echo "KOMPAS_PID=$KP"
 
@@ -168,6 +171,7 @@ jobs:
               cp /tmp/work1_bootstrap.log /work/result/ 2>/dev/null || true
               cp /tmp/kompas-fast.out /work/result/ 2>/dev/null || true
               cp /tmp/kompas-fast.err /work/result/ 2>/dev/null || true
+              kill "$XVFB_PID" 2>/dev/null || true
               echo "RESULT=FAIL_FAST_NATIVE_VARIANT06"
               exit 30
             '
