@@ -119,7 +119,7 @@ jobs:
         shell: pwsh
         run: |
           $out = "$env:GITHUB_WORKSPACE\masterscada-7341268\installed-files.txt"
-          $roots = @("C:\Program Files (x86)\MPSSoft","C:\Program Files\MPSSoft","C:\MasterSCADA Projects")
+          $roots = @("C:\Program Files (x86)\InSAT\MasterSCADA","C:\Program Files\InSAT\MasterSCADA","C:\MasterSCADA Projects")
           foreach ($r in $roots) {
             "=== $r ===" | Add-Content -Encoding utf8 $out
             if (Test-Path $r) {
@@ -136,6 +136,118 @@ jobs:
           $project = "C:\MasterSCADA Projects\7341268_Variant7"
           New-Item -ItemType Directory -Force -Path $project | Out-Null
           "PROJECT_FOLDER=$project" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\install-status.txt"
+
+      - name: Resolve MasterSCADA executables shortcuts and VAV association
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $baseOut = "$env:GITHUB_WORKSPACE\masterscada-7341268"
+          $install = "C:\Program Files (x86)\InSAT\MasterSCADA"
+          $exeOut = Join-Path $baseOut "master-exes.txt"
+          if (Test-Path $install) {
+            Get-ChildItem $install -Recurse -File -Filter *.exe -ErrorAction SilentlyContinue |
+              Sort-Object FullName |
+              ForEach-Object {
+                $vi = $_.VersionInfo
+                "$($_.FullName)`tFileVersion=$($vi.FileVersion)`tProductVersion=$($vi.ProductVersion)`tProduct=$($vi.ProductName)"
+              } | Out-File -Encoding utf8 $exeOut
+          } else {
+            "INSTALL_PATH_MISSING=$install" | Out-File -Encoding utf8 $exeOut
+          }
+
+          $shortcutOut = Join-Path $baseOut "shortcuts.txt"
+          $shell = New-Object -ComObject WScript.Shell
+          $shortcutRoots = @(
+            "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\MasterSCADA",
+            "C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
+            "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+          )
+          foreach ($sr in $shortcutRoots) {
+            if (Test-Path $sr) {
+              Get-ChildItem $sr -Recurse -Filter *.lnk -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "MasterSCADA|InSAT|Мастер" } |
+                ForEach-Object {
+                  $s = $shell.CreateShortcut($_.FullName)
+                  "LINK=$($_.FullName)`nTARGET=$($s.TargetPath)`nARGS=$($s.Arguments)`nWORKDIR=$($s.WorkingDirectory)`n---"
+                } | Add-Content -Encoding utf8 $shortcutOut
+            }
+          }
+
+          $assocOut = Join-Path $baseOut "vav-association.txt"
+          cmd /c "assoc .vav" 2>&1 | Out-File -Encoding utf8 $assocOut
+          $assoc = (cmd /c "assoc .vav" 2>$null)
+          if ($assoc -match "=(.+)$") {
+            $ft = $Matches[1].Trim()
+            cmd /c "ftype $ft" 2>&1 | Add-Content -Encoding utf8 $assocOut
+          }
+          Get-ChildItem "Registry::HKEY_CLASSES_ROOT" -ErrorAction SilentlyContinue |
+            Where-Object { $_.PSChildName -match "vav|MasterSCADA" } |
+            ForEach-Object {
+              "REG=$($_.Name)" | Add-Content -Encoding utf8 $assocOut
+              try { Get-ItemProperty $_.PSPath | Format-List * | Out-String | Add-Content -Encoding utf8 $assocOut } catch {}
+            }
+
+          $vavOut = Join-Path $baseOut "installed-vav-projects.txt"
+          Get-ChildItem "C:\MasterSCADA Projects" -Recurse -Filter *.vav -File -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName |
+            Out-File -Encoding utf8 $vavOut
+
+      - name: Launch MasterSCADA development environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\masterscada-7341268\launch-editor.txt"
+          $exe = "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          if (!(Test-Path $exe)) { throw "MasterSCADA.exe not found at $exe" }
+          $vi = (Get-Item $exe).VersionInfo
+          "EXE=$exe" | Out-File -Encoding utf8 $out
+          "FILE_VERSION=$($vi.FileVersion)" | Add-Content -Encoding utf8 $out
+          "PRODUCT_VERSION=$($vi.ProductVersion)" | Add-Content -Encoding utf8 $out
+          $before = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like "*\InSAT\MasterSCADA\*" } | Select-Object -ExpandProperty ProcessId)
+          $p = Start-Process -FilePath $exe -PassThru
+          "START_PID=$($p.Id)" | Add-Content -Encoding utf8 $out
+          Start-Sleep -Seconds 12
+          $running = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like "*\InSAT\MasterSCADA\*" })
+          foreach ($rp in $running) {
+            "RUNNING_PID=$($rp.ProcessId)`tNAME=$($rp.Name)`tPATH=$($rp.ExecutablePath)`tCMD=$($rp.CommandLine)" |
+              Add-Content -Encoding utf8 $out
+          }
+          if ($running.Count -eq 0) {
+            "EDITOR_RUNNING=false" | Add-Content -Encoding utf8 $out
+            throw "No MasterSCADA process remained running after launch"
+          }
+          "EDITOR_RUNNING=true" | Add-Content -Encoding utf8 $out
+          foreach ($rp in $running) {
+            try { Stop-Process -Id $rp.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+          }
+
+      - name: Open an installed native VAV project in MasterSCADA
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\masterscada-7341268\launch-vav.txt"
+          $exe = "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $demo = Get-ChildItem "C:\MasterSCADA Projects" -Recurse -Filter *.vav -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $demo) { throw "No installed tutorial .vav project found" }
+          "VAV=$($demo.FullName)" | Out-File -Encoding utf8 $out
+          "VAV_SIZE=$($demo.Length)" | Add-Content -Encoding utf8 $out
+          $p = Start-Process -FilePath $exe -ArgumentList @($demo.FullName) -PassThru
+          "START_PID=$($p.Id)" | Add-Content -Encoding utf8 $out
+          Start-Sleep -Seconds 15
+          $running = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like "*\InSAT\MasterSCADA\*" })
+          foreach ($rp in $running) {
+            "RUNNING_PID=$($rp.ProcessId)`tNAME=$($rp.Name)`tPATH=$($rp.ExecutablePath)`tCMD=$($rp.CommandLine)" |
+              Add-Content -Encoding utf8 $out
+          }
+          if ($running.Count -eq 0) {
+            "VAV_OPEN_RUNNING=false" | Add-Content -Encoding utf8 $out
+            throw "MasterSCADA did not remain running with native VAV project"
+          }
+          "VAV_OPEN_RUNNING=true" | Add-Content -Encoding utf8 $out
+          foreach ($rp in $running) {
+            try { Stop-Process -Id $rp.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+          }
 
       - name: Upload diagnostics
         if: always()
@@ -157,4 +269,10 @@ jobs:
             masterscada-7341268/msi-install.log
             masterscada-7341268/install-status.txt
             masterscada-7341268/installed-files.txt
+            masterscada-7341268/master-exes.txt
+            masterscada-7341268/shortcuts.txt
+            masterscada-7341268/vav-association.txt
+            masterscada-7341268/installed-vav-projects.txt
+            masterscada-7341268/launch-editor.txt
+            masterscada-7341268/launch-vav.txt
           if-no-files-found: warn
