@@ -109,12 +109,12 @@ spec={
  "layout":layout,
  "net_names":True,
  "wire_width":2,
- "sheet":[19.5,9.0],
+ "sheet":[20.5,10.5],
  "instruments":{"XSC1":{"timebase":"10ms","a_scale":"10V","b_scale":"200V","trigger":"none"}},
  "sim_time":"250ms",
  "colors":{"sens":"red","sw":"blue"}
 }
-res=builder.build(spec,lib=lib,allow_fallback=True,auto_repair=True)
+res=builder.build(spec,lib=lib,allow_fallback=False,auto_repair=True)
 
 # Patch visible labels so test-bench parts and SIM-only capacitor values cannot be confused with the source BOM.
 root=xmlio.load(TARGET)
