@@ -32,7 +32,9 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           test -f /opt/ascon/kompas3d-v25/SDK/KsAPI/Include/KsAPI.h
-          test -x /opt/ascon/kompas3d-v25/Bin/kKompas
+          test -x /opt/ascon/kompas3d-v25/Bin/ksinvisible
+          echo "=== KOMPAS BINARIES ==="
+          find /opt/ascon/kompas3d-v25/Bin -maxdepth 1 -type f -perm -111 -printf '%f\n' | sort | head -120
 
       - name: Compile native AddIn
         shell: bash
@@ -84,7 +86,7 @@ jobs:
           export LANG=C.UTF-8 LC_ALL=C.UTF-8
 
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
-            dbus-run-session -- "$BIN/kKompas" >/tmp/kompas-addin.out 2>/tmp/kompas-addin.err &
+            dbus-run-session -- "$BIN/ksinvisible" -automation >/tmp/kompas-addin.out 2>/tmp/kompas-addin.err &
           KP=$!
           echo "WRAPPER_PID=$KP"
 
