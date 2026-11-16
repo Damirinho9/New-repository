@@ -1,0 +1,161 @@
+name: 7330744 full native Variant 6
+
+on:
+  push:
+    branches: [multisim-7330744-full-native-v6]
+    paths:
+      - ".github/workflows/7330744-full-native-v6.yml"
+      - "fullv6/**"
+  workflow_dispatch:
+
+concurrency:
+  group: 7330744-full-native-v6
+  cancel-in-progress: true
+
+jobs:
+  build-native:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download harvested Multisim 14.3 library
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-full-v6-discovery
+          path: dep-library
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43835690292
+
+      - name: Download decoded Multisim master DB index
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-dbnode
+          path: dep-db
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43836264959
+
+      - name: Prepare reusable component library
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force fullv6-lib,fullv6-out | Out-Null
+          Expand-Archive -Path dep-library\parts-library.zip -DestinationPath fullv6-lib -Force
+          Copy-Item dep-db\db_index.json fullv6-lib\db_index.json -Force
+          "library files=$((Get-ChildItem fullv6-lib -Recurse -File).Count)" | Out-File fullv6-out\dependency.txt
+          "db entries=$((Get-Content fullv6-lib\db_index.json -Raw | ConvertFrom-Json).PSObject.Properties.Count)" | Add-Content fullv6-out\dependency.txt
+
+      - name: Install NI Multisim 14.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $installer=Join-Path $env:RUNNER_TEMP 'ni-cds-educational_14.3_online.exe'
+          Invoke-WebRequest 'https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe' -OutFile $installer -UseBasicParsing
+          $sig=Get-AuthenticodeSignature $installer
+          if($sig.Status -ne 'Valid'){ throw 'Invalid official NI installer signature' }
+          $p=Start-Process $installer -ArgumentList @('--quiet','--accept-eulas','--prevent-reboot') -PassThru
+          if(-not $p.WaitForExit(480000)){ try{Stop-Process -Id $p.Id -Force}catch{} }
+          $ms=Get-ChildItem 'C:\Program Files (x86)\National Instruments','C:\Program Files\National Instruments' -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if(-not $ms){ throw 'Multisim executable absent' }
+          $ms.FullName | Out-File fullv6-out\multisim-path.txt
+
+      - name: Install x86 Python COM support
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $pyInstaller=Join-Path $env:RUNNER_TEMP 'python-3.11.9-x86.exe'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.11.9/python-3.11.9.exe' -OutFile $pyInstaller -UseBasicParsing
+          if((Get-AuthenticodeSignature $pyInstaller).Status -ne 'Valid'){ throw 'Invalid Python x86 signature' }
+          $p=Start-Process $pyInstaller -ArgumentList @('/quiet','InstallAllUsers=1','TargetDir=C:\Python311-32','PrependPath=0','Include_launcher=0','Include_test=0','Include_pip=1') -PassThru -Wait
+          if($p.ExitCode -ne 0){ throw "Python x86 installer exit=$($p.ExitCode)" }
+          & 'C:\Python311-32\python.exe' -m pip install --disable-pip-version-check --quiet pywin32
+
+      - name: Install MultisimForge and GUI tools
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m pip install --disable-pip-version-check -e ".[capture]"
+          python -m pip install --disable-pip-version-check --quiet pyautogui pywinauto pywin32 pillow
+
+      - name: Fetch exact or close native Multisim models from master DB
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $models=@(
+            'PHOTO_DIODE_RATED',
+            'MTD4N20E',
+            'BUZ90',
+            '1N4742A',
+            '1N4007',
+            'V430MA7B',
+            'MDA2504',
+            '30_AMP',
+            'HDR1X5'
+          )
+          foreach($m in $models){
+            "===== FETCH $m =====" | Add-Content "$env:GITHUB_WORKSPACE\fullv6-out\fetch-models.txt"
+            python -m multisimforge parts fetch "$m" 2>&1 | Add-Content "$env:GITHUB_WORKSPACE\fullv6-out\fetch-models.txt"
+            "exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\fullv6-out\fetch-models.txt"
+          }
+          python -m multisimforge parts list | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\fullv6-out\library-after-fetch.txt"
+
+      - name: Build full 27-position Variant 6 native design
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          $env:PYTHONPATH="$env:RUNNER_TEMP\MultisimForge"
+          python fullv6\build_full_v6.py 2>&1 | Tee-Object -FilePath fullv6-out\build-console.txt
+          if($LASTEXITCODE -ne 0){ throw "full V6 builder failed exit=$LASTEXITCODE" }
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m multisimforge check "$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\fullv6-out\check-before-native-save.json"
+          python -m multisimforge inspect "$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\fullv6-out\inspect-before-native-save.json"
+
+      - name: Export genuine schematic preview through Multisim
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m multisimforge preview "$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14" "$env:GITHUB_WORKSPACE\fullv6-out\Multisim_FULL_V6_preview.png" 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\preview-console.txt"
+          python -m multisimforge com stop | Out-File "$env:GITHUB_WORKSPACE\fullv6-out\com-stop.txt"
+
+      - name: Save, close and reopen in real Multisim GUI
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ms=(Get-Content fullv6-out\multisim-path.txt -Raw).Trim()
+          python fullv6\native_verify_full_v6.py "$ms" "$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14" "$env:GITHUB_WORKSPACE\fullv6-out\native-gui" 2>&1 | Tee-Object -FilePath fullv6-out\native-gui-console.txt
+          if($LASTEXITCODE -ne 0){ throw "native GUI verification failed exit=$LASTEXITCODE" }
+
+      - name: Re-check file after Multisim itself saved it
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m multisimforge check "$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\fullv6-out\check-after-native-save.json"
+          python -m multisimforge inspect "$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\fullv6-out\inspect-after-native-save.json"
+          $f="$env:GITHUB_WORKSPACE\fullv6-out\7330744_PhotoRelay_V6_FULL.ms14"
+          "size=$((Get-Item $f).Length)" | Out-File "$env:GITHUB_WORKSPACE\fullv6-out\final-hash.txt"
+          "sha256=$((Get-FileHash $f -Algorithm SHA256).Hash)" | Add-Content "$env:GITHUB_WORKSPACE\fullv6-out\final-hash.txt"
+
+      - name: Upload full native Variant 6
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-full-native-v6
+          path: fullv6-out/
+          if-no-files-found: error
+          retention-days: 7
