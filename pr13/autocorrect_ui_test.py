@@ -10,7 +10,7 @@ log = []
 
 pythoncom.CoInitialize()
 word = win32com.client.DispatchEx("Word.Application")
-word.Visible = True
+word.Visible = False
 word.DisplayAlerts = 0
 ac = word.AutoCorrect
 ac.ReplaceText = True
@@ -25,7 +25,8 @@ log.append(f"AUTOCORRECT_SPELLING_SUGGESTIONS={ac.ReplaceTextFromSpellingChecker
 doc = word.Documents.Add()
 doc.Content.LanguageID = 1049
 doc.Activate()
-time.sleep(1.0)
+word.Visible = True
+time.sleep(3.0)
 hwnd = int(word.ActiveWindow.Hwnd)
 win = Desktop(backend="uia").window(handle=hwnd)
 win.wait("visible", timeout=10)
@@ -39,19 +40,32 @@ failed = False
 def save_log():
     (ROOT / "autocorrect-results.txt").write_text("\n".join(log) + "\n", encoding="utf-8")
 
+def com_retry(fn, attempts=15, pause=0.4):
+    last = None
+    for _ in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:
+            last = exc
+            time.sleep(pause)
+    raise last
+
 def clear_doc():
-    doc.Content.Text = ""
-    doc.Range(0, 0).Select()
     win.set_focus()
-    time.sleep(0.5)
+    time.sleep(0.4)
+    send_keys("^a{BACKSPACE}", pause=0.08)
+    time.sleep(0.7)
+
+def read_text():
+    return com_retry(lambda: (doc.Content.Text or "").strip())
 
 def real_type(value):
     win.set_focus()
-    time.sleep(0.3)
-    send_keys(value, with_spaces=True, pause=0.09, vk_packet=True)
+    time.sleep(0.4)
+    send_keys(value, with_spaces=True, pause=0.10, vk_packet=True)
     send_keys("{SPACE}", pause=0.1)
-    time.sleep(1.2)
-    return (doc.Content.Text or "").strip()
+    time.sleep(1.5)
+    return read_text()
 
 for t in tests:
     clear_doc()
@@ -60,11 +74,11 @@ for t in tests:
     if actual != t["expected"]:
         log.append(f'BUILTIN_MISS:{t["input"]}')
         try:
-            ac.Entries.Item(t["input"]).Delete()
+            com_retry(lambda: ac.Entries.Item(t["input"]).Delete())
         except Exception:
             pass
-        ac.Entries.Add(Name=t["input"], Value=t["expected"])
-        time.sleep(0.5)
+        com_retry(lambda: ac.Entries.Add(Name=t["input"], Value=t["expected"]))
+        time.sleep(0.8)
         clear_doc()
         actual2 = real_type(t["input"])
         log.append(f'AFTER_MANUAL:{t["input"]} -> {actual2}')
