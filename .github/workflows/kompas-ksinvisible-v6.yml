@@ -1,0 +1,107 @@
+name: KOMPAS ksinvisible native Work1 variant06
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - 'kompas-linux/build_variant06_python.py'
+      - '.github/workflows/kompas-ksinvisible-v6.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Install professional KOMPAS v25 and SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          dpkg -l 'ascon-kompas*'
+
+      - name: Launch ksinvisible automation API
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
+            /tmp/kKompas -automation >/tmp/kompas-live.out 2>/tmp/kompas-live.err &
+          WRAPPER_PID=$!
+          echo "$WRAPPER_PID" >/tmp/wrapper.pid
+
+          KP=""
+          for i in $(seq 1 50); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          echo "KPID=$KP"
+          test -n "$KP"
+
+          for i in $(seq 1 60); do
+            sleep 1
+            ss -ltnp >/tmp/kompas-sockets.txt || true
+            if grep -q "kKompas" /tmp/kompas-sockets.txt; then break; fi
+          done
+          cat /tmp/kompas-sockets.txt
+          grep -q "kKompas" /tmp/kompas-sockets.txt
+
+      - name: Build and verify native parameteric FRW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          python3 kompas-linux/build_variant06_python.py 2>&1 | tee /tmp/build-v6.out
+
+          OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          test -s "$OUT"
+          grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_python.log
+
+          echo "=== METADATA ==="
+          ls -lh "$OUT"
+          file "$OUT"
+          sha256sum "$OUT"
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw')
+          assert zipfile.is_zipfile(p), 'FRW is not native ZIP container'
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              print('members',[(i.filename,i.file_size) for i in z.infolist()])
+              assert 'Contents' in names
+              assert 'FileInfo' in names
+          print('sha256',hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+
+          mkdir -p result
+          cp "$OUT" result/
+          cp /tmp/work1_v6_python.log result/
+          cp /tmp/build-v6.out result/
+          cp /tmp/kompas-live.out result/ || true
+          cp /tmp/kompas-live.err result/ || true
+
+      - name: Upload verified native FRW
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-work1-variant06-native
+          if-no-files-found: ignore
+          path: result/**
