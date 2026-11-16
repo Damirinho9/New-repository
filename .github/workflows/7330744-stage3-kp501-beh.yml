@@ -1,0 +1,99 @@
+name: 7330744 stage3 KP501 behavioral quick native
+
+on:
+  push:
+    branches: [multisim-7330744-stage3-kp501-beh]
+    paths:
+      - ".github/workflows/7330744-stage3-kp501-beh.yml"
+      - "fullv6/**"
+  workflow_dispatch:
+
+concurrency:
+  group: 7330744-stage3-kp501-beh
+  cancel-in-progress: true
+
+jobs:
+  quick:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download harvested library
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-full-v6-discovery
+          path: dep-library
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43835690292
+      - name: Download DB index
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-dbnode
+          path: dep-db
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43836264959
+      - name: Prepare
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force fullv6-lib,stage3-out,model2-quick | Out-Null
+          Expand-Archive dep-library\parts-library.zip fullv6-lib -Force
+          Copy-Item dep-db\db_index.json fullv6-lib\db_index.json
+      - name: Install NI Multisim 14.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $i=Join-Path $env:RUNNER_TEMP 'ni-cds-educational_14.3_online.exe'
+          Invoke-WebRequest 'https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe' -OutFile $i -UseBasicParsing
+          if((Get-AuthenticodeSignature $i).Status -ne 'Valid'){throw 'Invalid NI signature'}
+          $p=Start-Process $i -ArgumentList @('--quiet','--accept-eulas','--prevent-reboot') -PassThru
+          if(-not $p.WaitForExit(480000)){try{Stop-Process -Id $p.Id -Force}catch{}}
+          if(-not (Get-ChildItem 'C:\Program Files (x86)\National Instruments','C:\Program Files\National Instruments' -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue|Select-Object -First 1)){throw 'Multisim absent'}
+      - name: Install x86 Python and MultisimForge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $py=Join-Path $env:RUNNER_TEMP 'python-3.11.9-x86.exe'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.11.9/python-3.11.9.exe' -OutFile $py -UseBasicParsing
+          if((Get-AuthenticodeSignature $py).Status -ne 'Valid'){throw 'Invalid Python signature'}
+          $p=Start-Process $py -ArgumentList @('/quiet','InstallAllUsers=1','TargetDir=C:\Python311-32','PrependPath=0','Include_launcher=0','Include_test=0','Include_pip=1') -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "Python install exit=$($p.ExitCode)"}
+          & 'C:\Python311-32\python.exe' -m pip install --disable-pip-version-check --quiet pywin32
+          git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m pip install --disable-pip-version-check -e ".[capture]"
+          Set-Location "$env:GITHUB_WORKSPACE"
+          python fullv6\patch_multisimforge_wait.py "$env:RUNNER_TEMP\MultisimForge"
+          python fullv6\patch_sim_diagnostics.py "$env:RUNNER_TEMP\MultisimForge"
+      - name: Fetch closer native device models
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          foreach($m in @('PHOTO_DIODE_RATED','ZVN0124A','ZVN2106A','BUZ90','1N4742A','1N4007','MDA2504','30_AMP','HDR1X5','2N6509','BT151_500R')){
+            python -m multisimforge parts fetch "$m" 2>&1 | Add-Content "$env:GITHUB_WORKSPACE\model2-quick\fetch.txt"
+          }
+      - name: Run 0 3 4 5 uA full native transient
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          $env:PYTHONPATH="$env:RUNNER_TEMP\MultisimForge"
+          Set-Location "$env:GITHUB_WORKSPACE"
+          python fullv6\quick_stage3_model2.py 2>&1 | Tee-Object model2-quick\console.txt
+          if($LASTEXITCODE -ne 0){throw "quick model2 failed exit=$LASTEXITCODE"}
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7330744-stage3-kp501-beh-quick
+          path: |
+            model2-quick/
+            stage3-out/*.ms14
+            stage3-out/*manifest.json
+          if-no-files-found: error
+          retention-days: 7
