@@ -1,4 +1,4 @@
-import json, math, sys, hashlib
+import json, math, sys, hashlib, os
 from pathlib import Path
 from multisimforge import builder, check, xmlio
 from multisimforge.parts import Library
@@ -17,9 +17,10 @@ def pick(*names):
         if k:return k
     raise KeyError("missing model: "+", ".join(names))
 
+kp501_pref=os.environ.get("KP501_MODEL","2N6659")
 models={
  "photo":pick("PHOTO_DIODE_RATED","PHOTODIODE","DIODE_RATED"),
- "kp501":pick("MTD4N20E","IRFD110","2N6659"),
+ "kp501":pick(kp501_pref,"2N6659","MTD4N20E","IRFD110"),
  "kp707":pick("BUZ90","IRFD110","2N6659"),
  "zener12":pick("1N4742A","DIODE_RATED"),
  "rectifier":pick("1N4007","MUR1510G","1N4003G","1N4001"),
@@ -35,6 +36,17 @@ def named(ref,model,**pins):
 def xline(ref,nets,model):
     return "X"+ref+" "+" ".join(nets)+" "+model
 
+# The source page marks MOSFET gates but does not identify D/S, and does not label RB154 +/-/~.
+# These flags test only those source-ambiguous pin assignments; they do not change the source graph.
+kp501_flip=os.environ.get("KP501_FLIP","0")=="1"
+vt3_flip=os.environ.get("VT3_FLIP","0")=="1"
+bridge_swap=os.environ.get("BRIDGE_SWAP","0")=="1"
+vd20_swap=os.environ.get("VD20_SWAP","0")=="1"
+
+vt1_pins={"D":"sens","S":"t1"} if kp501_flip else {"D":"t1","S":"sens"}
+vt2_pins={"D":"t1","S":"t2"} if kp501_flip else {"D":"t2","S":"t1"}
+vt3_pins={"D":"t2","S":"vt3_r6"} if vt3_flip else {"D":"vt3_r6","S":"t2"}
+
 # Source topology from Variant 6. C values are simulation-only because the source page does not specify them.
 net=[
  "R1 u_ctrl n_r1 4.7meg",
@@ -42,32 +54,47 @@ net=[
  named("VD1",models["photo"],A="0",K="sens"),
  "C1 sens 0 47n CAP_ELECTROLIT_VIRTUAL",
  "C2 u_ctrl 0 1u CAP_ELECTROLIT_VIRTUAL",
- named("VT1",models["kp501"],D="t1",G="g12",S="sens"),
+ named("VT1",models["kp501"],D=vt1_pins["D"],G="g12",S=vt1_pins["S"]),
  "R3 g12 0 330",
  "R4 u_ctrl t1 10k",
- named("VT2",models["kp501"],D="t2",G="g12",S="t1"),
+ named("VT2",models["kp501"],D=vt2_pins["D"],G="g12",S=vt2_pins["S"]),
  named("VD2",models["zener12"],A="0",K="u_ctrl"),
  "R5 u_ctrl t2 5.1k",
- named("VT3",models["kp707"],D="vt3_r6",G="0",S="t2"),
+ named("VT3",models["kp707"],D=vt3_pins["D"],G="0",S=vt3_pins["S"]),
  "R6 vt3_r6 drv 51",
  named("HL1",models["led"],A="led_a",K="u_ctrl"),
  named("VD3",models["rectifier"],A="led_r",K="led_a"),
  "RU1 drv 0 10meg",
  "R7 led_r l 58k",
- named("VS1",models["scr"],A="sw",K="0",G="g1"),
- "R8 g1 0 56",
- named("VD4",models["rectifier"],A="0",K="g1"),
- xline("FU1",["drv","br_a"],models["fuse"]),
+ named("VS1",models["scr"],A="drv",K="0",G="g18"),
+ "R8 g18 0 56",
 ]
+# Position 20 polarity is not explicitly marked in the source. Default is anti-parallel gate protection.
+if vd20_swap:
+    net.append(named("VD4",models["rectifier"],A="g18",K="0"))
+else:
+    net.append(named("VD4",models["rectifier"],A="0",K="g18"))
+net.append(xline("FU1",["drv","br_top"],models["fuse"]))
+
+# Source graph: bridge top=BR_TOP, bottom=common; left/right go to the two thyristor gate networks.
+# Only +/- assignment is source-ambiguous, so test both mappings while keeping AC terminals fixed.
 bridge_pins=set(lib.index[models["bridge"]]["pins"])
 if {"V+","V-","AC1","AC2"}<=bridge_pins:
-    net.append(named("VD6",models["bridge"],**{"V+":"br_a","V-":"0","AC1":"g1","AC2":"g2"}))
+    if bridge_swap:
+        net.append(named("VD6",models["bridge"],**{"AC1":"br_top","AC2":"0","V+":"g25","V-":"g18"}))
+    else:
+        net.append(named("VD6",models["bridge"],**{"AC1":"br_top","AC2":"0","V+":"g18","V-":"g25"}))
 else:
-    net.append(xline("VD6",["br_a","g1","0","g2"],models["bridge"]))
+    pins=lib.index[models["bridge"]]["pins"]
+    if len(pins)!=4:
+        raise RuntimeError(f"bridge {models['bridge']} has unsupported pins {pins}")
+    # Positional fallback keeps the same graph but cannot assert physical +/- pin names.
+    net.append(xline("VD6",["br_top","0","g18","g25"],models["bridge"]))
+
 net += [
- named("VD5",models["rectifier"],A="sw",K="g2"),
- "R9 g2 sw 56",
- named("VS2",models["scr"],A="0",K="sw",G="g2"),
+ named("VD5",models["rectifier"],A="sw",K="g25"),
+ "R9 g25 sw 56",
+ named("VS2",models["scr"],A="0",K="sw",G="g25"),
  "C3 l 0 47n CAPACITOR_VIRTUAL",
  xline("FU2",["0","n"],models["fuse"]),
 ]
@@ -109,7 +136,7 @@ spec={
  "wire_width":2,
  "sheet":[21.0,9.5],
  "sim_time":"250ms",
- "colors":{"sens":"red","sw":"blue"}
+ "colors":{"sens":"red","sw":"blue","g18":"green","g25":"green"}
 }
 res=builder.build(spec,lib=lib,allow_fallback=True,auto_repair=True)
 
@@ -153,7 +180,9 @@ report=check.check_file(TARGET)
 manifest={
  "state":state,"photocurrent_A":iph,"photocurrent_uA":iph*1e6,
  "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"control_supply_V":12,"control_series_Ohm":100,"Rline_Ohm":10,"Rload_Ohm":2200},
- "models":models,"check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
+ "models":models,
+ "source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},
+ "check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
 (OUT/f"{TARGET.stem}_netlist.txt").write_text(spec["netlist"],encoding="utf-8")
