@@ -40,8 +40,8 @@ net=[
  "R1 u_ctrl n_r1 4.7meg",
  "R2 n_r1 sens 47k",
  named("VD1",models["photo"],A="0",K="sens"),
- "C1 sens 0 0.47u CAP_ELECTROLIT_VIRTUAL",
- "C2 u_ctrl 0 10u CAP_ELECTROLIT_VIRTUAL",
+ "C1 sens 0 47n CAP_ELECTROLIT_VIRTUAL",
+ "C2 u_ctrl 0 1u CAP_ELECTROLIT_VIRTUAL",
  named("VT1",models["kp501"],D="sens",G="g12",S="t1"),
  "R3 g12 0 330",
  "R4 u_ctrl t1 10k",
@@ -122,8 +122,8 @@ for item in root.iter("Item"):
         comp_ref[item.get("CiID")]=xmlio.text(item[0].get("LocalName") or "").strip()
 labels={
  "VD1":f"FD320 -> {models['photo']} + I_PH",
- "C1":"K50-35 | SIM-only 0.47 uF",
- "C2":"K73 | SIM-only 10 uF",
+ "C1":"K50-35 | SIM-only 47 nF",
+ "C2":"K73 | SIM-only 1 uF",
  "C3":"K73 | SIM-only 47 nF",
  "VT1":f"KP501A -> {models['kp501']}",
  "VT2":f"KP501A -> {models['kp501']}",
@@ -152,7 +152,7 @@ xmlio.save(root,TARGET,compress=True)
 report=check.check_file(TARGET)
 manifest={
  "state":state,"photocurrent_A":iph,"photocurrent_uA":iph*1e6,
- "sim_only":{"C1_F":0.47e-6,"C2_F":10e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"Rline_Ohm":10,"Rload_Ohm":2200},
+ "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"Rline_Ohm":10,"Rload_Ohm":2200},
  "models":models,"check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
