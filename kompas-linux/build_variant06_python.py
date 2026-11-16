@@ -1,5 +1,5 @@
 from __future__ import annotations
-import math, pathlib, hashlib, json, sys, traceback, shutil
+import math, pathlib, hashlib, json, sys, traceback, os, shutil
 
 import ksapi
 from constants import constants as c
@@ -179,7 +179,9 @@ def acquire_fragment(docs):
 def main():
     LOG.unlink(missing_ok=True)
     OUT.unlink(missing_ok=True)
-    app=require(ksapi.GetKompas(),"GetKompas")
+    port=os.environ.get("KOMPAS_PORT")
+    app=require(ksapi.IApplication(int(port)) if port else ksapi.GetKompas(),
+                f"GetKompas/KOMPAS_PORT={port}")
     log("APP="+str(app.GetApplicationName(True)))
     docs=require(app.GetDocuments(),"Documents")
     doc,route=acquire_fragment(docs)
