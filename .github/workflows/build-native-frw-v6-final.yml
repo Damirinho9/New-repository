@@ -61,11 +61,10 @@ jobs:
           export LC_ALL=C.UTF-8
           export QT_QPA_PLATFORM=offscreen
           export LD_LIBRARY_PATH=/opt/ascon/kompas3d-v25/Bin
-          export LD_PRELOAD=/tmp/inject_variant06.so
           unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
           cd /opt/ascon/kompas3d-v25/Bin
-          dbus-run-session -- ./kKompas >/tmp/kompas_v6.log 2>&1 &
+          dbus-run-session -- bash -c 'LD_PRELOAD=/tmp/inject_variant06.so exec ./kKompas' >/tmp/kompas_v6.log 2>&1 &
           KP=$!
           echo "KOMPAS_PID=$KP"
 
