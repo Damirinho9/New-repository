@@ -318,3 +318,5 @@ static void entry() {
 }
 
 // relink-trigger
+
+// trigger-libcpp-fix
