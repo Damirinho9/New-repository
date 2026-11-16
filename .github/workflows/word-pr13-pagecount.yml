@@ -1,0 +1,85 @@
+name: Verify PR13 Roslavl pagination in native Word
+
+on:
+  push:
+    branches:
+      - word-pr13-native-20261116
+    paths:
+      - "pr13/verify_roslavl.py"
+      - ".github/workflows/word-pr13-pagecount.yml"
+  workflow_dispatch:
+
+jobs:
+  verify-pages:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate DOCX
+        shell: powershell
+        run: |
+          py -m pip install python-docx
+          py .\pr13\verify_roslavl.py
+      - name: Install Microsoft Word
+        shell: powershell
+        timeout-minutes: 8
+        run: |
+          $ErrorActionPreference = "Stop"
+          $odt = "$env:RUNNER_TEMP\odt.exe"
+          Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20326-20112.exe" -OutFile $odt
+          $dir = "$env:RUNNER_TEMP\odt"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Start-Process -FilePath $odt -ArgumentList "/quiet /extract:$dir" -Wait
+          @'
+          <Configuration>
+            <Add OfficeClientEdition="64" Channel="Current">
+              <Product ID="O365ProPlusRetail">
+                <Language ID="ru-ru" />
+                <ExcludeApp ID="Access" />
+                <ExcludeApp ID="Excel" />
+                <ExcludeApp ID="Groove" />
+                <ExcludeApp ID="Lync" />
+                <ExcludeApp ID="OneDrive" />
+                <ExcludeApp ID="OneNote" />
+                <ExcludeApp ID="Outlook" />
+                <ExcludeApp ID="PowerPoint" />
+                <ExcludeApp ID="Publisher" />
+                <ExcludeApp ID="Teams" />
+              </Product>
+            </Add>
+            <Property Name="AUTOACTIVATE" Value="0" />
+            <Display Level="None" AcceptEULA="TRUE" />
+          </Configuration>
+          '@ | Set-Content -Encoding UTF8 "$env:RUNNER_TEMP\word.xml"
+          & "$dir\setup.exe" /configure "$env:RUNNER_TEMP\word.xml"
+      - name: Count pages in native Word
+        shell: powershell
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = "Stop"
+          $word = New-Object -ComObject Word.Application
+          $word.Visible = $false
+          $word.DisplayAlerts = 0
+          try {
+            $path = Join-Path $env:GITHUB_WORKSPACE "PR13_Roslavl_3pages.docx"
+            $doc = $word.Documents.Open($path, $false, $true)
+            try {
+              $doc.Repaginate()
+              $pages = $doc.ComputeStatistics(2)
+              $font = $doc.Paragraphs.Item(2).Range.Font.Name
+              $size = $doc.Paragraphs.Item(2).Range.Font.Size
+              "WORD_VERSION=$($word.Version)" | Tee-Object -FilePath word-pagecheck.txt
+              "PAGES=$pages" | Tee-Object -FilePath word-pagecheck.txt -Append
+              "FONT=$font" | Tee-Object -FilePath word-pagecheck.txt -Append
+              "SIZE=$size" | Tee-Object -FilePath word-pagecheck.txt -Append
+              if ($pages -ne 3) { throw "Expected exactly 3 pages, got $pages" }
+            } finally { $doc.Close(0) }
+          } finally { $word.Quit() }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr13-roslavl-word-pagecheck
+          path: |
+            PR13_Roslavl_3pages.docx
+            word-pagecheck.txt
+          retention-days: 7
