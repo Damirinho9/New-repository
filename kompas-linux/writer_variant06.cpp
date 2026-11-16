@@ -180,6 +180,7 @@ static bool build(){
     if(!cand) return false;
     try{
       app.SetActiveDocument(cand);
+      cand->SetActive();
       IKompasDocument2DPtr d2=cand;
       if(!d2){log("candidate "+label+" FAIL cast"); cand->Close(kdDoNotSaveChanges); return false;}
       d2->SetParametricMode(true);
@@ -189,6 +190,13 @@ static bool build(){
       if(!views){log("candidate "+label+" FAIL views"); cand->Close(kdDoNotSaveChanges); return false;}
       auto v=views->GetActiveView();
       if(!v){log("candidate "+label+" FAIL active view"); cand->Close(kdDoNotSaveChanges); return false;}
+      v->SetBackground(false);
+      v->SetVisible(true);
+      v->SetCurrent(true);
+      if(!v->Update()) log("candidate "+label+" WARN view Update false");
+      log("candidate "+label+" view current="+std::to_string(v->IsCurrent())+
+          " background="+std::to_string(v->IsBackground())+
+          " visible="+std::to_string(v->IsVisible()));
       IDrawingContainerPtr dcont=v;
       ISymbols2DContainerPtr scont=v;
       if(!dcont||!scont){log("candidate "+label+" FAIL containers"); cand->Close(kdDoNotSaveChanges); return false;}
