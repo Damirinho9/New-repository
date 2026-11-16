@@ -55,12 +55,12 @@ net=[
  "R2 n_r1 sens 47k",
  named("VD1",models["photo"],A="0",K="sens"),
  "C1 sens 0 47n CAP_ELECTROLIT_VIRTUAL",
- "C2 u_ctrl case 1u CAP_ELECTROLIT_VIRTUAL",
+ "C2 u_ctrl 0 1u CAP_ELECTROLIT_VIRTUAL",
  named("VT1",models["kp501"],D=vt1_pins["D"],G="g12",S=vt1_pins["S"]),
  "R3 g12 0 330",
  "R4 u_ctrl t1 10k",
  named("VT2",models["kp501"],D=vt2_pins["D"],G="g12",S=vt2_pins["S"]),
- named("VD2",models["zener12"],A="case",K="u_ctrl"),
+ named("VD2",models["zener12"],A="0",K="u_ctrl"),
  "R5 u_ctrl t2 5.1k",
  named("VT3",models["kp707"],D=vt3_pins["D"],G="0",S=vt3_pins["S"]),
  "R6 vt3_r6 drv 51",
@@ -68,14 +68,14 @@ net=[
  named("VD3",models["rectifier"],A="led_r",K="led_a"),
  "RU1 drv 0 10meg",
  "R7 led_r l 58k",
- named("VS1",models["scr"],A="sw",K="0",G="g18"),
- "R8 g18 0 56",
+ named("VS1",models["scr"],A="sw",K="n_int",G="g18"),
+ "R8 g18 n_int 56",
 ]
 # Position 20 polarity is not explicitly marked in the source. Default is anti-parallel gate protection.
 if vd20_swap:
-    net.append(named("VD4",models["rectifier"],A="g18",K="0"))
+    net.append(named("VD4",models["rectifier"],A="g18",K="n_int"))
 else:
-    net.append(named("VD4",models["rectifier"],A="0",K="g18"))
+    net.append(named("VD4",models["rectifier"],A="n_int",K="g18"))
 net.append(xline("FU1",["drv","br_top"],models["fuse"]))
 
 # Source graph: bridge top=BR_TOP, bottom=common; left/right go to the two thyristor gate networks.
@@ -88,6 +88,11 @@ if {"V+","V-","AC1","AC2"}<=bridge_pins:
             net.append(named("VD6",models["bridge"],**{"V+":"br_top","V-":"0","AC1":"g25","AC2":"g18"}))
         else:
             net.append(named("VD6",models["bridge"],**{"V+":"br_top","V-":"0","AC1":"g18","AC2":"g25"}))
+    elif bridge_mode=="dc_bt":
+        if bridge_swap:
+            net.append(named("VD6",models["bridge"],**{"V+":"0","V-":"br_top","AC1":"g25","AC2":"g18"}))
+        else:
+            net.append(named("VD6",models["bridge"],**{"V+":"0","V-":"br_top","AC1":"g18","AC2":"g25"}))
     elif bridge_mode=="ac_tb":
         # Alternative allowed by the source drawing because RB154 +/-/~ are not labelled there.
         if bridge_swap:
@@ -106,26 +111,30 @@ else:
 net += [
  named("VD5",models["rectifier"],A="sw",K="g25"),
  "R9 g25 sw 56",
- named("VS2",models["scr"],A="0",K="sw",G="g25"),
- "C3 l 0 47n CAPACITOR_VIRTUAL",
- xline("FU2",["0","n"],models["fuse"]),
+ named("VS2",models["scr"],A="n_int",K="sw",G="g25"),
+ "C3 l n_int 47n CAPACITOR_VIRTUAL",
+ xline("FU2",["n_int","n"],models["fuse"]),
 ]
 hp=set(lib.index[models["header5"]]["pins"])
 if {"P1","P2","P3","P4","P5"}<=hp:
-    net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n",P5="case"))
+    net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n",P5="0"))
 else:
     net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n"))
 
 # Simulation-only test bench. I1 is reverse photocurrent from cathode node SENS to anode/common.
 net += [
- "RCASE case 0 1G",
+ "RREF n_int 0 1G",
  f"I1 sens 0 {iph:.12g}",
  "V1 ac_src n SIN(0 311.1269837 50)",
- "V2 vctrl 0 12",
- "RCTRL vctrl u_ctrl 100",
  "RLINE ac_src l 10",
- "RLOAD l sw 2.2k",
+ "RLOAD l sw 220",
 ]
+control_supply=os.environ.get("CTRL_SUPPLY","0")=="1"
+forced_bridge=os.environ.get("FORCE_BRIDGE","")
+if control_supply:
+    net += ["V2 vctrl 0 12","RCTRL vctrl u_ctrl 100"]
+if forced_bridge:
+    net += [f"RTEST br_top 0 {forced_bridge}"]
 
 layout={
  "R1":[144,180,90],"R2":[144,270,90],"XVD1":[144,378,90],
@@ -138,9 +147,13 @@ layout={
  "XVD6":[1197,342],"XVD5":[1323,198],"R9":[1323,270],
  "XVS2":[1404,342,90],"C3":[1512,450,90],"XFU2":[1512,576],
  "XXP1":[1908,306,90],
- "RCASE":[72,198,90],"I1":[270,486,90],"V1":[1908,648,90],"V2":[72,90,90],"RCTRL":[198,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],
+ "RREF":[72,198,90],"I1":[270,486,90],"V1":[1908,648,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],
  "GND":[[72,144],[252,558],[432,558],[666,558],[900,558],[1080,558],[1233,558],[1404,648],[1512,648],[270,558],[900,810]],
 }
+if control_supply:
+    layout.update({"V2":[72,90,90],"RCTRL":[198,90]})
+if forced_bridge:
+    layout["RTEST"]=[990,720,90]
 spec={
  "netlist":"\n".join(net)+"\n",
  "output":str(TARGET),
@@ -179,9 +192,10 @@ labels={
  "V1":"TEST BENCH: 220 Vrms / 50 Hz",
  "V2":"SIM CTRL SUPPLY: 12 V",
  "RCTRL":"SIM CTRL SUPPLY: 100 Ohm",
- "RCASE":"SIM ONLY: case reference 1 GOhm",
+ "RREF":"SIM ONLY: 1 GOhm between isolated rails",
  "RLINE":"TEST BENCH: source R=10 Ohm",
- "RLOAD":"TEST LOAD: 2.2 kOhm",
+ "RLOAD":"TEST LOAD: 220 Ohm",
+ "RTEST":"DIAGNOSTIC ONLY: forced bridge conduction",
 }
 for item in root.iter("Item"):
     if item.get("Class")!="CIITSymbolComp" or not len(item): continue
@@ -194,10 +208,10 @@ xmlio.save(root,TARGET,compress=True)
 report=check.check_file(TARGET)
 manifest={
  "state":state,"photocurrent_A":iph,"photocurrent_uA":iph*1e6,
- "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"control_supply_V":12,"control_series_Ohm":100,"Rline_Ohm":10,"Rload_Ohm":2200},
+ "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"auxiliary_control_supply":control_supply,"control_supply_V":12 if control_supply else None,"control_series_Ohm":100 if control_supply else None,"forced_bridge":forced_bridge or None,"Rline_Ohm":10,"Rload_Ohm":220},
  "models":models,
  "model_patch_notes":model_patch_notes,
- "source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},
+ "source_rails":{"control_common":"0","mains_return":"n_int","separated":True},"source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},
  "check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")

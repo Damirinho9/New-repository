@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parent.parent
 OUT=ROOT/"stage3-final"
 OUT.mkdir(parents=True,exist_ok=True)
 BUILD=ROOT/"fullv6"/"build_stage3_sim.py"
-NETS=["sens","u_ctrl","t1","t2","drv","g18","g25","l","sw"]
+NETS=["sens","u_ctrl","t1","t2","drv","g18","g25","l","sw","n_int"]
 
 def call(args, log):
     p=subprocess.run(args,capture_output=True,text=True,encoding="utf-8",errors="replace")
@@ -35,6 +35,9 @@ def build_and_sim(label,uA,duration=0.40,rate=7000,cfg=None):
     except Exception:
         rec["sim_stdout"]=(q.stdout or "")[-4000:]
     csvfile=csvdir/"tran.csv"
+    if q.returncode != 0 or rec.get("sim_json",{}).get("failures"):
+        rec["failure"]="simulation_error"
+        return rec
     if not csvfile.exists():
         rec["failure"]="no_csv"
         return rec
@@ -48,50 +51,51 @@ def build_and_sim(label,uA,duration=0.40,rate=7000,cfg=None):
                 continue
             if vals["time"] >= duration*0.55:
                 rows.append(vals)
-    if not rows:
+    if not rows or rows[-1]["time"] < duration*0.95:
         rec["failure"]="no_tail"
         return rec
     def stats(vals):
-        n=len(vals); mean=sum(vals)/n
-        return {"mean":mean,"rms":math.sqrt(sum(x*x for x in vals)/n),
-                "min":min(vals),"max":max(vals),"pp":max(vals)-min(vals)}
+        tt=[r["time"] for r in rows]
+        dt=[b-a for a,b in zip(tt,tt[1:])]
+        span=sum(dt)
+        if span<=0: raise ValueError("no time span")
+        mean=sum((a+b)*d/2 for a,b,d in zip(vals,vals[1:],dt))/span
+        rms=math.sqrt(sum((a*a+b*b)*d/2 for a,b,d in zip(vals,vals[1:],dt))/span)
+        return {"mean":mean,"rms":rms,"min":min(vals),"max":max(vals),"pp":max(vals)-min(vals)}
     metrics={n:stats([r[n] for r in rows]) for n in NETS}
     metrics["load_v"]=stats([r["l"]-r["sw"] for r in rows])
+    metrics["gate1_v"]=stats([r["g18"]-r["n_int"] for r in rows])
+    metrics["gate2_v"]=stats([r["g25"]-r["sw"] for r in rows])
     metrics["points_tail"]=len(rows)
     rec["metrics"]=metrics
     return rec
 
-# First determine the source-ambiguous pin assignments from real Multisim response.
-# The source does not state MOSFET D/S or bridge +/- pins, so these are legitimate model choices.
+# Diagnostic only: test bridge conduction without claiming light switching.
+# This resistor is NEVER included in any final candidate.
+diagnostics=[]
+for mode in ("dc_bt","dc_tb","ac_tb"):
+    cfg={"BRIDGE_MODE":mode,"BRIDGE_SWAP":0,"KP501_FLIP":0,"VT3_FLIP":1,"CTRL_SUPPLY":0,"VD20_SWAP":0}
+    for resistance in ("1G","10"):
+        d=dict(cfg, FORCE_BRIDGE=resistance)
+        r=build_and_sim("diag_"+mode+"_"+resistance,0.0,duration=0.20,rate=5000,cfg=d)
+        diagnostics.append({"config":d,"result":r})
+        (OUT/"bridge_diagnostic.json").write_text(json.dumps(diagnostics,ensure_ascii=False,indent=2),encoding="utf-8")
+
+# Full circuit, no forced switching. Source-ambiguous mapping alternatives only.
 candidates=[]
-for kpflip in (0,1):
-    for vt3flip in (0,1):
-        for bridge_mode in ("dc_tb","ac_tb"):
-            for bswap in (0,1):
-                cfg={"KP501_MODEL":"2N6659","KP501_FLIP":kpflip,"VT3_FLIP":vt3flip,"BRIDGE_MODE":bridge_mode,"BRIDGE_SWAP":bswap,"VD20_SWAP":0}
-                samples=[]
-                for j,u in enumerate((0.0,15.0)):
-                    rec=build_and_sim(f"cfg_k{kpflip}_v{vt3flip}_{bridge_mode}_b{bswap}_{j}",u,duration=0.22,rate=4500,cfg=cfg)
-                    samples.append(rec)
+for supply in (0,1):
+    for kpflip in (0,1):
+        for vt3flip in (0,1):
+            for bridge_mode in ("dc_bt","dc_tb","ac_tb"):
+                cfg={"KP501_MODEL":"2N6659","KP501_FLIP":kpflip,"VT3_FLIP":vt3flip,"BRIDGE_MODE":bridge_mode,"BRIDGE_SWAP":0,"VD20_SWAP":0,"CTRL_SUPPLY":supply,"FORCE_BRIDGE":""}
+                samples=[build_and_sim(f"cfg_s{supply}_k{kpflip}_v{vt3flip}_{bridge_mode}_{j}",u,duration=0.22,rate=4500,cfg=cfg) for j,u in enumerate((0.0,25.0))]
                 good=[r for r in samples if r.get("metrics")]
                 span=abs(good[-1]["metrics"]["load_v"]["rms"]-good[0]["metrics"]["load_v"]["rms"]) if len(good)==2 else -1.0
                 candidates.append({"cfg":cfg,"samples":samples,"load_span_Vrms":span})
                 (OUT/"candidate_progress.json").write_text(json.dumps(candidates,ensure_ascii=False,indent=2),encoding="utf-8")
-
 selected_candidate=max(candidates,key=lambda x:x["load_span_Vrms"])
 selected_cfg=selected_candidate["cfg"]
 (OUT/"selected_config.json").write_text(json.dumps(selected_candidate,ensure_ascii=False,indent=2),encoding="utf-8")
-if selected_candidate["load_span_Vrms"] < 10.0:
-    # One extra source-ambiguous test: reverse the unmarked VD20 polarity using the best D/S + bridge mapping.
-    alt=dict(selected_cfg); alt["VD20_SWAP"]=1
-    samples=[build_and_sim(f"cfg_vd20swap_{j}",u,duration=0.22,rate=4500,cfg=alt) for j,u in enumerate((0.0,15.0))]
-    good=[r for r in samples if r.get("metrics")]
-    span=abs(good[-1]["metrics"]["load_v"]["rms"]-good[0]["metrics"]["load_v"]["rms"]) if len(good)==2 else -1.0
-    candidates.append({"cfg":alt,"samples":samples,"load_span_Vrms":span})
-    if span > selected_candidate["load_span_Vrms"]:
-        selected_candidate=candidates[-1]; selected_cfg=alt
-        (OUT/"selected_config.json").write_text(json.dumps(selected_candidate,ensure_ascii=False,indent=2),encoding="utf-8")
-
 coarse_uA=[0.0,2.0,5.0,8.0,10.0,12.0,15.0,20.0,25.0]
 coarse=[]
 for i,u in enumerate(coarse_uA):
@@ -106,7 +110,7 @@ ok.sort(key=lambda r:r["photocurrent_uA"])
 vals=[r["metrics"]["load_v"]["rms"] for r in ok]
 span=max(vals)-min(vals)
 # Require the load to actually respond. This gate prevents inventing a threshold from noise.
-if span < 30.0:
+if span < 100.0 or min(vals)>30.0 or max(vals)<170.0:
     (OUT/"FAIL_no_switching.json").write_text(json.dumps({"span_Vrms":span,"coarse":ok},ensure_ascii=False,indent=2),encoding="utf-8")
     raise SystemExit(f"Full model ran, but load response span is only {span:.6g} Vrms; no clear real switching threshold proven")
 
@@ -151,6 +155,9 @@ for state,info in selected.items():
     src=Path(r["ms14"])
     dst=OUT/f"7330744_PhotoRelay_V6_{state}.ms14"
     shutil.copy2(src,dst)
+    for suffix in ("_manifest.json","_netlist.txt"):
+        side=src.with_name(src.stem+suffix)
+        if side.exists(): shutil.copy2(side,OUT/(dst.stem+suffix))
     csvsrc=OUT/f"{state}_csv"/"tran.csv"
     if csvsrc.exists():
         shutil.copy2(csvsrc,OUT/f"{state}_transient.csv")

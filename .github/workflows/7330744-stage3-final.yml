@@ -154,7 +154,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: 7330744-stage3-native-final
-          path: stage3-final/
+          path: |
+            stage3-final/
+            stage3-out/
           if-no-files-found: error
           retention-days: 7
 
