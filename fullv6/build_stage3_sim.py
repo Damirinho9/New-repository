@@ -61,7 +61,7 @@ net=[
 ]
 bridge_pins=set(lib.index[models["bridge"]]["pins"])
 if {"V+","V-","AC1","AC2"}<=bridge_pins:
-    net.append(named("VD6",models["bridge"],**{"V+":"br_a","V-":"0","AC1":"g1","AC2":"g2"}))
+    net.append(named("VD6",models["bridge"],**{"AC1":"br_a","AC2":"0","V+":"g1","V-":"g2"}))
 else:
     net.append(xline("VD6",["br_a","g1","0","g2"],models["bridge"]))
 net += [
