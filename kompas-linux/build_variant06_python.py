@@ -183,6 +183,11 @@ def main():
     app=require(ksapi.IApplication(int(port)) if port else ksapi.GetKompas(),
                 f"GetKompas/KOMPAS_PORT={port}")
     log("APP="+str(app.GetApplicationName(True)))
+    # Official SDK license capability query; never enable or override a license.
+    manager=require(app.GetApplicationLicenseManager(),"Application license manager")
+    active=manager.IsKompasModuleActive(c.ksKompasModule2D)
+    log(f"LICENSE_MODULE_2D_ACTIVE={active}")
+    require(active,"KOMPAS 2D editing module is not active; valid license/session required")
     docs=require(app.GetDocuments(),"Documents")
     doc,route=acquire_fragment(docs)
     log("fragment route="+route)
@@ -229,12 +234,10 @@ def main():
     v_fi=dim_var(view,d_fi,"fi")
 
     # Required symbolic dependency.
-    try:
-        v_l2.SetExpression("2*L")
-        require(d2.CompleteRebuildDocument(),"rebuild l2=2*L")
-        log(f"l2 expression applied: {v_l2.GetExpression()} value={v_l2.GetValue()}")
-    except Exception as e:
-        log("WARN l2 symbolic expression failed: "+repr(e))
+    v_l2.SetExpression("2*L")
+    require(d2.CompleteRebuildDocument(),"rebuild l2=2*L")
+    require(abs(v_l2.GetValue()-2*v_L.GetValue())<1e-5,"l2 != 2*L")
+    log(f"l2 expression applied: {v_l2.GetExpression()} value={v_l2.GetValue()}")
 
     # Actual parametric qualification: same native dimension variable, no regeneration.
     pts={}
@@ -245,6 +248,15 @@ def main():
         log(f"fi={val} read={read} B={p}")
         ex=(L1*math.cos(math.radians(val)),L1*math.sin(math.radians(val)))
         require(math.hypot(p[0]-ex[0],p[1]-ex[1])<0.5,f"B mismatch fi={val}: {p} expected {ex}")
+        _,bb,cc,dd,ee,xx=state(val)
+        for name,actual,expected in (
+            ("C",(rocker.GetX1(),rocker.GetY1()),cc),
+            ("D",(rocker.GetX2(),rocker.GetY2()),dd),
+            ("D rod",(rod.GetX1(),rod.GetY1()),dd),
+            ("E",(rod.GetX2(),rod.GetY2()),ee)):
+            log(f"fi={val} {name}={actual} expected={expected}")
+            require(math.dist(actual,expected)<0.5,f"{name} mismatch fi={val}")
+
     moved=math.dist(pts[45.0],pts[135.0])
     require(moved>5.0,f"geometry did not move: {moved}")
     log(f"PARAMETRIC_REBUILD_PASS moved={moved}")
