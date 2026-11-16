@@ -91,9 +91,9 @@ jobs:
             $word.Options.CheckGrammarWithSpelling = $true
             $word.AutoCorrect.ReplaceText = $true
             $word.AutoCorrect.ReplaceTextFromSpellingChecker = $true
-            $word.DisplayAutoCompleteTips = $true
 
             $doc = $word.Documents.Add()
+            $word.DisplayAutoCompleteTips = $true
             $doc.Content.LanguageID = 1049
             $doc.Styles.Item("Normal").LanguageID = 1049
             $doc.ShowSpellingErrors = $true
