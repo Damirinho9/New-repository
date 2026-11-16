@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import hashlib, json, math, sys, time
+import hashlib, json, math, sys, time, shutil
 from pathlib import Path
 
 BIN = Path("/opt/ascon/kompas3d-v25/Bin")
@@ -184,7 +184,22 @@ def main():
             break
         time.sleep(1)
     ev("fragment-create", attempts=attempts[-12:])
-    doc=req(doc, "Create fragment after retries")
+    if not doc:
+        stock=Path("/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw")
+        scratch=Path("/tmp/work1_variant06_base.frw")
+        req(stock.is_file(), f"Stock fragment template missing: {stock}")
+        shutil.copyfile(stock, scratch)
+        ev("fragment-fallback", stock=str(stock), scratch=str(scratch), bytes=scratch.stat().st_size)
+        for visible in (False, True):
+            try:
+                candidate=docs.Open(str(scratch), visible, False)
+                ev("fragment-open", visible=visible, ok=bool(candidate))
+                if candidate:
+                    doc=candidate
+                    break
+            except Exception as exc:
+                ev("fragment-open", visible=visible, error=type(exc).__name__)
+    doc=req(doc, "Create/open writable fragment")
     doc2d=req(ksapi.IKompasDocument2D(doc), "IKompasDocument2D")
     doc2d.SetParametricMode(True)
     req(doc2d.IsParametricMode(), "Parametric mode")
