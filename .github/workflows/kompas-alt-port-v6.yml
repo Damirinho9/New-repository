@@ -1,0 +1,85 @@
+name: KOMPAS ALT direct-port Work1 v6
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/kompas-alt-port-v6.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      image: alt:p11
+    timeout-minutes: 12
+    steps:
+      - name: Install KOMPAS and run variant 6
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # Fast ALT mirror.
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             -e 's#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g'             -e 's#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g'
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             '/x86_64-i586/s/^[[:space:]]*rpm/# rpm/'
+
+          apt-get update
+          apt-get install -y wget ca-certificates python3 dbus procps iproute2 glibc-i18ndata             fontconfig libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util             libXv libXScrnSaver libxkbfile libfontenc || true
+
+          bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             -e 's#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g'             -e 's#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g'
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             '/x86_64-i586/s/^[[:space:]]*rpm/# rpm/'
+          apt-get update
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 || true
+
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          test -x "$BIN/kKompas"
+          test -f "$BIN/ksapi.py"
+
+          wget -O /tmp/build_variant06_python.py             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/build_variant06_python.py'
+
+          export LANG=C.UTF-8
+          export LC_ALL=C.UTF-8
+          export QT_QPA_PLATFORM=offscreen
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN"
+          unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+          cd "$BIN"
+          dbus-run-session -- ./kKompas -automation >/tmp/kompas-alt.out 2>/tmp/kompas-alt.err &
+          KP=$!
+          echo "WRAP_PID=$KP"
+
+          REALPID=""
+          PORT=""
+          for i in $(seq 1 90); do
+            sleep 1
+            REALPID=$(pgrep -x kKompas | head -1 || true)
+            ss -ltnp >/tmp/sockets.txt || true
+            if [ -n "$REALPID" ]; then
+              PORT=$(awk -v pid="$REALPID" '$1=="LISTEN" && $0 ~ ("pid=" pid ",") {split($4,a,":"); print a[length(a)]}' /tmp/sockets.txt | head -1)
+            fi
+            echo "probe=$i pid=$REALPID port=$PORT"
+            [ -n "$PORT" ] && break
+          done
+
+          echo "=== PROCESSES ==="
+          ps aux | grep -E '[k]Kompas|[k]Home|[k]Study' || true
+          echo "=== SOCKETS ==="
+          cat /tmp/sockets.txt || true
+          echo "=== KOMPAS ERR ==="
+          tail -200 /tmp/kompas-alt.err || true
+          test -n "$PORT"
+
+          cd /tmp
+          export KOMPAS_PORT="$PORT"
+          python3 /tmp/build_variant06_python.py 2>&1 | tee /tmp/build-v6-alt.out
+
+          OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          test -s "$OUT"
+          grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_python.log
+          sha256sum "$OUT"
+          echo "=== FRW_BASE64_BEGIN ==="
+          base64 -w 76 "$OUT"
+          echo "=== FRW_BASE64_END ==="
+          echo "RESULT=PASS_ALT_NATIVE_VARIANT06"
