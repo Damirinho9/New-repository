@@ -6,11 +6,6 @@ on:
       - word-pr13-native-20261116
     paths:
       - ".github/workflows/word-pr13-native.yml"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/word-pr13-native.yml"
   workflow_dispatch:
 
 jobs:
@@ -95,7 +90,7 @@ jobs:
             $doc = $word.Documents.Add()
             $word.DisplayAutoCompleteTips = $true
             $doc.Content.LanguageID = 1049
-            $doc.Styles.Item("Normal").LanguageID = 1049
+            $doc.Styles.Item(-1).LanguageID = 1049
             $doc.ShowSpellingErrors = $true
             $doc.ShowGrammaticalErrors = $true
             $doc.AutoHyphenation = $true
@@ -111,7 +106,7 @@ jobs:
             $tplPath = Join-Path $out "ПР13.dotx"
             $tplSeed = $word.Documents.Add()
             $tplSeed.Content.LanguageID = 1049
-            $tplSeed.Styles.Item("Normal").LanguageID = 1049
+            $tplSeed.Styles.Item(-1).LanguageID = 1049
             $tplSeed.AutoHyphenation = $true
             $tplSeed.SaveAs2($tplPath, 14)
             $tplSeed.Close($false)
