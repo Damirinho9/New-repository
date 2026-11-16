@@ -1,0 +1,66 @@
+name: PR13 real Word screenshot probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - word-pr13-native-20261116
+    paths:
+      - "pr13/screenshot_probe.py"
+      - ".github/workflows/word-pr13-screenshots.yml"
+
+jobs:
+  shots:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate error source
+        shell: powershell
+        run: |
+          py -m pip install python-docx
+          py .\pr13\verify_roslavl.py
+          py .\pr13\make_error_copy.py
+      - name: Install Microsoft Word
+        shell: powershell
+        timeout-minutes: 9
+        run: |
+          $ErrorActionPreference = "Stop"
+          $odt = "$env:RUNNER_TEMP\odt.exe"
+          Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20326-20112.exe" -OutFile $odt
+          $dir = "$env:RUNNER_TEMP\odt"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Start-Process -FilePath $odt -ArgumentList "/quiet /extract:$dir" -Wait
+          @'
+          <Configuration>
+            <Add OfficeClientEdition="64" Channel="PerpetualVL2024">
+              <Product ID="ProPlus2024Volume">
+                <Language ID="ru-ru" />
+                <ExcludeApp ID="Access" />
+                <ExcludeApp ID="Excel" />
+                <ExcludeApp ID="Groove" />
+                <ExcludeApp ID="Lync" />
+                <ExcludeApp ID="OneDrive" />
+                <ExcludeApp ID="OneNote" />
+                <ExcludeApp ID="Outlook" />
+                <ExcludeApp ID="PowerPoint" />
+                <ExcludeApp ID="Publisher" />
+                <ExcludeApp ID="Teams" />
+              </Product>
+            </Add>
+            <Property Name="AUTOACTIVATE" Value="0" />
+            <Display Level="None" AcceptEULA="TRUE" />
+          </Configuration>
+          '@ | Set-Content -Encoding UTF8 "$env:RUNNER_TEMP\word.xml"
+          & "$dir\setup.exe" /configure "$env:RUNNER_TEMP\word.xml"
+      - name: Capture probe
+        shell: powershell
+        run: |
+          py -m pip install pillow pywin32
+          py .\pr13\screenshot_probe.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr13-word-screenshot-probe
+          path: screens\*.png
+          retention-days: 7
