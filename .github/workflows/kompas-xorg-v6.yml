@@ -1,0 +1,193 @@
+name: KOMPAS real Xorg native Work1 v6
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/kompas-xorg-v6.yml'
+      - 'kompas-linux/build_variant06_python.py'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Install KOMPAS Graphic and real Xorg
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            wget ca-certificates gnupg dbus-x11 openbox x11-xserver-utils \
+            xserver-xorg-core xserver-xorg-video-dummy iproute2 procps
+
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-graphic-v25
+
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          test -x "$BIN/kKompas"
+          test -f "$BIN/ksapi.py"
+          echo "KOMPAS_BIN=$BIN" >> "$GITHUB_ENV"
+
+      - name: Start real dummy Xorg and KOMPAS
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat >/tmp/xorg-dummy.conf <<'EOF'
+          Section "ServerFlags"
+              Option "DontVTSwitch" "true"
+              Option "AllowMouseOpenFail" "true"
+              Option "PciForceNone" "true"
+          EndSection
+          Section "Device"
+              Identifier "DummyDevice"
+              Driver "dummy"
+              VideoRam 256000
+          EndSection
+          Section "Monitor"
+              Identifier "DummyMonitor"
+              HorizSync 28.0-80.0
+              VertRefresh 48.0-75.0
+              Modeline "1920x1080" 148.50 1920 2008 2052 2200 1080 1084 1089 1125
+          EndSection
+          Section "Screen"
+              Identifier "DummyScreen"
+              Device "DummyDevice"
+              Monitor "DummyMonitor"
+              DefaultDepth 24
+              SubSection "Display"
+                  Depth 24
+                  Modes "1920x1080"
+              EndSubSection
+          EndSection
+          Section "ServerLayout"
+              Identifier "DummyLayout"
+              Screen "DummyScreen"
+          EndSection
+          EOF
+
+          sudo Xorg :99 -noreset -ac -config /tmp/xorg-dummy.conf -logfile /tmp/Xorg.99.log >/tmp/xorg.out 2>&1 &
+          XPID=$!
+          echo "$XPID" >/tmp/xorg.pid
+          for i in $(seq 1 50); do
+            [ -S /tmp/.X11-unix/X99 ] && break
+            sleep 0.2
+          done
+          test -S /tmp/.X11-unix/X99
+
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          openbox >/tmp/openbox.out 2>/tmp/openbox.err &
+          sleep 2
+
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          export NO_PROXY='*'
+          export no_proxy='*'
+          export PYTHONPATH="$KOMPAS_BIN"
+
+          dbus-run-session -- "$KOMPAS_BIN/kKompas" >/tmp/kompas-real.out 2>/tmp/kompas-real.err &
+          KWRAP=$!
+          echo "$KWRAP" >/tmp/kompas-wrapper.pid
+
+          KP=""
+          for i in $(seq 1 60); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+            if ! kill -0 "$KWRAP" 2>/dev/null; then
+              echo "KOMPAS_EXITED_EARLY"
+              break
+            fi
+          done
+          echo "KPID=$KP"
+          ps aux | grep -E '[k]Kompas|[o]penbox|[X]org' || true
+          echo "=== KOMPAS STDERR ==="
+          tail -200 /tmp/kompas-real.err || true
+          echo "=== XORG LOG ==="
+          tail -100 /tmp/Xorg.99.log || true
+          test -n "$KP"
+
+          # Let the real UI and licence manager finish. GetKompas() discovers the
+          # dynamic API port opened by KOMPAS after licence initialization.
+          READY=0
+          for i in $(seq 1 90); do
+            if python3 - <<'PY'
+          import ksapi
+          app=ksapi.GetKompas()
+          if not app:
+              raise SystemExit(1)
+          print("APP_READY", app.GetApplicationName(True))
+          lm=app.GetApplicationLicenseManager()
+          print("MODULE_2D", lm.IsKompasModuleActive(2) if lm else None)
+          raise SystemExit(0)
+          PY
+            then
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+          ss -ltnp | grep -E 'kKompas|LISTEN' || true
+          echo "READY=$READY"
+          if [ "$READY" != 1 ]; then
+            echo "=== KOMPAS STDERR FINAL ==="
+            cat /tmp/kompas-real.err || true
+            echo "=== KOMPAS STDOUT FINAL ==="
+            cat /tmp/kompas-real.out || true
+            exit 7
+          fi
+
+      - name: Build and verify native parametric FRW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export PYTHONPATH="$KOMPAS_BIN"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          export NO_PROXY='*'
+          export no_proxy='*'
+
+          python3 kompas-linux/build_variant06_python.py 2>&1 | tee /tmp/build-v6.out
+
+          OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          test -s "$OUT"
+          grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_python.log
+
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw')
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              assert 'Contents' in names and 'FileInfo' in names
+              print('MEMBERS',[(i.filename,i.file_size) for i in z.infolist()])
+          print('SIZE',p.stat().st_size)
+          print('SHA256',hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+
+          mkdir -p result
+          cp "$OUT" result/
+          cp /tmp/work1_v6_python.log result/
+          cp /tmp/build-v6.out result/
+          cp /tmp/kompas-real.out result/ || true
+          cp /tmp/kompas-real.err result/ || true
+          cp /tmp/Xorg.99.log result/ || true
+
+      - name: Upload verified native FRW
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-work1-v6-real-xorg
+          if-no-files-found: ignore
+          path: result/**
