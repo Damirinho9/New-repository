@@ -221,7 +221,11 @@ static bool build(){
     }
     if(!base){
       g_pending_age++;
-      if(g_pending_age>20){
+      // KOMPAS can keep a newly created fragment in its asynchronous
+      // document initialization state for over 30 seconds in headless mode.
+      // Keep the same native document alive long enough for the GUI queue to
+      // finish instead of closing it and restarting the initialization cycle.
+      if(g_pending_age>100){
         log("FAIL pending fragment never became editable");
         try{cand->Close(kdDoNotSaveChanges);}catch(...){}
         g_pending_doc={};
