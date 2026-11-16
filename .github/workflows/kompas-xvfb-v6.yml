@@ -22,7 +22,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox dbus-x11 net-tools iproute2             libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox dbus-x11 net-tools iproute2 desktop-file-utils             libxcb-res0 libxcb-dri2-0 libxcb-xkb1
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main'             | sudo tee /etc/apt/sources.list.d/ascon.list
