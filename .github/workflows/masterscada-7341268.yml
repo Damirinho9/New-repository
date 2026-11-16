@@ -1,0 +1,78 @@
+name: MasterSCADA 7341268 Windows prep
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268.yml"
+      - "masterscada-7341268/**"
+  workflow_dispatch:
+
+jobs:
+  inspect-download:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare folders
+        shell: pwsh
+        run: |
+          $root = "C:\MasterSCADA_7341268"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          New-Item -ItemType Directory -Force -Path "$root\installer" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$root\project\Variant7" | Out-Null
+          "root=$root" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\environment.txt"
+          "project=$root\project\Variant7" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\environment.txt"
+          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsBuildNumber, OsArchitecture | Format-List | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\windows-info.txt"
+
+      - name: Inspect DropMeFiles share page
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://dropmefiles.com/vTTWo"
+          $out = "$env:GITHUB_WORKSPACE\masterscada-7341268\dropmefiles-page.html"
+          $headers = @{
+            "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/141.0 Safari/537.36"
+            "Accept-Language" = "ru-RU,ru;q=0.9,en;q=0.8"
+          }
+          try {
+            $r = Invoke-WebRequest -Uri $url -Headers $headers -UseBasicParsing -MaximumRedirection 10
+            $r.Content | Out-File -Encoding utf8 $out
+            "HTTP=$($r.StatusCode)" | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\masterscada-7341268\download-diagnostics.txt"
+            "Length=$($r.Content.Length)" | Tee-Object -Append -FilePath "$env:GITHUB_WORKSPACE\masterscada-7341268\download-diagnostics.txt"
+            "FinalUri=$($r.BaseResponse.RequestMessage.RequestUri.AbsoluteUri)" | Tee-Object -Append -FilePath "$env:GITHUB_WORKSPACE\masterscada-7341268\download-diagnostics.txt"
+            $patterns = @(
+              'UPLOADID.{0,120}',
+              'UFILES.{0,120}',
+              'fileDownload.{0,200}',
+              'DSERVERURL.{0,160}',
+              'SERVERURL.{0,160}',
+              'vTTWo.{0,160}',
+              '\.(rar|zip|7z|exe|msi).{0,160}'
+            )
+            foreach ($p in $patterns) {
+              "=== PATTERN: $p ===" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\download-diagnostics.txt"
+              [regex]::Matches($r.Content, $p, [Text.RegularExpressions.RegexOptions]::IgnoreCase) |
+                Select-Object -First 30 |
+                ForEach-Object { $_.Value } |
+                Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\download-diagnostics.txt"
+            }
+          } catch {
+            "ERROR=$($_.Exception.ToString())" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\masterscada-7341268\download-diagnostics.txt"
+            throw
+          }
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-download-diagnostics
+          path: |
+            masterscada-7341268/environment.txt
+            masterscada-7341268/windows-info.txt
+            masterscada-7341268/download-diagnostics.txt
+            masterscada-7341268/dropmefiles-page.html
+          if-no-files-found: warn
