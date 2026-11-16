@@ -1,0 +1,112 @@
+name: PR13 task 3 native AutoCorrect test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - word-pr13-native-20261116
+    paths:
+      - ".github/workflows/word-pr13-autocorrect.yml"
+
+jobs:
+  autocorrect:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Microsoft Word LTSC 2024 volume
+        shell: powershell
+        timeout-minutes: 9
+        run: |
+          $ErrorActionPreference = "Stop"
+          $odt = "$env:RUNNER_TEMP\odt.exe"
+          Invoke-WebRequest -Uri "https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20326-20112.exe" -OutFile $odt
+          $dir = "$env:RUNNER_TEMP\odt"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Start-Process -FilePath $odt -ArgumentList "/quiet /extract:$dir" -Wait
+          @'
+          <Configuration>
+            <Add OfficeClientEdition="64" Channel="PerpetualVL2024">
+              <Product ID="ProPlus2024Volume">
+                <Language ID="ru-ru" />
+                <ExcludeApp ID="Access" />
+                <ExcludeApp ID="Excel" />
+                <ExcludeApp ID="Groove" />
+                <ExcludeApp ID="Lync" />
+                <ExcludeApp ID="OneDrive" />
+                <ExcludeApp ID="OneNote" />
+                <ExcludeApp ID="Outlook" />
+                <ExcludeApp ID="PowerPoint" />
+                <ExcludeApp ID="Publisher" />
+                <ExcludeApp ID="Teams" />
+              </Product>
+            </Add>
+            <Property Name="AUTOACTIVATE" Value="0" />
+            <Display Level="None" AcceptEULA="TRUE" />
+          </Configuration>
+          '@ | Set-Content -Encoding UTF8 "$env:RUNNER_TEMP\word.xml"
+          & "$dir\setup.exe" /configure "$env:RUNNER_TEMP\word.xml"
+
+      - name: Test AutoCorrect after space
+        shell: powershell
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference = "Stop"
+          $word = New-Object -ComObject Word.Application
+          $word.Visible = $false
+          $word.DisplayAlerts = 0
+          $ac = $word.AutoCorrect
+          $ac.ReplaceText = $true
+          $ac.CorrectSentenceCaps = $true
+          $ac.CorrectCapsLock = $true
+          $tests = @(
+            @{ input = "пРИМЕР"; expected = "Пример" },
+            @{ input = "напирмер"; expected = "например" },
+            @{ input = "нелзя"; expected = "нельзя" }
+          )
+          $lines = New-Object System.Collections.Generic.List[string]
+          $lines.Add("WORD_VERSION=$($word.Version)")
+          $lines.Add("AUTOCORRECT_REPLACE_TEXT=$($ac.ReplaceText)")
+          try {
+            foreach ($t in $tests) {
+              $doc = $word.Documents.Add()
+              try {
+                $doc.Content.LanguageID = 1049
+                $sel = $word.Selection
+                $sel.TypeText([string]$t.input)
+                $sel.TypeText(" ")
+                Start-Sleep -Milliseconds 250
+                $actual = $doc.Content.Text.Trim()
+                $lines.Add("FIRST:$($t.input) -> $actual")
+                if ($actual -ne [string]$t.expected) {
+                  $lines.Add("BUILTIN_MISS:$($t.input)")
+                  try { $ac.Entries.Add([string]$t.input,[string]$t.expected) | Out-Null } catch {}
+                  $doc.Content.Text = ""
+                  $sel = $word.Selection
+                  $sel.TypeText([string]$t.input)
+                  $sel.TypeText(" ")
+                  Start-Sleep -Milliseconds 250
+                  $actual2 = $doc.Content.Text.Trim()
+                  $lines.Add("AFTER_MANUAL:$($t.input) -> $actual2")
+                  if ($actual2 -ne [string]$t.expected) {
+                    throw "AutoCorrect failed after manual entry for $($t.input): $actual2"
+                  }
+                } else {
+                  $lines.Add("BUILTIN_OK:$($t.input)")
+                }
+              } finally {
+                $doc.Close(0)
+              }
+            }
+            $lines | Set-Content -Encoding UTF8 autocorrect-results.txt
+          } finally {
+            $word.Quit()
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr13-autocorrect-results
+          path: autocorrect-results.txt
+          retention-days: 7
