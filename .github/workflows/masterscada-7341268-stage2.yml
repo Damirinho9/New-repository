@@ -72,29 +72,88 @@ jobs:
             $_.Exception.ToString() | Add-Content -Encoding utf8 $out
           }
 
-      - name: Inspect registered type libraries and project file internals
+      - name: Create native empty project and inspect project object model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $out = "$env:GITHUB_WORKSPACE\masterscada-7341268-stage2\project-model.txt"
+          $projectRoot = "C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
+          $app = $null
+          try {
+            $app = New-Object -ComObject MasterSCADA.Application
+            "COM_CREATED=true" | Out-File -Encoding utf8 $out
+            $created = $false
+            foreach ($loc in @(0,1,2,3)) {
+              try {
+                "TRY_LOCATION=$loc" | Add-Content -Encoding utf8 $out
+                $app.CreateProject($loc, $projectRoot, "7341268_Variant7", "Система водяного отопления - вариант 7", "")
+                "CREATE_LOCATION=$loc SUCCESS" | Add-Content -Encoding utf8 $out
+                $created = $true
+                break
+              } catch {
+                "CREATE_LOCATION=$loc ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+              }
+            }
+            "PROJECTS_COUNT=$($app.Projects.Count)" | Add-Content -Encoding utf8 $out
+            $p = $app.CurrentProject
+            if ($null -eq $p) {
+              "CURRENT_PROJECT_NULL=true" | Add-Content -Encoding utf8 $out
+            } else {
+              "CURRENT_PROJECT_NULL=false" | Add-Content -Encoding utf8 $out
+              "=== CurrentProject Get-Member ===" | Add-Content -Encoding utf8 $out
+              $p | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $out
+              "=== CurrentProject property probes ===" | Add-Content -Encoding utf8 $out
+              foreach ($prop in @("Name","ID","ProjectID","Folder","Path","FileName","System","SystemTree","Objects","ObjectTree","TreeItemHlp","Root","Computer","Computers","Parameters","Variables")) {
+                try {
+                  $v = $p.$prop
+                  "$prop = $v" | Add-Content -Encoding utf8 $out
+                  if ($null -ne $v) {
+                    "TYPE[$prop]=$($v.GetType().FullName)" | Add-Content -Encoding utf8 $out
+                    $v | Get-Member -Force | Out-String -Width 320 | Add-Content -Encoding utf8 $out
+                  }
+                } catch {
+                  "$prop ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+                }
+              }
+            }
+            "=== Files after CreateProject ===" | Add-Content -Encoding utf8 $out
+            Get-ChildItem $projectRoot -Recurse -Force -ErrorAction SilentlyContinue |
+              ForEach-Object { "$($_.FullName)`t$($_.Length)" } |
+              Add-Content -Encoding utf8 $out
+            Get-ChildItem "C:\MasterSCADA Projects" -Recurse -Filter "*7341268*.vav" -File -ErrorAction SilentlyContinue |
+              ForEach-Object { "FOUND_VAV=$($_.FullName)`t$($_.Length)" } |
+              Add-Content -Encoding utf8 $out
+          } catch {
+            "FATAL=$($_.Exception.ToString())" | Add-Content -Encoding utf8 $out
+          } finally {
+            if ($null -ne $app) {
+              try { $app.ExitScada() } catch {}
+              try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
+            }
+          }
+
+      - name: Inspect registered type libraries and native VAV header
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
           $out = "$env:GITHUB_WORKSPACE\masterscada-7341268-stage2\typelib-and-vav.txt"
-          $clsidLine = (cmd /c 'reg query "HKCR\MasterSCADA.Application\CLSID" /ve' 2>$null | Select-String '\{.*\}' | Select-Object -First 1).ToString()
-          "CLSID_LINE=$clsidLine" | Out-File -Encoding utf8 $out
-          if ($clsidLine -match '(\{[0-9A-Fa-f-]+\})') {
-            $clsid = $Matches[1]
-            "CLSID=$clsid" | Add-Content -Encoding utf8 $out
-            cmd /c "reg query \"HKCR\CLSID\$clsid\" /s" 2>&1 | Add-Content -Encoding utf8 $out
+          "=== CLSID ===" | Out-File -Encoding utf8 $out
+          Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\MasterSCADA.Application\CLSID" |
+            Format-List * | Out-String -Width 300 | Add-Content -Encoding utf8 $out
+          $clsid = (Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\MasterSCADA.Application\CLSID").'(default)'
+          "CLSID=$clsid" | Add-Content -Encoding utf8 $out
+          if ($clsid) {
+            Get-ChildItem "Registry::HKEY_CLASSES_ROOT\CLSID\$clsid" -Recurse -ErrorAction SilentlyContinue |
+              ForEach-Object {
+                "KEY=$($_.Name)" | Add-Content -Encoding utf8 $out
+                try { Get-ItemProperty $_.PSPath | Format-List * | Out-String -Width 300 | Add-Content -Encoding utf8 $out } catch {}
+              }
           }
-          "=== VAV samples ===" | Add-Content -Encoding utf8 $out
-          Get-ChildItem "C:\MasterSCADA Projects\Projects\Tutorials" -Recurse -Filter *.vav -File -ErrorAction SilentlyContinue |
-            Select-Object -First 8 |
+          "=== Created VAV candidates ===" | Add-Content -Encoding utf8 $out
+          Get-ChildItem "C:\MasterSCADA Projects" -Recurse -Filter "*7341268*.vav" -File -ErrorAction SilentlyContinue |
             ForEach-Object {
               "$($_.FullName)`t$($_.Length)`t$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $out
-              $fs=[IO.File]::OpenRead($_.FullName)
-              try {
-                $buf=New-Object byte[] 64
-                [void]$fs.Read($buf,0,$buf.Length)
-                "HEADER=$([BitConverter]::ToString($buf))" | Add-Content -Encoding utf8 $out
-              } finally { $fs.Dispose() }
             }
 
       - name: Upload stage 2 diagnostics
