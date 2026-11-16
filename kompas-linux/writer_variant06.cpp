@@ -287,16 +287,20 @@ static bool build(){
     }
   };
 
+  // Prefer KOMPAS's own native Fragment.frw template. In headless mode
+  // AddWithDefaultSettings may return a document whose drawing container is
+  // still pending indefinitely, while the shipped template has a ready 2D
+  // editing context.
   bool acquired=(bool)base;
-  if(!acquired) acquired=adopt("AddDefault-visible", docs->AddWithDefaultSettings(ksDocumentFragment,true));
-  if(!acquired) acquired=adopt("AddDefault-invisible", docs->AddWithDefaultSettings(ksDocumentFragment,false));
-  if(g_waiting_for_document) return false;
-  if(!acquired) acquired=adopt("Add-visible", docs->Add(ksDocumentFragment,true));
-  if(!acquired) acquired=adopt("Add-invisible", docs->Add(ksDocumentFragment,false));
   if(!acquired) acquired=adopt("Template-visible", docs->AddNewDocumentFromTemplate(templatePath,true));
   if(!acquired) acquired=adopt("Template-invisible", docs->AddNewDocumentFromTemplate(templatePath,false));
   if(!acquired) acquired=adopt("Open-template-visible", docs->Open(templatePath,true,false));
   if(!acquired) acquired=adopt("Open-template-invisible", docs->Open(templatePath,false,false));
+  if(g_waiting_for_document) return false;
+  if(!acquired) acquired=adopt("AddDefault-visible", docs->AddWithDefaultSettings(ksDocumentFragment,true));
+  if(!acquired) acquired=adopt("AddDefault-invisible", docs->AddWithDefaultSettings(ksDocumentFragment,false));
+  if(!acquired) acquired=adopt("Add-visible", docs->Add(ksDocumentFragment,true));
+  if(!acquired) acquired=adopt("Add-invisible", docs->Add(ksDocumentFragment,false));
   if(!acquired){log("FAIL no editable fragment route");return false;}
 
   log("using native editable fragment route");
