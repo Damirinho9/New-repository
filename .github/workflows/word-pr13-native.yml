@@ -76,7 +76,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $out = "$env:GITHUB_WORKSPACE\pr13-word-native"
-          $logPath = Join-Path $out "Проверка_среды.txt"
+          $logPath = Join-Path $out "verification.txt"
           Remove-Item $logPath -ErrorAction SilentlyContinue
           function L([string]$s) {
             Add-Content -Path $logPath -Value $s -Encoding UTF8
@@ -162,7 +162,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $out = "$env:GITHUB_WORKSPACE\pr13-word-native"
-          $logPath = Join-Path $out "Проверка_среды.txt"
+          $logPath = Join-Path $out "verification.txt"
           function L([string]$s) {
             Add-Content -Path $logPath -Value $s -Encoding UTF8
             Write-Host $s
@@ -175,15 +175,23 @@ jobs:
             $word.Visible = $false
             $word.DisplayAlerts = 0
             $doc = $word.Documents.Add()
-            $doc.Content.Text = "Проверка рабочей среды ПР13" + [Environment]::NewLine +
-              "Документ создан и сохранен настольным Microsoft Word под Windows." + [Environment]::NewLine +
-              "Язык проверки: русский. Автоматические переносы: включены."
+            $b64 = "0J/RgNC+0LLQtdGA0LrQsCDRgNCw0LHQvtGH0LXQuSDRgdGA0LXQtNGLINCf0KAxMw0K0JTQvtC60YPQvNC10L3RgiDRgdC+0LfQtNCw0L0g0Lgg0YHQvtGF0YDQsNC90LXQvSDQvdCw0YHRgtC+0LvRjNC90YvQvCBNaWNyb3NvZnQgV29yZCDQv9C+0LQgV2luZG93cy4NCtCv0LfRi9C6INC/0YDQvtCy0LXRgNC60Lg6INGA0YPRgdGB0LrQuNC5LiDQkNCy0YLQvtC80LDRgtC40YfQtdGB0LrQuNC1INC/0LXRgNC10L3QvtGB0Ys6INCy0LrQu9GO0YfQtdC90Ysu"
+            $doc.Content.Text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64))
             $doc.Content.LanguageID = 1049
             $doc.AutoHyphenation = $true
-            $path = Join-Path $out "ПР13_Проверка_среды.docx"
+            $path = Join-Path $out "PR13_native_environment.docx"
             L("SAVE_TEST_BEFORE=" + $path)
             $doc.SaveAs2($path, 16)
             L("SAVE_TEST_AFTER=True")
+            $doc.Close(0)
+            $doc = $null
+
+            $verify = $word.Documents.Open($path, $false, $true)
+            L("SAVE_REOPEN_LANGUAGEID=" + $verify.Content.LanguageID)
+            L("SAVE_REOPEN_AUTOHYPHENATION=" + $verify.AutoHyphenation)
+            L("SAVE_REOPEN_TEXT_LENGTH=" + $verify.Content.Text.Length)
+            $verify.Close(0)
+            L("SAVE_REOPEN_OK=True")
           }
           finally {
             if ($doc -ne $null) { try { $doc.Close(0) } catch {} }
@@ -204,8 +212,8 @@ jobs:
         with:
           name: pr13-native-word-environment
           path: |
-            pr13-word-native/ПР13_Проверка_среды.docx
-            pr13-word-native/Проверка_среды.txt
+            pr13-word-native/PR13_native_environment.docx
+            pr13-word-native/verification.txt
             pr13-word-native/install-status.txt
           if-no-files-found: warn
           retention-days: 7
