@@ -316,3 +316,5 @@ static void entry() {
     // Give KOMPAS enough time to flush the file; workflow will terminate process.
   }).detach();
 }
+
+// relink-trigger
