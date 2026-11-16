@@ -16,7 +16,7 @@ concurrency:
 jobs:
   discover:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +37,25 @@ jobs:
           $ms=Get-ChildItem 'C:\Program Files (x86)\National Instruments','C:\Program Files\National Instruments' -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if(-not $ms){ throw 'Multisim executable absent after installation' }
           "multisim=$($ms.FullName)" | Tee-Object -FilePath fullv6-out\install.txt -Append
-          Get-ChildItem (Split-Path $ms.FullName -Parent) | Select-Object Name,Length | Out-String | Add-Content fullv6-out\install.txt
+          "samples=$env:PUBLIC\Documents\National Instruments\Circuit Design Suite 14.3\samples" | Add-Content fullv6-out\install.txt
+          "database=$env:PROGRAMDATA\National Instruments\Circuit Design Suite\14.3\database\MSCOMP_S.PRD" | Add-Content fullv6-out\install.txt
+
+      - name: Install 32-bit Python and pywin32
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $pyInstaller=Join-Path $env:RUNNER_TEMP 'python-3.11.9-x86.exe'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.11.9/python-3.11.9.exe' -OutFile $pyInstaller -UseBasicParsing
+          $sig=Get-AuthenticodeSignature $pyInstaller
+          "python32_installer_signature=$($sig.Status)" | Add-Content fullv6-out\install.txt
+          if($sig.Status -ne 'Valid'){ throw 'Invalid official Python x86 installer signature' }
+          $p=Start-Process $pyInstaller -ArgumentList @('/quiet','InstallAllUsers=1','TargetDir=C:\Python311-32','PrependPath=0','Include_launcher=0','Include_test=0','Include_pip=1') -PassThru -Wait
+          if($p.ExitCode -ne 0){ throw "Python x86 installer exit=$($p.ExitCode)" }
+          if(-not (Test-Path 'C:\Python311-32\python.exe')){ throw '32-bit Python executable absent' }
+          & 'C:\Python311-32\python.exe' -c "import struct,sys; print(sys.version); print(struct.calcsize('P')*8)"
+          & 'C:\Python311-32\python.exe' -m pip install --disable-pip-version-check --quiet pywin32
+          & 'C:\Python311-32\python.exe' -c "import win32com.client,struct; print('win32com ok',struct.calcsize('P')*8)" | Add-Content fullv6-out\install.txt
 
       - name: Install MultisimForge
         shell: powershell
@@ -46,30 +64,36 @@ jobs:
           git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
           Set-Location "$env:RUNNER_TEMP\MultisimForge"
           python -m pip install --disable-pip-version-check -e ".[capture]"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          python -c "from multisimforge.config import CONFIG; import json; print(json.dumps(CONFIG,indent=2))" | Out-File "$env:GITHUB_WORKSPACE\fullv6-out\forge-config.txt"
           python -m multisimforge --help | Out-File "$env:GITHUB_WORKSPACE\fullv6-out\forge-help.txt"
 
       - name: Build local Multisim part library
         shell: powershell
-        continue-on-error: true
         run: |
+          $ErrorActionPreference='Continue'
           Set-Location "$env:RUNNER_TEMP\MultisimForge"
-          python -m multisimforge parts init 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\parts-init.txt"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          python -m multisimforge --debug parts init 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\parts-init.txt"
           "exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\fullv6-out\parts-init.txt"
+          python -m multisimforge --debug parts dbindex 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\fullv6-out\dbindex.txt"
+          "exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\fullv6-out\dbindex.txt"
 
       - name: Query relevant installed parts
         shell: powershell
-        continue-on-error: true
         run: |
+          $ErrorActionPreference='Continue'
           Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
           $out="$env:GITHUB_WORKSPACE\fullv6-out"
-          $terms=@('resistor','capacitor','diode','photo','photodiode','mosfet','fet','scr','thyristor','triac','varistor','bridge','rectifier','fuse','led','connector','terminal','switch')
+          $terms=@('resistor','capacitor','diode','photo','photodiode','2N7000','mosfet','fet','scr','thyristor','triac','varistor','mov','bridge','rectifier','fuse','led','connector','header','terminal','1N4007','1N4742','C106')
           foreach($t in $terms){
             "===== $t =====" | Add-Content "$out\parts-report.txt"
             python -m multisimforge parts list $t 2>&1 | Add-Content "$out\parts-report.txt"
           }
-          "===== all library paths =====" | Add-Content "$out\parts-report.txt"
-          Get-ChildItem "$env:LOCALAPPDATA\multisimforge" -Recurse -ErrorAction SilentlyContinue |
-            Select-Object FullName,Length | Out-String -Width 240 | Add-Content "$out\parts-report.txt"
+          "===== local library =====" | Add-Content "$out\parts-report.txt"
+          Get-ChildItem "$env:LOCALAPPDATA\MultisimForge" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object FullName,Length | Out-String -Width 260 | Add-Content "$out\parts-report.txt"
 
       - name: Upload discovery
         if: always()
