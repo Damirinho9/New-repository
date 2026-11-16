@@ -69,7 +69,7 @@ for kpflip in (0,1):
         for bswap in (0,1):
             cfg={"KP501_MODEL":"2N6659","KP501_FLIP":kpflip,"VT3_FLIP":vt3flip,"BRIDGE_SWAP":bswap,"VD20_SWAP":0}
             samples=[]
-            for j,u in enumerate((0.0,3.0)):
+            for j,u in enumerate((0.0,15.0)):
                 rec=build_and_sim(f"cfg_k{kpflip}_v{vt3flip}_b{bswap}_{j}",u,duration=0.22,rate=4500,cfg=cfg)
                 samples.append(rec)
             good=[r for r in samples if r.get("metrics")]
@@ -83,7 +83,7 @@ selected_cfg=selected_candidate["cfg"]
 if selected_candidate["load_span_Vrms"] < 10.0:
     # One extra source-ambiguous test: reverse the unmarked VD20 polarity using the best D/S + bridge mapping.
     alt=dict(selected_cfg); alt["VD20_SWAP"]=1
-    samples=[build_and_sim(f"cfg_vd20swap_{j}",u,duration=0.22,rate=4500,cfg=alt) for j,u in enumerate((0.0,3.0))]
+    samples=[build_and_sim(f"cfg_vd20swap_{j}",u,duration=0.22,rate=4500,cfg=alt) for j,u in enumerate((0.0,15.0))]
     good=[r for r in samples if r.get("metrics")]
     span=abs(good[-1]["metrics"]["load_v"]["rms"]-good[0]["metrics"]["load_v"]["rms"]) if len(good)==2 else -1.0
     candidates.append({"cfg":alt,"samples":samples,"load_span_Vrms":span})
@@ -91,7 +91,7 @@ if selected_candidate["load_span_Vrms"] < 10.0:
         selected_candidate=candidates[-1]; selected_cfg=alt
         (OUT/"selected_config.json").write_text(json.dumps(selected_candidate,ensure_ascii=False,indent=2),encoding="utf-8")
 
-coarse_uA=[0.0,0.5,1.0,1.5,2.0,2.5,3.0,4.0]
+coarse_uA=[0.0,2.0,5.0,8.0,10.0,12.0,15.0,20.0,25.0]
 coarse=[]
 for i,u in enumerate(coarse_uA):
     rec=build_and_sim(f"coarse_{i:02d}_{str(u).replace('.','p')}uA",u,duration=0.30,rate=6000,cfg=selected_cfg)
@@ -105,9 +105,9 @@ ok.sort(key=lambda r:r["photocurrent_uA"])
 vals=[r["metrics"]["load_v"]["rms"] for r in ok]
 span=max(vals)-min(vals)
 # Require the load to actually respond. This gate prevents inventing a threshold from noise.
-if span < 5.0:
+if span < 30.0:
     (OUT/"FAIL_no_switching.json").write_text(json.dumps({"span_Vrms":span,"coarse":ok},ensure_ascii=False,indent=2),encoding="utf-8")
-    raise SystemExit(f"Full model ran, but load response span is only {span:.6g} Vrms; no real threshold proven")
+    raise SystemExit(f"Full model ran, but load response span is only {span:.6g} Vrms; no clear real switching threshold proven")
 
 # Locate the largest adjacent output transition and refine there.
 pairs=[]
