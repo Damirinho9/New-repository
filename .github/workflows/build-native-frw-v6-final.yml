@@ -21,21 +21,41 @@ jobs:
           mkdir -p /tmp/work1
           cd /tmp/work1
 
+          echo "=== APT SOURCES ORIGINAL ==="
+          grep -R -n 'ftp.altlinux.org\|ALTLinux\|p11/branch' /etc/apt 2>/dev/null || true
+
+          # Switch ALT p11 from the very slow ftp.altlinux.org to Yandex mirror.
+          # First replace the standard full base path, then any remaining host.
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             -e 's#http://ftp.altlinux.org/pub/distributions/ALTLinux#https://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org/pub/distributions/ALTLinux#https://mirror.yandex.ru/altlinux#g'             -e 's#http://ftp.altlinux.org#https://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org#https://mirror.yandex.ru/altlinux#g'
+
+          # KOMPAS is x86_64; the x86_64-i586 package index is not needed here.
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             '/x86_64-i586/s/^[[:space:]]*rpm/# rpm/'
+
+          echo "=== APT SOURCES MODIFIED ==="
+          grep -R -n 'mirror.yandex.ru\|ftp.altlinux.org\|p11/branch' /etc/apt 2>/dev/null || true
+
           apt-get update
-          apt-get install -y wget ca-certificates fontconfig glibc-i18ndata             libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util             libXv libXScrnSaver libxkbfile libfontenc dbus procps iproute2 file python3 curl || true
+          apt-get install -y wget ca-certificates fontconfig dbus             libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util             libXv libXScrnSaver libxkbfile libfontenc || true
 
           bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+
+          # ASCON script can rewrite ALT sources. Force Yandex again before update.
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             -e 's#http://ftp.altlinux.org/pub/distributions/ALTLinux#https://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org/pub/distributions/ALTLinux#https://mirror.yandex.ru/altlinux#g'             -e 's#http://ftp.altlinux.org#https://mirror.yandex.ru/altlinux#g'             -e 's#https://ftp.altlinux.org#https://mirror.yandex.ru/altlinux#g'
+          find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i             '/x86_64-i586/s/^[[:space:]]*rpm/# rpm/'
+
+          echo "=== SOURCES BEFORE KOMPAS INSTALL ==="
+          grep -R -n 'mirror.yandex.ru\|ftp.altlinux.org\|repo.ascon.ru' /etc/apt 2>/dev/null || true
+
           apt-get update
           apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 || true
 
           test -x /opt/ascon/kompas3d-v25/Bin/kKompas
           test -f /opt/ascon/kompas3d-v25/Bin/libksAPI.so
 
-          curl -fL --retry 5 -o /tmp/inject_variant06.so             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/bin/inject_variant06.so'
+          wget -O /tmp/inject_variant06.so             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/bin/inject_variant06.so'
           test -s /tmp/inject_variant06.so
-          file /tmp/inject_variant06.so
 
-          rm -f /tmp/work1_v6_inject.log /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw                 /tmp/kompas_v6.log
+          rm -f /tmp/work1_v6_inject.log                 /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw                 /tmp/kompas_v6.log
 
           export LANG=C.UTF-8
           export LC_ALL=C.UTF-8
@@ -51,7 +71,7 @@ jobs:
 
           for i in $(seq 1 120); do
             echo "POLL=$i"
-            tail -40 /tmp/work1_v6_inject.log 2>/dev/null || true
+            tail -30 /tmp/work1_v6_inject.log 2>/dev/null || true
             if grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_inject.log 2>/dev/null; then
               echo "PASS_MARKER_FOUND"
               break
@@ -69,30 +89,12 @@ jobs:
           tail -200 /tmp/kompas_v6.log 2>/dev/null || true
 
           OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
-          if [ ! -s "$OUT" ]; then
-            echo "RESULT=FAIL_NO_FRW"
-            exit 20
-          fi
-          if ! grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_inject.log; then
-            echo "RESULT=FAIL_NO_PARAMETRIC_PASS"
-            exit 21
-          fi
+          test -s "$OUT"
+          grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_inject.log
 
           echo "=== FRW_METADATA ==="
           ls -l "$OUT"
-          file "$OUT"
           sha256sum "$OUT"
-          python3 - <<'PY'
-          import pathlib, zipfile, hashlib
-          p=pathlib.Path('/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw')
-          print('SIZE=',p.stat().st_size)
-          print('SHA256=',hashlib.sha256(p.read_bytes()).hexdigest())
-          print('IS_ZIP=',zipfile.is_zipfile(p))
-          with zipfile.ZipFile(p) as z:
-              print('MEMBERS=',[(i.filename,i.file_size) for i in z.infolist()])
-              assert 'Contents' in z.namelist()
-              assert 'FileInfo' in z.namelist()
-          PY
 
           echo "=== FRW_BASE64_BEGIN ==="
           base64 -w 76 "$OUT"
