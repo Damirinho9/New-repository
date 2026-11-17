@@ -64,7 +64,7 @@ jobs:
           echo "RUNNER_OS_LABEL_PINNED=ubuntu-26.04" | tee -a runner-baseline.txt
           echo "CURRENT_HOSTED_IMAGE_VERSION=${ImageVersion:-unknown}" | tee -a runner-baseline.txt
           echo "COMMIT43_HOSTED_IMAGE_VERSION=$HISTORICAL_RUNNER_IMAGE_VERSION" | tee -a runner-baseline.txt
-          echo "RUNNER_DRIFT_NOT_ROOT_CAUSE_REFERENCE=run_$COMMIT43_BASELINE_RUN_ID_failed_at_Documents.Add_on_old_image" | tee -a runner-baseline.txt
+          echo "RUNNER_DRIFT_NOT_ROOT_CAUSE_REFERENCE=run_${COMMIT43_BASELINE_RUN_ID}_failed_at_Documents.Add_on_old_image" | tee -a runner-baseline.txt
 
       - name: Install exact historical Debian KOMPAS runtime
         shell: bash
