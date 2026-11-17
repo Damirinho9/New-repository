@@ -400,16 +400,41 @@ jobs:
               except BaseException as exc:
                   print(f"{method_name}_SIGNATURE_ERROR=", repr(exc))
 
+          view_count = call("VIEWS_COUNT", views.GetCount)
+          print("VIEWS_COUNT_VALUE=", view_count)
+
           view = call("ACTIVE_VIEW", views.GetActiveView)
-          if view is None:
+
+          # Invisible mode may have no "active" view even though the fragment
+          # contains views. Enumerate the real collection instead of guessing 0.
+          if view is None and isinstance(view_count, int):
               get_view = getattr(views, "GetView", None)
               if get_view is not None:
-                  view = call("SYSTEM_VIEW_INDEX_0", lambda: get_view(0))
+                  for index in range(max(0, view_count)):
+                      candidate = call(
+                          f"VIEW_INDEX_{index}",
+                          lambda index=index: get_view(index),
+                      )
+                      if candidate is not None:
+                          view = candidate
+                          print("VIEW_RESOLVED_BY_INDEX=", index)
+                          break
 
+          # Some wrappers expose the system view only by view number. Probe a
+          # tight deterministic range derived from the collection size.
           if view is None:
               get_view_by_number = getattr(views, "GetViewByNumber", None)
               if get_view_by_number is not None:
-                  view = call("SYSTEM_VIEW_NUMBER_0", lambda: get_view_by_number(0))
+                  upper = max(8, (view_count if isinstance(view_count, int) else 0) + 4)
+                  for number in range(0, upper):
+                      candidate = call(
+                          f"VIEW_NUMBER_{number}",
+                          lambda number=number: get_view_by_number(number),
+                      )
+                      if candidate is not None:
+                          view = candidate
+                          print("VIEW_RESOLVED_BY_NUMBER=", number)
+                          break
 
           if view is None:
               print("PROVEN_RUNTIME_EXISTING_MUTATION_FAIL=view_resolution")
