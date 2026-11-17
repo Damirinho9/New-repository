@@ -117,6 +117,16 @@ def dim_var(view,dim,name):
     log(f"var {name}: value={v.GetValue()} expr={v.GetExpression()} readonly={v.IsReadOnly()}")
     return v
 
+def doc_var(doc2d,name,value,note):
+    v=doc2d.GetVariableByName(False,name)
+    if not v:
+        v=require(doc2d.AddVariable(name,float(value),note),f"AddVariable {name}")
+    # Keep the variable as a real native KOMPAS document variable.
+    v.SetValue(float(value))
+    log(f"doc var {name}: value={v.GetValue()} expr={v.GetExpression()} readonly={v.IsReadOnly()}")
+    require(abs(float(v.GetValue())-float(value))<1e-9,f"{name} value mismatch")
+    return v
+
 def set_var(doc,var,value):
     var.SetExpression(format(value,".12g"))
     var.SetValue(float(value))
@@ -255,11 +265,23 @@ def main():
     v_l3=dim_var(view,d_l3,"l3")
     v_fi=dim_var(view,d_fi,"fi")
 
+    # Variant 6 also requires two native non-dimensional document variables.
+    v_DX=doc_var(d2,"DX",DX,"Расстояние от точки D до точки X, мм")
+    v_n=doc_var(d2,"n",N_RPM,"Частота вращения кривошипа, об/мин")
+
     # Required symbolic dependency.
     v_l2.SetExpression("2*L")
     require(d2.CompleteRebuildDocument(),"rebuild l2=2*L")
     require(abs(v_l2.GetValue()-2*v_L.GetValue())<1e-5,"l2 != 2*L")
+    require(v_l2.GetExpression().replace(" ","")=="2*L","l2 expression mismatch")
+    require(abs(float(v_DX.GetValue())-20.0)<1e-9,"DX != 20")
+    require(abs(float(v_n.GetValue())-250.0)<1e-9,"n != 250")
     log(f"l2 expression applied: {v_l2.GetExpression()} value={v_l2.GetValue()}")
+    log(
+        "WORK1_NATIVE_VARIABLES_PASS "
+        f"l1={v_l1.GetValue()} L={v_L.GetValue()} l2={v_l2.GetValue()} "
+        f"l3={v_l3.GetValue()} fi={v_fi.GetValue()} DX={v_DX.GetValue()} n={v_n.GetValue()}"
+    )
 
     # Actual parametric qualification: same native dimension variable, no regeneration.
     pts={}
