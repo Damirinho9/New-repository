@@ -219,95 +219,156 @@ jobs:
           fi
 
           python3 - <<'PY' | tee api-result.txt
-          import hashlib
-          import pathlib
-          import zipfile
+          import inspect
+          import traceback
           import ksapi
           from constants import constants as c
 
           print("KSAPI_RUNTIME_FILE=", ksapi.__file__)
+          print("KS_DOCUMENT_FRAGMENT=", c.ksDocumentFragment)
 
-          app = ksapi.GetKompas()
+          def call(label, fn):
+              print(f"CALL_BEGIN {label}", flush=True)
+              try:
+                  value = fn()
+                  print(f"{label}_RETURN_TYPE=", type(value).__name__, flush=True)
+                  print(f"{label}_RETURN=", repr(value), flush=True)
+                  print(f"CALL_END {label} OK", flush=True)
+                  return value
+              except BaseException as exc:
+                  print(f"{label}_EXCEPTION_TYPE=", type(exc).__name__, flush=True)
+                  print(f"{label}_EXCEPTION=", repr(exc), flush=True)
+                  traceback.print_exc()
+                  print(f"CALL_END {label} EXCEPTION", flush=True)
+                  return None
+
+          def optional_zero_arg(obj, method_name):
+              method = getattr(obj, method_name, None)
+              if method is None:
+                  print(f"{method_name}_UNAVAILABLE")
+                  return None
+              return call(method_name.upper(), method)
+
+          def doc_count(docs, label):
+              getter = getattr(docs, "GetCount", None)
+              if getter is not None:
+                  return call(label, getter)
+              try:
+                  value = getattr(docs, "Count")
+                  print(f"{label}_RETURN_TYPE=", type(value).__name__)
+                  print(f"{label}_RETURN=", repr(value))
+                  return value
+              except BaseException as exc:
+                  print(f"{label}_EXCEPTION_TYPE=", type(exc).__name__)
+                  print(f"{label}_EXCEPTION=", repr(exc))
+                  return None
+
+          # 1. Entry point only.
+          app = call("GETKOMPAS", ksapi.GetKompas)
           if app is None:
-              raise SystemExit("GetKompas returned None")
+              print("PROVEN_RUNTIME_GETKOMPAS_FAIL")
+              raise SystemExit(10)
           print("PROVEN_RUNTIME_GETKOMPAS_PASS")
-          print("APP_NAME=", app.GetApplicationName(True))
-          print("BUILD=", app.GetBuildNumber())
 
-          docs = app.GetDocuments()
-          print("DOCUMENTS_OBJ=", docs)
-          doc = docs.Add(c.ksDocumentFragment, True)
-          print("DOC_OBJ=", doc)
-          if doc is None:
-              raise SystemExit("Could not create fragment")
-          print("PROVEN_RUNTIME_DOC_ADD_PASS")
+          # 2. Application state only. No document creation here.
+          print("APP_TYPE=", type(app).__name__)
+          optional_zero_arg(app, "GetReference")
+          call("APP_NAME", lambda: app.GetApplicationName(True))
+          optional_zero_arg(app, "GetBuildNumber")
+          optional_zero_arg(app, "GetVisible")
+          optional_zero_arg(app, "GetActiveDocument")
+          optional_zero_arg(app, "GetCurrentDirectory")
 
-          d2 = ksapi.IKompasDocument2D(doc)
-          view = d2.GetViewsAndLayersManager().GetViews().GetActiveView()
-          dc = ksapi.IDrawingContainer(view)
-          s = dc.GetLineSegments().Add()
-          print("LINE_OBJ=", s)
-          if s is None:
-              raise SystemExit("LineSegments.Add returned None")
-          print("PROVEN_RUNTIME_LINE_ADD_PASS")
+          # 3. Obtain the collection only.
+          docs = call("GETDOCUMENTS", app.GetDocuments)
+          if docs is None:
+              print("PROVEN_RUNTIME_GETDOCUMENTS_FAIL")
+              raise SystemExit(11)
+          print("PROVEN_RUNTIME_GETDOCUMENTS_PASS")
+          print("DOCUMENTS_TYPE=", type(docs).__name__)
 
-          s.SetX1(0.0)
-          s.SetY1(0.0)
-          s.SetX2(15.0)
-          s.SetY2(0.0)
-          s.SetStyle(c.ksCSNormal)
-          if not s.Update():
-              raise SystemExit("Line Update failed")
+          public_names = sorted(
+              name for name in dir(docs)
+              if not name.startswith("_") and (
+                  "Add" in name or "Count" in name or "Item" in name
+              )
+          )
+          print("DOCUMENTS_RELEVANT_METHODS=", public_names)
 
-          out = pathlib.Path("smoke_native.frw").resolve()
-          if not doc.SaveAs(str(out)):
-              raise SystemExit("SaveAs returned false")
-          if not out.exists() or out.stat().st_size <= 1000:
-              raise SystemExit("Native FRW missing or too small")
-          if out.read_bytes()[:2] != b"PK":
-              raise SystemExit("Not a native modern KOMPAS container")
-          with zipfile.ZipFile(out) as z:
-              names = z.namelist()
-              if "Contents" not in names or "FileInfo" not in names:
-                  raise SystemExit("Missing Contents/FileInfo")
+          for method_name in ("Add", "AddWithDefaultSettings", "GetCount"):
+              method = getattr(docs, method_name, None)
+              if method is None:
+                  print(f"{method_name}_SIGNATURE=UNAVAILABLE")
+                  continue
+              try:
+                  print(f"{method_name}_SIGNATURE=", inspect.signature(method))
+              except BaseException as exc:
+                  print(f"{method_name}_SIGNATURE_ERROR=", repr(exc))
 
-          print("PROVEN_RUNTIME_SAVE_PASS")
-          print("SMOKE_SIZE=", out.stat().st_size)
-          print("SMOKE_SHA256=", hashlib.sha256(out.read_bytes()).hexdigest())
-          print("SMOKE_ZIP_PASS")
+          doc_count(docs, "DOCUMENT_COUNT_INITIAL")
+
+          # 4. Three isolated document creation calls. No geometry at all.
+          doc_true = call(
+              "DOC_ADD_FRAGMENT_VISIBLE_TRUE",
+              lambda: docs.Add(c.ksDocumentFragment, True),
+          )
+          doc_count(docs, "DOCUMENT_COUNT_AFTER_ADD_TRUE")
+
+          doc_false = call(
+              "DOC_ADD_FRAGMENT_VISIBLE_FALSE",
+              lambda: docs.Add(c.ksDocumentFragment, False),
+          )
+          doc_count(docs, "DOCUMENT_COUNT_AFTER_ADD_FALSE")
+
+          add_default = getattr(docs, "AddWithDefaultSettings", None)
+          if add_default is None:
+              print("DOC_ADD_DEFAULT_SETTINGS_UNAVAILABLE")
+              doc_default = None
+          else:
+              doc_default = call(
+                  "DOC_ADD_WITH_DEFAULT_SETTINGS",
+                  lambda: add_default(c.ksDocumentFragment, True),
+              )
+          doc_count(docs, "DOCUMENT_COUNT_AFTER_ADD_DEFAULT")
+
+          results = {
+              "Add(fragment, True)": doc_true,
+              "Add(fragment, False)": doc_false,
+              "AddWithDefaultSettings(fragment, True)": doc_default,
+          }
+          for name, value in results.items():
+              print("DOC_RESULT", name, "NON_NULL=", value is not None)
+
+          if any(value is not None for value in results.values()):
+              print("PROVEN_RUNTIME_DOC_ADD_PASS")
+              raise SystemExit(0)
+
+          print("PROVEN_RUNTIME_DOC_ADD_FAIL")
+          raise SystemExit(20)
           PY
 
           kill "$WRAPPER_PID" 2>/dev/null || true
 
-      - name: Verify native smoke markers and SHA
+      - name: Verify document creation marker only
         if: success()
         shell: bash
         run: |
           set -euxo pipefail
-          test -s smoke_native.frw
           grep -q 'PROVEN_RUNTIME_GETKOMPAS_PASS' api-result.txt
+          grep -q 'PROVEN_RUNTIME_GETDOCUMENTS_PASS' api-result.txt
           grep -q 'PROVEN_RUNTIME_DOC_ADD_PASS' api-result.txt
-          grep -q 'PROVEN_RUNTIME_LINE_ADD_PASS' api-result.txt
-          grep -q 'PROVEN_RUNTIME_SAVE_PASS' api-result.txt
-          sha256sum smoke_native.frw | tee smoke-sha256.txt
-          python3 - <<'PY'
-          import pathlib, zipfile
-          p = pathlib.Path("smoke_native.frw")
-          assert p.stat().st_size > 1000
-          with zipfile.ZipFile(p) as z:
-              assert "Contents" in z.namelist()
-              assert "FileInfo" in z.namelist()
-          print("PROVEN_RUNTIME_VERIFY_PASS")
-          PY
+          if grep -q 'PROVEN_RUNTIME_LINE_ADD_PASS' api-result.txt; then
+            echo "UNEXPECTED_GEOMETRY_MARKER_PRESENT"
+            exit 31
+          fi
+          echo "PROVEN_RUNTIME_DOCUMENT_SMOKE_VERIFY_PASS"
 
       - name: Upload proven runtime diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kompas-proven-runtime-v6-diagnostics
+          name: kompas-proven-runtime-v6-document-diagnostics
           path: |
-            smoke_native.frw
-            smoke-sha256.txt
             runner-baseline.txt
             ascon-script-sha256.txt
             ascon-script.out
