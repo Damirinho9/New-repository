@@ -190,8 +190,8 @@ static bool build(){
           IKompasDocument2DPtr edoc=existing;
           log(std::string("EXISTING_FRW_2D=")+(edoc?"1":"0"));
           if(edoc){
-            log("EXISTING_FRW_PARAMETRIC_MODE_BEFORE="+std::to_string(edoc->IsParametricMode()));
             edoc->SetParametricMode(true);
+            log("EXISTING_FRW_PARAMETRIC_MODE_SET");
             auto vm=edoc->GetViewsAndLayersManager();
             auto views=vm?vm->GetViews():IViewsPtr{};
             auto ev=views?views->GetActiveView():IViewPtr{};
