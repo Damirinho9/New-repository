@@ -1,0 +1,155 @@
+name: KOMPAS proven API5 emergency segment smoke
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/kompas-proven-api5-v6.yml'
+      - 'kompas-input/v6.b64.part*'
+  workflow_dispatch:
+
+jobs:
+  api5:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    env:
+      ASCON_DEB_DIST: "1.8_x86-64"
+      ASCON_KOMPAS_VERSION: "25.0.5.2780"
+      BASE_FRW_SHA256: "599bc2dc4962a85ec656f6977f3d82311e0a0a04f0cc7862a12f1221ac216d82"
+      BIN: "/opt/ascon/kompas3d-v25/Bin"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Install exact proven KOMPAS runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          set +e
+          sudo bash /tmp/ascon.sh >ascon-script.out 2>ascon-script.err
+          set -e
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb $ASCON_DEB_DIST main" | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             "ascon-kompas-graphic-v25=$ASCON_KOMPAS_VERSION"             "ascon-kompas3d-v25=$ASCON_KOMPAS_VERSION"             "ascon-kompas-sdk-v25=$ASCON_KOMPAS_VERSION"
+          dpkg-query -W -f='\${binary:Package}\t\${Version}\t\${Architecture}\n'             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25 xvfb xserver-xorg-core | tee pinned-versions.txt
+
+      - name: Restore verified BASE FRW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p proven-input result
+          cat kompas-input/v6.b64.part* | tr -d '[:space:]' | base64 -d > proven-input/v6.frw.gz
+          set +e
+          gzip -dc proven-input/v6.frw.gz > proven-input/01_Mekhanizm_Variant_06_BASE.frw
+          RC=$?
+          set -e
+          test "$RC" -eq 0 -o "$RC" -eq 2
+          BASE=proven-input/01_Mekhanizm_Variant_06_BASE.frw
+          test -s "$BASE"
+          test "$(sha256sum "$BASE" | awk '{print $1}')" = "$BASE_FRW_SHA256"
+          sha256sum "$BASE" | tee base-sha256.txt
+
+      - name: Inspect API5 binding surface
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH="$BIN"
+          grep -nE 'class .*Kompas|class .*Document2D|def ActiveDocument2D|def ksLineSeg|def TransferInterface|def GetKompas|API5' "$BIN/ksapi.py"             | tee api5-source-hits.txt || true
+          python3 - <<'PY' | tee api5-introspection.txt
+          import inspect, ksapi
+          tokens=("kompas","document2d","activedocument","lineseg","transfer","api5")
+          names=sorted(n for n in dir(ksapi) if any(t in n.lower() for t in tokens))
+          print("KSAPI_FILE=",ksapi.__file__)
+          for name in names:
+              obj=getattr(ksapi,name)
+              print("NAME",name,"TYPE",type(obj).__name__,"REPR",repr(obj))
+              try: print("SIGNATURE",name,inspect.signature(obj))
+              except BaseException as exc: print("SIGNATURE_ERROR",name,repr(exc))
+          for candidate in ("KompasObject","ksDocument2D","Document2D","GetKompas","GetKompas5"):
+              obj=getattr(ksapi,candidate,None)
+              if obj is None:
+                  print("CANDIDATE",candidate,"UNAVAILABLE")
+                  continue
+              try:
+                  print("SOURCE_BEGIN",candidate)
+                  print(inspect.getsource(obj)[:16000])
+                  print("SOURCE_END",candidate)
+              except BaseException as exc:
+                  print("SOURCE_ERROR",candidate,repr(exc))
+          PY
+
+      - name: Launch BASE and probe API5 bridge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH="$BIN"
+          export BASE="$PWD/proven-input/01_Mekhanizm_Variant_06_BASE.frw"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             /tmp/kKompas -automation "$BASE" >kompas-live.out 2>kompas-live.err &
+          WP=$!
+          KP=""
+          for i in $(seq 1 40); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          test -n "$KP"
+          for i in $(seq 1 50); do
+            sleep 1
+            ss -ltnp > kompas-sockets.txt || true
+            grep -q kKompas kompas-sockets.txt && break
+          done
+          grep -q kKompas kompas-sockets.txt
+
+          python3 - <<'PY' | tee api5-probe.txt
+          import inspect, ksapi
+          def call(label,fn):
+              print("CALL_BEGIN",label,flush=True)
+              try:
+                  v=fn()
+                  print(label+"_TYPE=",type(v).__name__,flush=True)
+                  print(label+"_VALUE=",repr(v),flush=True)
+                  print("CALL_END",label,"OK",flush=True)
+                  return v
+              except BaseException as e:
+                  print(label+"_EXCEPTION=",type(e).__name__,repr(e),flush=True)
+                  print("CALL_END",label,"EXCEPTION",flush=True)
+                  return None
+
+          app7=call("GETKOMPAS",ksapi.GetKompas)
+          if app7 is None: raise SystemExit(10)
+          active7=call("API7_ACTIVE_DOCUMENT",app7.GetActiveDocument)
+          if active7 is None: raise SystemExit(11)
+          print("API5_PRECONDITION_ACTIVE_DOCUMENT_PASS")
+          print("APP7_RELEVANT_METHODS=",sorted(n for n in dir(app7) if any(t in n.lower() for t in ("transfer","kompas","document","reference","api"))))
+          print("ACTIVE7_RELEVANT_METHODS=",sorted(n for n in dir(active7) if any(t in n.lower() for t in ("transfer","reference","document","api"))))
+          for name in sorted(n for n in dir(ksapi) if any(t in n.lower() for t in ("kompas","document2d","transfer","api5"))):
+              obj=getattr(ksapi,name)
+              try: sig=inspect.signature(obj)
+              except BaseException as e: sig=repr(e)
+              print("KSAPI_RUNTIME_NAME",name,type(obj).__name__,sig)
+          print("API5_BINDING_PROBE_COMPLETE")
+          PY
+          kill "$WP" 2>/dev/null || true
+
+      - name: Upload API5 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-proven-api5-v6-diagnostics
+          path: |
+            proven-input/01_Mekhanizm_Variant_06_BASE.frw
+            base-sha256.txt
+            pinned-versions.txt
+            api5-source-hits.txt
+            api5-introspection.txt
+            api5-probe.txt
+            kompas-live.out
+            kompas-live.err
+            kompas-sockets.txt
+          if-no-files-found: ignore
