@@ -126,7 +126,7 @@ jobs:
           sha256sum "$OUT"
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: 7335493-work1-v6-fullgui
           if-no-files-found: ignore
