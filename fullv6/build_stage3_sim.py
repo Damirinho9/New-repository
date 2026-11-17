@@ -42,7 +42,7 @@ def xline(ref,nets,model):
 kp501_flip=os.environ.get("KP501_FLIP","0")=="1"
 vt3_flip=os.environ.get("VT3_FLIP","0")=="1"
 bridge_swap=os.environ.get("BRIDGE_SWAP","0")=="1"
-bridge_mode=os.environ.get("BRIDGE_MODE","ac_tb")
+bridge_mode=os.environ.get("BRIDGE_MODE","dc_bt")
 vd20_swap=os.environ.get("VD20_SWAP","0")=="1"
 
 vt1_pins={"D":"sens","S":"t1"} if kp501_flip else {"D":"t1","S":"sens"}
@@ -54,8 +54,8 @@ net=[
  "R1 u_ctrl n_r1 4.7meg",
  "R2 n_r1 sens 47k",
  named("VD1",models["photo"],A="0",K="sens"),
- "C1 sens 0 47n CAP_ELECTROLIT_VIRTUAL",
- "C2 u_ctrl 0 1u CAP_ELECTROLIT_VIRTUAL",
+ "C1 sens 0 470n CAP_ELECTROLIT_VIRTUAL",
+ "C2 u_ctrl 0 100n CAPACITOR_VIRTUAL",
  named("VT1",models["kp501"],D=vt1_pins["D"],G="g12",S=vt1_pins["S"]),
  "R3 g12 0 330",
  "R4 u_ctrl t1 10k",
@@ -121,22 +121,32 @@ if {"P1","P2","P3","P4","P5"}<=hp:
 else:
     net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n"))
 
-# Simulation-only test bench. I1 is reverse photocurrent from cathode node SENS to anode/common.
-net += [
- f"I1 sens 0 {iph:.12g}",
- "V1 ac_src n SIN(0 311.1269837 50)",
- "RLINE ac_src l 10",
- "RLOAD l sw 220",
-]
+# Simulation-only test bench. The source circuit itself above remains unchanged.
+transient_photo=os.environ.get("TRANSIENT_PHOTO","0")=="1"
+if transient_photo:
+    rph=float(os.environ.get("PHOTO_PULSE_R_OHM","4700000"))
+    net += ["VPH phdrv 0 PULSE(12 -12 50m 30m 30m 70m 200m)", f"RPH sens phdrv {rph:.12g}"]
+else:
+    net += [f"I1 sens 0 {iph:.12g}"]
+net += ["V1 ac_src n SIN(0 311.1269837 50)","RLINE ac_src l 10","RLOAD l sw 1k"]
+
 control_supply=os.environ.get("CTRL_SUPPLY","0")=="1"
-forced_bridge=os.environ.get("FORCE_BRIDGE","")
 add_scope=os.environ.get("ADD_SCOPE","0")=="1"
+force_gate_ma=float(os.environ.get("FORCE_GATE_MA","0") or 0)
+force_bridge_ma=float(os.environ.get("FORCE_BRIDGE_MA","0") or 0)
+force_t2_v=os.environ.get("FORCE_T2_V","")
 if control_supply:
     net += ["V2 vctrl 0 12","RCTRL vctrl u_ctrl 100"]
-if forced_bridge:
-    net += [f"RTEST br_top 0 {forced_bridge}"]
+if force_gate_ma:
+    a=force_gate_ma*1e-3
+    net += [f"IG1 0 g18 {a:.12g}", f"IG2 sw g25 {a:.12g}"]
+if force_bridge_ma:
+    a=force_bridge_ma*1e-3
+    net += [f"IBCTRL br_top 0 {a:.12g}"]
+if force_t2_v:
+    net += [f"VT2TEST t2 0 {force_t2_v}"]
 if add_scope:
-    net += ["XSC1 sens sw 0 nc_trig 0 nc_b OSCILLOSCOPE"]
+    net += ["XSC1 sens l 0 nc_trig sw nc_b OSCILLOSCOPE"]
 
 layout={
  "R1":[144,180,90],"R2":[144,270,90],"XVD1":[144,378,90],
@@ -149,13 +159,22 @@ layout={
  "XVD6":[1197,342],"XVD5":[1323,198],"R9":[1323,270],
  "XVS2":[1404,342,90],"C3":[1512,450,90],"XFU2":[1512,576],
  "XXP1":[1908,306,90],
-"I1":[270,486,90],"V1":[1908,648,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],
+"I1":[270,486,90],"VPH":[270,486,90],"RPH":[360,486],"V1":[1908,648,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],
+ "IG1":[1116,558,90],"IG2":[1368,234,90],"IBCTRL":[1062,756,90],"VT2TEST":[684,756,90],
  "GND":[[72,144],[252,558],[432,558],[666,558],[900,558],[1080,558],[1233,558],[1404,648],[1512,648],[270,558],[900,810]],
 }
 if control_supply:
     layout.update({"V2":[72,90,90],"RCTRL":[198,90]})
-if forced_bridge:
-    layout["RTEST"]=[990,720,90]
+if transient_photo:
+    layout.pop("I1",None)
+else:
+    layout.pop("VPH",None); layout.pop("RPH",None)
+if not force_gate_ma:
+    layout.pop("IG1",None); layout.pop("IG2",None)
+if not force_bridge_ma:
+    layout.pop("IBCTRL",None)
+if not force_t2_v:
+    layout.pop("VT2TEST",None)
 if add_scope:
     layout["XSC1"]=[756,756]
 spec={
@@ -165,11 +184,11 @@ spec={
  "net_names":True,
  "wire_width":2,
  "sheet":[21.0,11.0],
- "sim_time":"250ms",
+ "sim_time":"400ms" if transient_photo else "250ms",
  "colors":{"sens":"red","sw":"blue","g18":"green","g25":"green"}
 }
 if add_scope:
-    spec["instruments"]={"XSC1":{"timebase":"10ms","a_scale":"5V","b_scale":"200V","trigger":"none"}}
+    spec["instruments"]={"XSC1":{"timebase":"20ms","a_scale":"5V","b_scale":"100V","trigger":"none"}}
 res=builder.build(spec,lib=lib,allow_fallback=True,auto_repair=True)
 
 # Patch visible labels so test-bench parts and SIM-only capacitor values cannot be confused with the source BOM.
@@ -181,8 +200,8 @@ for item in root.iter("Item"):
         comp_ref[item.get("CiID")]=xmlio.text(item[0].get("LocalName") or "").strip()
 labels={
  "VD1":f"FD320 -> {models['photo']} + I_PH",
- "C1":"K50-35 | SIM-only 47 nF",
- "C2":"K73 | SIM-only 1 uF",
+ "C1":"K50-35 | SIM-only 0.47 uF",
+ "C2":"K73 | SIM-only 0.1 uF",
  "C3":"K73 | SIM-only 47 nF",
  "VT1":"KP501A -> ZVN2120 datasheet-fit SIM model",
  "VT2":"KP501A -> ZVN2120 datasheet-fit SIM model",
@@ -199,8 +218,13 @@ labels={
  "V2":"SIM CTRL SUPPLY: 12 V",
  "RCTRL":"SIM CTRL SUPPLY: 100 Ohm",
  "RLINE":"TEST BENCH: source R=10 Ohm",
- "RLOAD":"TEST LOAD: 220 Ohm",
- "RTEST":"DIAGNOSTIC ONLY: forced bridge conduction",
+ "RLOAD":"TEST LOAD: 1 kOhm",
+ "VPH":"SIM LIGHT RAMP: 12V -> -12V",
+ "RPH":"SIM LIGHT DRIVE RESISTOR",
+ "IG1":"DIAGNOSTIC ONLY: VS1 gate current",
+ "IG2":"DIAGNOSTIC ONLY: VS2 gate current",
+ "IBCTRL":"DIAGNOSTIC ONLY: RB154 control sink",
+ "VT2TEST":"DIAGNOSTIC ONLY: force T2",
  "XSC1":"XSC1: A=SENS, B=SW",
 }
 for item in root.iter("Item"):
@@ -214,7 +238,12 @@ xmlio.save(root,TARGET,compress=True)
 report=check.check_file(TARGET)
 manifest={
  "state":state,"photocurrent_A":iph,"photocurrent_uA":iph*1e6,
- "sim_only":{"C1_F":47e-9,"C2_F":1e-6,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,"auxiliary_control_supply":control_supply,"control_supply_V":12 if control_supply else None,"control_series_Ohm":100 if control_supply else None,"forced_bridge":forced_bridge or None,"scope":add_scope,"Rline_Ohm":10,"Rload_Ohm":220},
+ "sim_only":{"C1_F":470e-9,"C2_F":100e-9,"C3_F":47e-9,"mains_Vrms":220,"mains_Hz":50,
+ "auxiliary_control_supply":control_supply,"control_supply_V":12 if control_supply else None,
+ "control_series_Ohm":100 if control_supply else None,"transient_photo":transient_photo,
+ "photo_pulse_R_Ohm":float(os.environ.get("PHOTO_PULSE_R_OHM","4700000")) if transient_photo else None,
+ "force_gate_mA":force_gate_ma or None,"force_bridge_mA":force_bridge_ma or None,"force_t2_V":force_t2_v or None,
+ "scope":add_scope,"Rline_Ohm":10,"Rload_Ohm":1000},
  "models":models,
  "model_patch_notes":model_patch_notes,
  "source_rails":{"common":"0","mains_return_through_FU2":"0","separated":False},"source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},

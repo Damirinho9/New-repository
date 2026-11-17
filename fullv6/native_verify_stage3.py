@@ -60,7 +60,7 @@ def snap(w,path):
     pg.screenshot(region=(max(0,r.left),max(0,r.top),max(10,r.width()),max(10,r.height()))).save(str(path))
 
 results={}
-for state in ("DARK","THRESHOLD","LIGHT"):
+for state in ("DARK","THRESHOLD","LIGHT","TRANSIENT"):
     target=ROOT/f"7330744_PhotoRelay_V6_{state}.ms14"
     if not target.exists(): raise FileNotFoundError(target)
     subprocess.run(["taskkill","/IM","Multisim.exe","/T","/F"],capture_output=True)

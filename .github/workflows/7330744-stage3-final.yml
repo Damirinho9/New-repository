@@ -110,7 +110,7 @@ jobs:
           $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
           $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
           Set-Location "$env:RUNNER_TEMP\MultisimForge"
-          foreach($s in @('DARK','THRESHOLD','LIGHT')){
+          foreach($s in @('DARK','THRESHOLD','LIGHT','TRANSIENT')){
             $f="$env:GITHUB_WORKSPACE\stage3-final\7330744_PhotoRelay_V6_$s.ms14"
             python -m multisimforge check "$f" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\stage3-final\check_$s.json"
             "check_exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\stage3-final\check_$s.txt"
@@ -124,7 +124,7 @@ jobs:
           $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
           $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
           Set-Location "$env:RUNNER_TEMP\MultisimForge"
-          foreach($s in @('DARK','THRESHOLD','LIGHT')){
+          foreach($s in @('DARK','THRESHOLD','LIGHT','TRANSIENT')){
             $f="$env:GITHUB_WORKSPACE\stage3-final\7330744_PhotoRelay_V6_$s.ms14"
             $preview="$env:GITHUB_WORKSPACE\stage3-final\Multisim_${s}_schematic.png"
             python -m multisimforge preview "$f" "$preview" 2>&1 | Out-File "$env:GITHUB_WORKSPACE\stage3-final\preview_$s.txt"
@@ -134,7 +134,7 @@ jobs:
           }
           python -m multisimforge com stop | Out-File "$env:GITHUB_WORKSPACE\stage3-final\com-stop.txt"
 
-      - name: Save run and reopen all three files in real Multisim GUI
+      - name: Save run and reopen all final files in real Multisim GUI
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
