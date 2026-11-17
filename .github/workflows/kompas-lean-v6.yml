@@ -95,24 +95,69 @@ jobs:
               raise SystemExit("fragment creation failed")
           PY
 
-      - name: Build and verify native FRW
+      - name: Build and run strict native acceptance
         shell: bash
         run: |
           set -euxo pipefail
           export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
-          python3 kompas-linux/build_variant06_python.py 2>&1 | tee /tmp/build-v6.out
-          OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
-          test -s "$OUT"
-          grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_python.log
+          rm -rf result
           mkdir -p result
-          cp "$OUT" result/
-          cp /tmp/work1_v6_python.log result/
-          cp /tmp/build-v6.out result/
-          sha256sum "$OUT"
 
-      - uses: actions/upload-artifact@v4
-        if: always()
+          python3 kompas-linux/build_variant06_python.py 2>&1 | tee /tmp/build-v6.out
+
+          OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          LOG=/tmp/work1_v6_python.log
+          test -s "$OUT"
+          test -s "$LOG"
+
+          # SaveAs alone is explicitly insufficient.
+          grep -q '^PRE_SAVE_PARAMETRIC_REBUILD_PASS ' "$LOG"
+          grep -q '^SAVE_AS_BEFORE_REOPEN_PASS ' "$LOG"
+          grep -q '^REOPEN_VARIABLES_PASS ' "$LOG"
+          grep -q '^REOPEN_PARAMETRIC_REBUILD_PASS ' "$LOG"
+          grep -q '^FINAL_STATE_90_PASS "$LOG"
+          grep -q '^RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06 "$LOG"
+
+          # Both cycles must contain all three angles and real physical movement.
+          for prefix in PRE_SAVE REOPEN; do
+            grep -q "^\${prefix}_FI_45_PASS " "$LOG"
+            grep -q "^\${prefix}_FI_135_PASS " "$LOG"
+            grep -q "^\${prefix}_FI_90_PASS " "$LOG"
+            grep -q "^\${prefix}_PHYSICAL_MOVE_PASS " "$LOG"
+            grep -q "^\${prefix}_RETURN_90_PASS " "$LOG"
+          done
+
+          # Required native variables and symbolic dependency must survive reopen.
+          grep -q '^REOPEN_VARIABLES_PASS l1=20 L=25 l2=50 l3=60 fi=90 DX=20 n=250 expr_l2=2\*L "$LOG"
+
+          python3 - <<'PY'
+          import pathlib, zipfile
+          p=pathlib.Path("/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw")
+          assert p.stat().st_size > 1000
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              names=set(z.namelist())
+              assert {"Contents","FileInfo"}.issubset(names)
+          print("STRICT_NATIVE_CONTAINER_PASS")
+          PY
+
+          SHA=$(sha256sum "$OUT" | awk '{print $1}')
+          grep -q "^SHA256=$SHA$" "$LOG"
+          printf '%s  %s\n' "$SHA" "$(basename "$OUT")" | tee result/SHA256.txt
+
+          cp "$OUT" result/
+          cp "$LOG" result/work1_v6_python.log
+          cp /tmp/build-v6.out result/build-v6.out
+          echo "STRICT_ACCEPTANCE_GATE_PASS" | tee result/ACCEPTANCE.txt
+
+      - name: Upload strictly accepted native deliverable
+        uses: actions/upload-artifact@v4
         with:
-          name: 7335493-work1-v6-lean
-          if-no-files-found: ignore
-          path: result/**
+          name: 7335493-work1-v6-strict-native
+          if-no-files-found: error
+          path: |
+            result/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+            result/work1_v6_python.log
+            result/build-v6.out
+            result/SHA256.txt
+            result/ACCEPTANCE.txt
