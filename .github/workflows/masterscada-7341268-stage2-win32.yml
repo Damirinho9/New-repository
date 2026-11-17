@@ -100,33 +100,35 @@ jobs:
           $watcher=Start-Job -ScriptBlock {
             param($watchLog)
             $ws=New-Object -ComObject WScript.Shell
-            for($i=0;$i -lt 80;$i++){
+            for($i=0;$i -lt 45;$i++){
               Get-Process -ErrorAction SilentlyContinue | Where-Object {$_.ProcessName -match "MasterSCADA"} | ForEach-Object {
                 if($_.MainWindowTitle){
                   "$(Get-Date -Format o) PID=$($_.Id) TITLE=$($_.MainWindowTitle)"|Add-Content -Encoding utf8 $watchLog
                   if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 200;$ws.SendKeys("{ENTER}")}
                 }
               }
-              Start-Sleep -Milliseconds 500
+              Start-Sleep -Seconds 1
             }
           } -ArgumentList $watchLog
 
+          $warm=$null
+          try {
+            $warm=New-Object -ComObject MasterSCADA.Application
+            "WARMUP_COM=true"|Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\mswin32\warmup.txt"
+            Start-Sleep -Seconds 2
+            try{$warm.Quit()}catch{}
+          } finally {
+            if($warm){try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($warm)|Out-Null}catch{}}
+          }
+          Start-Sleep -Seconds 2
+
           $app=New-Object -ComObject MasterSCADA.Application
           try{
-            try {
-              $app.CreateProject(1,$projectsFolder,$id,"Система водяного отопления - вариант 7","")
-              "CREATE_CALL_RETURNED=true"|Out-File -Encoding utf8 $log
-            } catch {
-              "CREATE_CALL_EXCEPTION=$($_.Exception.Message)"|Out-File -Encoding utf8 $log
-            }
-            Start-Sleep -Seconds 4
-            $p=$null
-            try {$p=$app.CurrentProject} catch {"CURRENT_PROJECT_EXCEPTION=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
-            if($null -eq $p){
-              try {$p=$app.Projects.Item($id)} catch {"PROJECT_ITEM_EXCEPTION=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
-            }
-            "PROJECT_RECOVERED=$($null -ne $p)"|Add-Content -Encoding utf8 $log
-            if($null -eq $p){throw "CurrentProject not recoverable after CreateProject"}
+            $app.CreateProject(1,$projectsFolder,$id,"Система водяного отопления - вариант 7","")
+            "CREATE_CALL_RETURNED=true"|Out-File -Encoding utf8 $log
+            Start-Sleep -Seconds 3
+            $p=$app.CurrentProject
+            if($null -eq $p){throw "CurrentProject is null after CreateProject"}
             "CREATE=true PROJECT=$($p.Name) PATH=$($p.Path)"|Out-File -Encoding utf8 $log
             "INITIAL_COMPUTERS=$($p.ComputerCount)"|Add-Content -Encoding utf8 $log
             $hwnd=[IntPtr]([int64]$app.MainWindowHandle)
