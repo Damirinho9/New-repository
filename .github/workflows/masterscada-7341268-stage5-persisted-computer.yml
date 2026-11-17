@@ -92,34 +92,65 @@ jobs:
             }
 
             if($null -eq $existing){
-              "CREATE_STRATEGY=InsertNewChildItem_then_ChangeItemClass" | Add-Content -Encoding utf8 $out
-              $node=$null
+              $sys=$p.SysTree
+              try{"PROJECT_CURRENT_BEFORE=$($p.CurrentItem)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"SYSTREE_CURRENT_BEFORE=$($sys.CurrentItem)"|Add-Content -Encoding utf8 $out}catch{}
               try{
-                $node=$p.SystemRoot.InsertNewChildItem([int16]1,$null)
-                "INSERT_NEW_CHILD_ITEM_RETURNED=$($null -ne $node)" | Add-Content -Encoding utf8 $out
+                $p.CurrentItem=$p.SystemRoot
+                "PROJECT_CURRENT_SET=True"|Add-Content -Encoding utf8 $out
               }catch{
-                "INSERT_NEW_CHILD_ITEM_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+                "PROJECT_CURRENT_SET_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
               }
+              try{
+                $sys.CurrentItem=$p.SystemRoot
+                "SYSTREE_CURRENT_SET=True"|Add-Content -Encoding utf8 $out
+              }catch{
+                "SYSTREE_CURRENT_SET_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+              }
+              try{"PROJECT_CURRENT_AFTER=$($p.CurrentItem)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"SYSTREE_CURRENT_AFTER=$($sys.CurrentItem)"|Add-Content -Encoding utf8 $out}catch{}
+
+              $node=$null
+              "CREATE_STRATEGY=InsertNewChild_CLSID_with_CurrentItem" | Add-Content -Encoding utf8 $out
+              try{
+                $node=$p.SystemRoot.InsertNewChild($clsid,$null)
+                "INSERT_NEW_CHILD_RETURNED=$($null -ne $node)" | Add-Content -Encoding utf8 $out
+              }catch{
+                "INSERT_NEW_CHILD_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+              }
+
               if($null -eq $node){
+                "CREATE_FALLBACK=InsertNewChildItem_then_ChangeItemClass" | Add-Content -Encoding utf8 $out
                 try{
-                  $node=$p.SystemRoot.InsertNewChildItemEx([int16]1,$null,$true,0,0,$name,"")
-                  "INSERT_NEW_CHILD_ITEM_EX_RETURNED=$($null -ne $node)" | Add-Content -Encoding utf8 $out
+                  $node=$p.SystemRoot.InsertNewChildItem([int16]1,$null)
+                  "INSERT_NEW_CHILD_ITEM_RETURNED=$($null -ne $node)" | Add-Content -Encoding utf8 $out
                 }catch{
-                  "INSERT_NEW_CHILD_ITEM_EX_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+                  "INSERT_NEW_CHILD_ITEM_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+                }
+                if($null -eq $node){
+                  try{
+                    $node=$p.SystemRoot.InsertNewChildItemEx([int16]1,$null,$true,0,0,$name,"")
+                    "INSERT_NEW_CHILD_ITEM_EX_RETURNED=$($null -ne $node)" | Add-Content -Encoding utf8 $out
+                  }catch{
+                    "INSERT_NEW_CHILD_ITEM_EX_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+                  }
+                }
+                if($null -ne $node){
+                  $node.Rename($name,1)
+                  "RENAME_AFTER_CREATE=True" | Add-Content -Encoding utf8 $out
+                  try{
+                    $node.ChangeItemClass($clsid,"",$false)
+                    "CHANGE_ITEM_CLASS_RETURNED=True" | Add-Content -Encoding utf8 $out
+                  }catch{
+                    "CHANGE_ITEM_CLASS_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+                    throw
+                  }
                 }
               }
-              if($null -eq $node){throw "Native tree item creation returned null"}
 
-              $node.Rename($name,1)
-              "RENAME_AFTER_CREATE=True" | Add-Content -Encoding utf8 $out
-              try{
-                $node.ChangeItemClass($clsid,"",$false)
-                "CHANGE_ITEM_CLASS_RETURNED=True" | Add-Content -Encoding utf8 $out
-              }catch{
-                "CHANGE_ITEM_CLASS_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
-                throw
-              }
+              if($null -eq $node){throw "Computer tree node creation returned null"}
 
+              try{$node.Rename($name,1)}catch{}
               try{"INSERTED.Name=$($node.Name)"|Add-Content -Encoding utf8 $out}catch{}
               try{"INSERTED.DisplayName=$($node.DisplayName)"|Add-Content -Encoding utf8 $out}catch{}
               try{"INSERTED.ItemType=$($node.ItemType)"|Add-Content -Encoding utf8 $out}catch{}
