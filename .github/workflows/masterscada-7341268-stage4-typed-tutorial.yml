@@ -1,0 +1,363 @@
+name: MasterSCADA 7341268 Stage 4 Typed Tutorial Probe
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage4-typed-tutorial.yml"
+  workflow_dispatch:
+
+jobs:
+  typed-tutorial:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\stage4-typed" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          "MSI_EXIT_CODE=$($p.ExitCode)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage4-typed\install.txt"
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Generate MasterSCADA typed interop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tlbimp = Get-ChildItem "C:\Program Files (x86)\Microsoft SDKs" -Recurse -Filter tlbimp.exe -File -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (!$tlbimp) { throw "tlbimp.exe not found" }
+          $dll = "$env:GITHUB_WORKSPACE\stage4-typed\MasterSCADA.Interop.dll"
+          & $tlbimp "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe" "/out:$dll" "/namespace:MasterSCADAInterop" "/silent"
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path $dll)) { throw "tlbimp failed" }
+
+      - name: Compile x86 STA tutorial inspector
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = @'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Text;
+          using System.Threading;
+          using System.Collections;
+          using System.Collections.Generic;
+          using System.Runtime.InteropServices;
+          using MasterSCADAInterop;
+
+          class Program {
+            static string outDir = Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE"), "stage4-typed");
+            static string log = Path.Combine(outDir, "typed-tutorial-tree-dump.txt");
+            static HashSet<string> seen = new HashSet<string>();
+
+            static void L(string s) { File.AppendAllText(log, s + Environment.NewLine, Encoding.UTF8); }
+
+            static string Fix(string s) {
+              if (String.IsNullOrEmpty(s)) return s ?? "";
+              try {
+                byte[] b = Encoding.GetEncoding(1251).GetBytes(s);
+                string x = Encoding.UTF8.GetString(b);
+                if (x.Any(ch => (ch >= 'А' && ch <= 'я') || ch == 'Ё' || ch == 'ё')) return x;
+              } catch {}
+              return s;
+            }
+
+            static string Safe(Func<object> f) {
+              try { object o=f(); return o==null ? "" : Fix(Convert.ToString(o)); } catch { return ""; }
+            }
+
+            static string Clsid(TreeItem item) {
+              try {
+                if (item == null || item.ClassInfoObject == null) return "";
+                return item.ClassInfoObject.clsid.ToString();
+              } catch { return ""; }
+            }
+
+            static List<TreeItem> Children(TreeItem item) {
+              var result = new List<TreeItem>();
+              if (item == null) return result;
+              uint[] masks = new uint[]{0xFFFFFFFF,0,1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192};
+              foreach(uint mask in masks) {
+                try {
+                  object raw = item.EnumChilds(mask);
+                  if (raw == null) continue;
+                  Array a = raw as Array;
+                  if (a != null) {
+                    foreach(object x in a) {
+                      TreeItem ti = x as TreeItem;
+                      if (ti != null && !result.Any(r => r.Id == ti.Id)) result.Add(ti);
+                    }
+                  } else {
+                    IEnumerable en = raw as IEnumerable;
+                    if (en != null) {
+                      foreach(object x in en) {
+                        TreeItem ti=x as TreeItem;
+                        if(ti!=null && !result.Any(r=>r.Id==ti.Id)) result.Add(ti);
+                      }
+                    }
+                  }
+                  if(result.Count>0) break;
+                } catch {}
+              }
+              return result;
+            }
+
+            static void Dump(TreeItem item, string tree, int depth, string project) {
+              if(item==null || depth>20) return;
+              string key="";
+              try { key=project+"|"+tree+"|"+item.Id+"|"+item.FullName; } catch { key=project+"|"+tree+"|"+depth+"|"+Guid.NewGuid(); }
+              if(seen.Contains(key)) return;
+              seen.Add(key);
+              string indent=new string(' ',depth*2);
+              L(indent+"["+tree+"] Name="+Safe(()=>item.Name)+
+                " | DisplayName="+Safe(()=>item.DisplayName)+
+                " | ItemType="+Safe(()=>item.ItemType)+
+                " | ObjectType="+Safe(()=>item.ObjectType)+
+                " | CLSID="+Clsid(item)+
+                " | Id="+Safe(()=>item.Id)+
+                " | FullName="+Safe(()=>item.FullName)+
+                " | Project="+project);
+              foreach(TreeItem c in Children(item)) Dump(c,tree,depth+1,project);
+            }
+
+            static bool TryOpen(string vav, EProjectLocation loc, out ApplicationClass app, out IProject p) {
+              app=null; p=null;
+              string folder=Path.GetDirectoryName(vav);
+              string baseFolder=Directory.GetParent(folder).FullName;
+              string fileId=Path.GetFileNameWithoutExtension(vav);
+              string folderId=new DirectoryInfo(folder).Name;
+              string[] ids=(fileId==folderId) ? new[]{fileId} : new[]{fileId,folderId};
+
+              foreach(string id in ids) {
+                app=new ApplicationClass();
+                L("OPEN_ATTEMPT Base="+baseFolder+" Id="+id+" VAV="+vav);
+                try {
+                  app.OpenProject(loc,baseFolder,id,false,"","",false);
+                  L("OPENPROJECT_RETURNED=True");
+                } catch(Exception e) {
+                  L("OPENPROJECT_EXCEPTION="+e.GetType().FullName+": "+e.Message);
+                }
+                Thread.Sleep(2500);
+                object cur=null;
+                try { cur=app.CurrentProject; } catch(Exception e) { L("CURRENT_PROJECT_EXCEPTION="+e.Message); }
+                p=cur as IProject;
+                if(p!=null) return true;
+
+                try {
+                  object tmp=app.OpenProjectTemp(loc,baseFolder,id,false,"","",false);
+                  L("OPENPROJECTTEMP_RETURN_TYPE="+(tmp==null?"<null>":tmp.GetType().FullName));
+                  p=tmp as IProject;
+                } catch(Exception e) {
+                  L("OPENPROJECTTEMP_EXCEPTION="+e.GetType().FullName+": "+e.Message);
+                }
+                if(p==null) {
+                  try { p=app.CurrentProject as IProject; } catch {}
+                }
+                if(p!=null) return true;
+
+                try { app.ExitScada(); } catch {}
+                try { Marshal.FinalReleaseComObject(app); } catch {}
+                app=null;
+              }
+              return false;
+            }
+
+            [STAThread]
+            static void Main() {
+              Directory.CreateDirectory(outDir);
+              File.WriteAllText(log,"MASTERScada 3.11 TYPED TUTORIAL PROBE"+Environment.NewLine,Encoding.UTF8);
+
+              L("EProjectLocation enum:");
+              foreach(string n in Enum.GetNames(typeof(EProjectLocation))) {
+                object v=Enum.Parse(typeof(EProjectLocation),n);
+                L("ENUM "+n+"="+Convert.ToInt32(v));
+              }
+
+              EProjectLocation loc=(EProjectLocation)Enum.Parse(typeof(EProjectLocation),"plFileLocation");
+              L("USING_LOCATION=plFileLocation VALUE="+Convert.ToInt32(loc));
+
+              string root=@"C:\MasterSCADA Projects\Projects\Tutorials";
+              var all=Directory.GetFiles(root,"*.vav",SearchOption.AllDirectories)
+                .Select(x=>new FileInfo(x)).ToList();
+              L("TUTORIAL_VAV_COUNT="+all.Count);
+
+              Func<string,FileInfo> pick = s => all.FirstOrDefault(x=>x.Name.IndexOf(s,StringComparison.OrdinalIgnoreCase)>=0 || x.Directory.Name.IndexOf(s,StringComparison.OrdinalIgnoreCase)>=0);
+              var selected=new List<FileInfo>();
+              foreach(string s in new[]{"Demo_Бак","Типизация","ПИД","задатчика","Demo_Интеллектуальное"}) {
+                var x=pick(s); if(x!=null && !selected.Any(q=>q.FullName==x.FullName)) selected.Add(x);
+              }
+              foreach(var x in all.OrderByDescending(x=>x.Length)) if(selected.Count<7 && !selected.Any(q=>q.FullName==x.FullName)) selected.Add(x);
+              L("SELECTED_COUNT="+selected.Count);
+
+              int opened=0;
+              foreach(var fi in selected.Take(7)) {
+                L("================================================================================");
+                L("TRY_PROJECT="+fi.FullName+" SIZE="+fi.Length);
+                ApplicationClass app=null; IProject p=null;
+                try {
+                  if(!TryOpen(fi.FullName,loc,out app,out p) || p==null) {
+                    L("OPEN_FAILED=True");
+                    continue;
+                  }
+                  opened++;
+                  L("OPEN_OK_INDEX="+opened);
+                  L("PROJECT_NAME="+Safe(()=>p.Name));
+                  L("PROJECT_PATH="+Safe(()=>p.Path));
+                  L("PROJECT_GUID="+Safe(()=>p.ProjectGUID));
+                  L("COMPUTER_COUNT="+p.ComputerCount);
+
+                  for(int i=0;i<p.ComputerCount;i++) {
+                    try {
+                      object co=p.get_Computer(i);
+                      TreeItem c=co as TreeItem;
+                      if(c!=null) {
+                        L("[ComputerDirect] Index="+i+
+                          " | Name="+Safe(()=>c.Name)+
+                          " | DisplayName="+Safe(()=>c.DisplayName)+
+                          " | ItemType="+Safe(()=>c.ItemType)+
+                          " | ObjectType="+Safe(()=>c.ObjectType)+
+                          " | CLSID="+Clsid(c)+
+                          " | Id="+Safe(()=>c.Id)+
+                          " | FullName="+Safe(()=>c.FullName)+
+                          " | Project="+fi.Name);
+                      } else L("COMPUTER_CAST_NULL["+i+"]=True");
+                    } catch(Exception e) { L("COMPUTER_ERROR["+i+"]="+e.Message); }
+                  }
+
+                  seen.Clear();
+                  try { Dump(p.SystemRoot,"System",0,fi.Name); } catch(Exception e) { L("SYSTEM_DUMP_ERROR="+e); }
+                  try {
+                    ITree ot=p.ObjTree as ITree;
+                    object ro=ot==null?null:ot.Root;
+                    Dump(ro as TreeItem,"Object",0,fi.Name);
+                  } catch(Exception e) { L("OBJECT_DUMP_ERROR="+e); }
+
+                  if(opened>=5) break;
+                } finally {
+                  if(app!=null) {
+                    try { app.ExitScada(); } catch {}
+                    try { Marshal.FinalReleaseComObject(app); } catch {}
+                  }
+                  Thread.Sleep(1200);
+                }
+              }
+              L("OPENED_PROJECTS="+opened);
+              if(opened<2) throw new Exception("Fewer than two tutorial projects opened through typed STA COM");
+              L("TYPED_TUTORIAL_OPEN=PASS");
+            }
+          }
+          '@
+
+          $srcPath="$env:GITHUB_WORKSPACE\stage4-typed\TypedTutorial.cs"
+          Set-Content -Path $srcPath -Value $src -Encoding UTF8
+          $csc = Get-ChildItem "C:\Windows\Microsoft.NET\Framework" -Recurse -Filter csc.exe -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if(!$csc){throw "x86 csc.exe not found"}
+          & $csc /nologo /platform:x86 /reference:"$env:GITHUB_WORKSPACE\stage4-typed\MasterSCADA.Interop.dll" /out:"$env:GITHUB_WORKSPACE\stage4-typed\typed-tutorial.exe" $srcPath
+          if($LASTEXITCODE -ne 0){throw "typed tutorial compile failed"}
+
+      - name: Run typed STA tutorial inspector
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Push-Location "$env:GITHUB_WORKSPACE\stage4-typed"
+          try { & .\typed-tutorial.exe } finally { Pop-Location }
+          Get-Content "$env:GITHUB_WORKSPACE\stage4-typed\typed-tutorial-tree-dump.txt"
+          if (!(Select-String -Path "$env:GITHUB_WORKSPACE\stage4-typed\typed-tutorial-tree-dump.txt" -Pattern "^TYPED_TUTORIAL_OPEN=PASS$" -Quiet)) {
+            throw "typed tutorial opening did not pass"
+          }
+
+      - name: Derive exact reference types from typed dump
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $dump="$env:GITHUB_WORKSPACE\stage4-typed\typed-tutorial-tree-dump.txt"
+          $catalog="$env:GITHUB_WORKSPACE\stage4-typed\tutorial-type-catalog.txt"
+          $verified="$env:GITHUB_WORKSPACE\stage4-typed\verified-reference-types.txt"
+
+          $rows=@();$computers=@()
+          Get-Content $dump | ForEach-Object {
+            if($_ -match '^\s*\[(System|Object)\]\s+Name=(.*?)\s+\|\s+DisplayName=(.*?)\s+\|\s+ItemType=(.*?)\s+\|\s+ObjectType=(.*?)\s+\|\s+CLSID=(.*?)\s+\|\s+Id=(.*?)\s+\|\s+FullName=(.*?)\s+\|\s+Project=(.*)$') {
+              $rows += [pscustomobject]@{Tree=$matches[1];Name=$matches[2];DisplayName=$matches[3];ItemType=$matches[4];ObjectType=$matches[5];CLSID=$matches[6];Id=$matches[7];FullName=$matches[8];Project=$matches[9]}
+            } elseif($_ -match '^\[ComputerDirect\]\s+Index=(.*?)\s+\|\s+Name=(.*?)\s+\|\s+DisplayName=(.*?)\s+\|\s+ItemType=(.*?)\s+\|\s+ObjectType=(.*?)\s+\|\s+CLSID=(.*?)\s+\|\s+Id=(.*?)\s+\|\s+FullName=(.*?)\s+\|\s+Project=(.*)$') {
+              $computers += [pscustomobject]@{Index=$matches[1];Name=$matches[2];DisplayName=$matches[3];ItemType=$matches[4];ObjectType=$matches[5];CLSID=$matches[6];Id=$matches[7];FullName=$matches[8];Project=$matches[9]}
+            }
+          }
+
+          "ACTUAL_TREE_NODES=$($rows.Count)"|Set-Content -Encoding utf8 $catalog
+          "DIRECT_COMPUTERS=$($computers.Count)"|Add-Content -Encoding utf8 $catalog
+          "UNIQUE_TYPES:"|Add-Content -Encoding utf8 $catalog
+          $rows|Where-Object{$_.CLSID}|Group-Object CLSID,ItemType,ObjectType|Sort-Object Count -Descending|ForEach-Object{
+            $x=$_.Group[0]
+            "COUNT=$($_.Count) | CLSID=$($x.CLSID) | ItemType=$($x.ItemType) | ObjectType=$($x.ObjectType) | ExampleName=$($x.Name) | Tree=$($x.Tree) | Project=$($x.Project)"|Add-Content -Encoding utf8 $catalog
+          }
+          ""|Add-Content -Encoding utf8 $catalog
+          "DIRECT_COMPUTERS:"|Add-Content -Encoding utf8 $catalog
+          $computers|ForEach-Object{
+            "Name=$($_.Name) | DisplayName=$($_.DisplayName) | ItemType=$($_.ItemType) | ObjectType=$($_.ObjectType) | CLSID=$($_.CLSID) | FullName=$($_.FullName) | Project=$($_.Project)"|Add-Content -Encoding utf8 $catalog
+          }
+          ""|Add-Content -Encoding utf8 $catalog
+          "ALL_REAL_NODES:"|Add-Content -Encoding utf8 $catalog
+          $rows|ForEach-Object{
+            "Tree=$($_.Tree) | Name=$($_.Name) | DisplayName=$($_.DisplayName) | ItemType=$($_.ItemType) | ObjectType=$($_.ObjectType) | CLSID=$($_.CLSID) | FullName=$($_.FullName) | Project=$($_.Project)"|Add-Content -Encoding utf8 $catalog
+          }
+
+          $computer=$computers|Where-Object{$_.CLSID}|Select-Object -First 1
+          if($null -eq $computer) {
+            $computer=$rows|Where-Object{
+              $_.Tree -eq "System" -and $_.CLSID -and $_.CLSID -ne '{48EC81C3-3370-11D4-AC35-B6DC66C5D90A}' -and $_.FullName -ne $_.Name
+            }|Group-Object CLSID,ItemType,ObjectType|Sort-Object Count -Descending|Select-Object -First 1|ForEach-Object{$_.Group[0]}
+          }
+
+          $tech=$rows|Where-Object{
+            $_.Tree -eq "Object" -and $_.CLSID -and $_.CLSID -ne '{B4AFE1A6-850A-4B07-A18B-1FE260E2FAB7}' -and
+            ($_.Name -match '(?i)бак|tank|контур|помещ|комнат|room|нагрев|котел|boiler|система|system' -or
+             $_.DisplayName -match '(?i)бак|tank|контур|помещ|комнат|room|нагрев|котел|boiler|система|system')
+          }|Select-Object -First 1
+          if($null -eq $tech) {
+            $tech=$rows|Where-Object{
+              $_.Tree -eq "Object" -and $_.CLSID -and $_.CLSID -ne '{B4AFE1A6-850A-4B07-A18B-1FE260E2FAB7}' -and $_.FullName -ne $_.Name
+            }|Select-Object -First 1
+          }
+
+          $analog=$rows|Where-Object{
+            $_.CLSID -and
+            ($_.Name -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|аналог|analog|ток|current|напр|voltage|задан|setpoint' -or
+             $_.DisplayName -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|аналог|analog|ток|current|напр|voltage|задан|setpoint')
+          }|Select-Object -First 1
+
+          "VERIFIED REFERENCE TYPES FROM REAL MASTERSCADA 3.11 TUTORIAL PROJECTS"|Set-Content -Encoding utf8 $verified
+          function Emit($tag,$x) {
+            if($null -eq $x){"$tag.FOUND=False"|Add-Content -Encoding utf8 $verified;return}
+            "$tag.FOUND=True"|Add-Content -Encoding utf8 $verified
+            foreach($n in @("Name","DisplayName","ItemType","ObjectType","CLSID","FullName","Project")){
+              if($x.PSObject.Properties.Name -contains $n){"$tag.$n=$($x.$n)"|Add-Content -Encoding utf8 $verified}
+            }
+          }
+          Emit "COMPUTER" $computer
+          Emit "TECH_OBJECT" $tech
+          Emit "ANALOG_VALUE" $analog
+          if($null -eq $computer){throw "Computer type not found"}
+          if($null -eq $tech){throw "Technological object type not found"}
+          if($null -eq $analog){throw "Analog/value type not found"}
+          "REFERENCE_TYPE_VALIDATION=PASS"|Add-Content -Encoding utf8 $verified
+          Get-Content $verified
+
+      - name: Upload typed tutorial evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage4-typed-tutorial
+          path: stage4-typed/**
+          if-no-files-found: error
+          retention-days: 90
