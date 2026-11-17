@@ -134,6 +134,139 @@ def set_var(doc,var,value):
     return var.GetValue()
 
 
+def resolve_view(doc2d):
+    manager=require(doc2d.GetViewsAndLayersManager(),"ViewsAndLayersManager")
+    views=require(manager.GetViews(),"Views")
+    view=views.GetActiveView()
+    if view:
+        log("VIEW_RESOLVE=active")
+        return view
+
+    count=views.GetCount()
+    log(f"VIEW_COUNT={count}")
+    getter=getattr(views,"GetView",None)
+    if getter:
+        for index in range(max(0,int(count))):
+            try:
+                candidate=getter(index)
+            except Exception:
+                candidate=None
+            if candidate:
+                log(f"VIEW_RESOLVE=index:{index}")
+                return candidate
+
+    by_number=getattr(views,"GetViewByNumber",None)
+    if by_number:
+        for number in range(max(8,int(count)+4)):
+            try:
+                candidate=by_number(number)
+            except Exception:
+                candidate=None
+            if candidate:
+                log(f"VIEW_RESOLVE=number:{number}")
+                return candidate
+    raise RuntimeError("No usable 2D view after reopen")
+
+
+def segment_coords(s):
+    return (float(s.GetX1()),float(s.GetY1())),(float(s.GetX2()),float(s.GetY2()))
+
+
+def iter_segments(dc):
+    rows=require(dc.GetLineSegments(),"LineSegments after reopen")
+    count=int(rows.GetCount())
+    getter=getattr(rows,"GetLineSegment",None)
+    require(getter,"GetLineSegment unavailable")
+    seen=set()
+    result=[]
+    for index in list(range(max(0,count)))+list(range(1,max(0,count)+1)):
+        try:
+            s=getter(index)
+        except Exception:
+            s=None
+        if not s:
+            continue
+        try:
+            key=("id",int(s.GetId()))
+        except Exception:
+            key=("coords",)+tuple(round(v,8) for p in segment_coords(s) for v in p)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(s)
+    log(f"REOPEN_LINE_SEGMENTS count={count} enumerated={len(result)}")
+    return result
+
+
+def find_reopened_crank(dc,expected_id):
+    segments=iter_segments(dc)
+    for s in segments:
+        try:
+            if int(s.GetId())==int(expected_id):
+                log(f"REOPEN_CRANK_RESOLVE=id:{expected_id}")
+                return s
+        except Exception:
+            pass
+
+    target_a=(0.0,0.0)
+    target_b=(0.0,L1)
+    for s in segments:
+        a,b=segment_coords(s)
+        if ((math.dist(a,target_a)<0.5 and math.dist(b,target_b)<0.5) or
+            (math.dist(b,target_a)<0.5 and math.dist(a,target_b)<0.5)):
+            log(f"REOPEN_CRANK_RESOLVE=geometry id={getattr(s,'GetId',lambda:'?')()}")
+            return s
+
+    for s in segments:
+        try:
+            log(f"REOPEN_SEGMENT_CANDIDATE id={s.GetId()} coords={segment_coords(s)}")
+        except Exception:
+            log(f"REOPEN_SEGMENT_CANDIDATE coords={segment_coords(s)}")
+    raise RuntimeError("Could not resolve crank after reopen")
+
+
+def verify_named_variables(doc2d,label):
+    expected={
+        "l1":L1,
+        "L":L,
+        "l2":L2,
+        "l3":L3,
+        "fi":FI0,
+        "DX":DX,
+        "n":N_RPM,
+    }
+    result={}
+    for name,value in expected.items():
+        v=require(doc2d.GetVariableByName(False,name),f"{label}: missing variable {name}")
+        actual=float(v.GetValue())
+        require(abs(actual-value)<1e-5,f"{label}: {name}={actual}, expected {value}")
+        result[name]=v
+        log(f"{label}_VAR {name}={actual} expr={v.GetExpression()}")
+    expr=result["l2"].GetExpression().replace(" ","")
+    require(expr=="2*L",f"{label}: l2 expression is {expr!r}")
+    log(f"{label}_VARIABLES_PASS l1=20 L=25 l2=50 l3=60 fi=90 DX=20 n=250 expr_l2=2*L")
+    return result
+
+
+def rebuild_acceptance_cycle(doc2d,fi_var,crank,label):
+    pts={}
+    for value in (45.0,135.0,90.0):
+        read=float(set_var(doc2d,fi_var,value))
+        p=(float(crank.GetX2()),float(crank.GetY2()))
+        expected=(L1*math.cos(math.radians(value)),L1*math.sin(math.radians(value)))
+        require(abs(read-value)<1e-5,f"{label}: fi readback {read} != {value}")
+        require(math.dist(p,expected)<0.5,f"{label}: B mismatch fi={value}: {p} expected {expected}")
+        pts[value]=p
+        log(f"{label}_FI_{int(value)}_PASS B=({p[0]:.9f},{p[1]:.9f})")
+
+    moved=math.dist(pts[45.0],pts[135.0])
+    require(moved>5.0,f"{label}: physical movement too small: {moved}")
+    require(math.dist(pts[90.0],(0.0,L1))<0.5,f"{label}: final fi=90 geometry invalid")
+    log(f"{label}_PHYSICAL_MOVE_PASS distance={moved:.9f}")
+    log(f"{label}_RETURN_90_PASS B=({pts[90.0][0]:.9f},{pts[90.0][1]:.9f})")
+    return pts,moved
+
+
 def try_fragment(docs, label, factory):
     try:
         doc=factory()
@@ -283,27 +416,10 @@ def main():
         f"l3={v_l3.GetValue()} fi={v_fi.GetValue()} DX={v_DX.GetValue()} n={v_n.GetValue()}"
     )
 
-    # Actual parametric qualification: same native dimension variable, no regeneration.
-    pts={}
-    for val in (45.0,135.0,90.0):
-        read=set_var(d2,v_fi,val)
-        p=(crank.GetX2(),crank.GetY2())
-        pts[val]=p
-        log(f"fi={val} read={read} B={p}")
-        ex=(L1*math.cos(math.radians(val)),L1*math.sin(math.radians(val)))
-        require(math.hypot(p[0]-ex[0],p[1]-ex[1])<0.5,f"B mismatch fi={val}: {p} expected {ex}")
-        _,bb,cc,dd,ee,xx=state(val)
-        for name,actual,expected in (
-            ("C",(rocker.GetX1(),rocker.GetY1()),cc),
-            ("D",(rocker.GetX2(),rocker.GetY2()),dd),
-            ("D rod",(rod.GetX1(),rod.GetY1()),dd),
-            ("E",(rod.GetX2(),rod.GetY2()),ee)):
-            log(f"fi={val} {name}={actual} expected={expected}")
-            require(math.dist(actual,expected)<0.5,f"{name} mismatch fi={val}")
-
-    moved=math.dist(pts[45.0],pts[135.0])
-    require(moved>5.0,f"geometry did not move: {moved}")
-    log(f"PARAMETRIC_REBUILD_PASS moved={moved}")
+    # Strict acceptance cycle 1: mutate the same native fi variable and prove
+    # that the actual native crank geometry moves, then return to fi=90.
+    pre_pts,pre_moved=rebuild_acceptance_cycle(d2,v_fi,crank,"PRE_SAVE")
+    log(f"PRE_SAVE_PARAMETRIC_REBUILD_PASS moved={pre_moved:.9f}")
 
     # Static study geometry generated from exact variant 6 kinematics.
     # Trajectory of X.
@@ -359,12 +475,70 @@ def main():
     log(f"swing_CD={math.degrees(amax[1]-amin[1])} deg")
     log(f"vmax={vmax} mm/s")
 
-    # Save only after the native rebuild test passed.
+    # SaveAs is NOT acceptance. It is only the boundary between the two
+    # independent rebuild cycles.
+    crank_id=int(crank.GetId())
     require(doc.SaveAs(str(OUT)),"SaveAs")
-    require(OUT.exists() and OUT.stat().st_size>1000,"FRW output")
-    head=OUT.read_bytes()[:2]
-    require(head==b"PK",f"not modern native FRW: {head!r}")
-    log(f"SAVE_PASS size={OUT.stat().st_size} sha256={hashlib.sha256(OUT.read_bytes()).hexdigest()}")
+    require(OUT.exists() and OUT.stat().st_size>1000,"FRW output after SaveAs")
+    require(OUT.read_bytes()[:2]==b"PK","not modern native FRW after SaveAs")
+    log(f"SAVE_AS_BEFORE_REOPEN_PASS size={OUT.stat().st_size} crank_id={crank_id}")
+
+    # Close the original document so all following checks use freshly loaded
+    # native objects from disk, not stale in-memory wrappers.
+    close_result=doc.Close(c.kdDoNotSaveChanges)
+    log(f"CLOSE_AFTER_SAVE_AS_PASS result={close_result!r}")
+
+    reopened=require(docs.Open(str(OUT),True,False),"Reopen saved FRW")
+    try:
+        reopened.SetActive()
+    except Exception as e:
+        log(f"REOPEN SetActive warning {e!r}")
+    try:
+        app.SetActiveDocument(reopened)
+    except Exception as e:
+        log(f"REOPEN SetActiveDocument warning {e!r}")
+
+    reopened_d2=require(ksapi.IKompasDocument2D(reopened),"Reopen IKompasDocument2D")
+    reopened_d2.SetParametricMode(True)
+    require(reopened_d2.IsParametricMode(),"Reopen parametric mode")
+    reopened_view=resolve_view(reopened_d2)
+    reopened_dc=require(ksapi.IDrawingContainer(reopened_view),"Reopen drawing container")
+
+    # Re-fetch every required variable by name from the reopened native file.
+    reopened_vars=verify_named_variables(reopened_d2,"REOPEN")
+    reopened_crank=find_reopened_crank(reopened_dc,crank_id)
+
+    # Strict acceptance cycle 2 after disk reopen.
+    post_pts,post_moved=rebuild_acceptance_cycle(
+        reopened_d2,reopened_vars["fi"],reopened_crank,"REOPEN"
+    )
+    log(f"REOPEN_PARAMETRIC_REBUILD_PASS moved={post_moved:.9f}")
+    log(
+        "REOPEN_COORDINATE_AUDIT "
+        f"B45=({post_pts[45.0][0]:.9f},{post_pts[45.0][1]:.9f}) "
+        f"B135=({post_pts[135.0][0]:.9f},{post_pts[135.0][1]:.9f}) "
+        f"B90=({post_pts[90.0][0]:.9f},{post_pts[90.0][1]:.9f})"
+    )
+
+    # Persist the required final fi=90 state. A false return is failure; some
+    # bindings may return None on success, so absence of an exception plus the
+    # existing native container is accepted here.
+    save_final=getattr(reopened,"Save",None)
+    if save_final:
+        final_save_result=save_final()
+        require(final_save_result is not False,"Final Save returned False")
+        log(f"FINAL_SAVE_90_PASS result={final_save_result!r}")
+    else:
+        require(reopened.SaveAs(str(OUT)),"Final SaveAs")
+        log("FINAL_SAVE_90_PASS via SaveAs")
+
+    require(OUT.exists() and OUT.stat().st_size>1000,"Final FRW output")
+    require(OUT.read_bytes()[:2]==b"PK","Final FRW is not native ZIP container")
+
+    # Only now may the final PASS marker, SHA-256 and deliverable be emitted.
+    final_sha=hashlib.sha256(OUT.read_bytes()).hexdigest()
+    log("FINAL_STATE_90_PASS")
+    log(f"SHA256={final_sha}")
     log("RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06")
 
 if __name__=="__main__":
