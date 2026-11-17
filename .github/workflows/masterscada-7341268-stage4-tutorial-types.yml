@@ -164,14 +164,14 @@ jobs:
           }
 
           $all=@(Get-ChildItem $root -Recurse -Filter *.vav -File)
-          $preferred=@(
-            $all | Where-Object {$_.BaseName -eq "Demo_Бак"} | Select-Object -First 1,
-            $all | Where-Object {$_.BaseName -eq "Demo"} | Select-Object -First 1,
-            $all | Where-Object {$_.BaseName -match "Интеллектуальное"} | Select-Object -First 1,
-            $all | Where-Object {$_.BaseName -match "ПИД"} | Select-Object -First 1,
-            $all | Where-Object {$_.BaseName -match "задатчика"} | Select-Object -First 1,
-            $all | Sort-Object Length -Descending | Select-Object -First 3
-          ) | Where-Object {$null -ne $_} | Select-Object -Unique
+          $preferred=@()
+          $preferred += @($all | Where-Object {$_.BaseName -eq "Demo_Бак"} | Select-Object -First 1)
+          $preferred += @($all | Where-Object {$_.BaseName -eq "Demo"} | Select-Object -First 1)
+          $preferred += @($all | Where-Object {$_.BaseName -match "Интеллектуальное"} | Select-Object -First 1)
+          $preferred += @($all | Where-Object {$_.BaseName -match "ПИД"} | Select-Object -First 1)
+          $preferred += @($all | Where-Object {$_.BaseName -match "задатчика"} | Select-Object -First 1)
+          $preferred += @($all | Sort-Object Length -Descending | Select-Object -First 3)
+          $preferred = @($preferred | Where-Object {$null -ne $_} | Sort-Object FullName -Unique)
 
           "SELECTED_PROJECTS=$($preferred.Count)" | Set-Content -Encoding utf8 $out
           $opened=0
