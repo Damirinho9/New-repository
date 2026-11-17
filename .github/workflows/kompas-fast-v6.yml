@@ -264,14 +264,7 @@ jobs:
             BASE=$(find result -maxdepth 1 -type f -name '*BASE.frw' -print -quit)
             test -n "$BASE"
             test -s "$BASE"
-            python3 - "$BASE" <<'PY'
-            import pathlib, sys, zipfile
-            p=pathlib.Path(sys.argv[1])
-            assert zipfile.is_zipfile(p)
-            with zipfile.ZipFile(p) as z:
-                assert "Contents" in z.namelist() and "FileInfo" in z.namelist()
-            print("EXISTING_FRW_VERIFY_PASS", p.stat().st_size, p)
-            PY
+            python3 -c 'import sys,zipfile; p=sys.argv[1]; assert zipfile.is_zipfile(p); assert {"Contents","FileInfo"}.issubset(set(zipfile.ZipFile(p).namelist())); print("EXISTING_FRW_VERIFY_PASS", p)' "$BASE"
             exit 0
           fi
           OUT=result/01_Mekhanizm_Variant_06_PARAMETRIC.frw
