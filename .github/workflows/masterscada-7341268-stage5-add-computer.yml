@@ -286,7 +286,9 @@ jobs:
           "STAGE5_ADD_COMPUTER=PASS" | Set-Content -Encoding utf8 $status
           "COMPUTER_CLSID={33A04CE5-4692-11D4-B153-87EB14408E58}" | Add-Content -Encoding utf8 $status
           "COMPUTER_NAME=АРМ оператора" | Add-Content -Encoding utf8 $status
-          "COMPUTER_COUNT=$((Select-String $reopen '^COMPUTER_COUNT=').Line.Split('=')[1])" | Add-Content -Encoding utf8 $status
+          $countLine=(Select-String -Path $reopen -Pattern '^COMPUTER_COUNT=' | Select-Object -First 1).Line
+          if(!$countLine){throw "COMPUTER_COUNT line missing from fresh reopen evidence"}
+          "COMPUTER_COUNT=$($countLine.Split('=')[1])" | Add-Content -Encoding utf8 $status
           "VAV_SIZE=$((Get-Item $vav).Length)" | Add-Content -Encoding utf8 $status
           "VAV_SHA256=$((Get-FileHash $vav -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $status
           "SAVE_CONFIRMED=True" | Add-Content -Encoding utf8 $status
