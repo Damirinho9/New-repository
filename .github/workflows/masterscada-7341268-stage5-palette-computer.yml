@@ -104,7 +104,57 @@ jobs:
             try{"PALETTE_SELECTED_OBJECT=$($palette.SelectedObject)"|Add-Content -Encoding utf8 $out}catch{}
             try{"PALETTE_LIBRARY_COUNT=$($palette.LibraryCount)"|Add-Content -Encoding utf8 $out}catch{}
 
-            foreach($candidate in @("Компьютер","Vavobj.Computer.1",$clsid)){
+            for($li=0;$li -lt [int]$palette.LibraryCount;$li++){
+              try{"PALETTE_LIBRARY[$li]=$($palette.get_LibraryName($li))"|Add-Content -Encoding utf8 $out}catch{
+                "PALETTE_LIBRARY[$li].ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+              }
+            }
+
+            $paletteNames=New-Object System.Collections.Generic.List[string]
+            $catTree=$null
+            try{$catTree=$palette.CatidTree}catch{}
+            "CATIDTREE_PRESENT=$($null -ne $catTree)"|Add-Content -Encoding utf8 $out
+            if($null -ne $catTree){
+              try{
+                $catEnum=$null
+                $catTree.EnumImplCategoriesOfClass([guid]$clsid,[ref]$catEnum)
+                "ENUM_IMPL_CATEGORIES_RETURNED=$($null -ne $catEnum)"|Add-Content -Encoding utf8 $out
+                if($null -ne $catEnum){
+                  for($ci=0;$ci -lt 64;$ci++){
+                    $catGuid=[guid]::Empty
+                    [uint32]$fetched=0
+                    $catEnum.RemoteNext([uint32]1,[ref]$catGuid,[ref]$fetched)
+                    if($fetched -eq 0){break}
+                    $catName="";$catHelp=""
+                    $catTree.GetCategory($catGuid,[ref]$catName,[ref]$catHelp)
+                    "CATEGORY[$ci].GUID=$catGuid"|Add-Content -Encoding utf8 $out
+                    "CATEGORY[$ci].NAME=$catName"|Add-Content -Encoding utf8 $out
+                    "CATEGORY[$ci].HELP=$catHelp"|Add-Content -Encoding utf8 $out
+                    try{
+                      $objEnum=$palette.EnumCategoryObjects($catName)
+                      "CATEGORY[$ci].OBJECT_ENUM=$($null -ne $objEnum)"|Add-Content -Encoding utf8 $out
+                      if($null -ne $objEnum){
+                        for($oi=0;$oi -lt 256;$oi++){
+                          $objName=""
+                          [uint32]$of=0
+                          $objEnum.RemoteNext([uint32]1,[ref]$objName,[ref]$of)
+                          if($of -eq 0){break}
+                          "CATEGORY[$ci].OBJECT[$oi]=$objName"|Add-Content -Encoding utf8 $out
+                          if($objName -and !$paletteNames.Contains($objName)){$paletteNames.Add($objName)}
+                        }
+                      }
+                    }catch{
+                      "CATEGORY[$ci].ENUM_OBJECTS_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+                    }
+                  }
+                }
+              }catch{
+                "CATALOG_ENUM_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+              }
+            }
+
+            $candidates=@($paletteNames.ToArray()) + @("Компьютер","Vavobj.Computer.1",$clsid)
+            foreach($candidate in $candidates){
               if($null -ne $paletteObject){break}
               try{
                 $x=$palette.GetObject($candidate)
@@ -118,7 +168,7 @@ jobs:
                 "PALETTE_GETOBJECT[$candidate].ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
               }
             }
-            if($null -eq $paletteObject){throw "ObjPalette.GetObject did not return Computer"}
+            if($null -eq $paletteObject){throw "ObjPalette catalog did not return Computer object"}
 
             try{$p.CurrentItem=$p.SystemRoot;"PROJECT_CURRENT_SET=True"|Add-Content -Encoding utf8 $out}catch{
               "PROJECT_CURRENT_SET_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out
