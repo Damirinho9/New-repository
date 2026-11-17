@@ -62,7 +62,7 @@ jobs:
           "WORK_SHA256_BEFORE=$((Get-FileHash $vav -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage5-computer\source.txt"
 
       - name: Add real Computer node through COM tree API and save
-        shell: pwsh
+        shell: C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference="Stop"
           $out="$env:GITHUB_WORKSPACE\stage5-computer\mutation.txt"
@@ -195,7 +195,7 @@ jobs:
           if(!(Select-String -Path $out -Pattern "^MUTATION=PASS$" -Quiet)){throw "mutation did not pass"}
 
       - name: Fresh reopen and verify saved Computer
-        shell: pwsh
+        shell: C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& '{0}'"
         run: |
           $ErrorActionPreference="Stop"
           $out="$env:GITHUB_WORKSPACE\stage5-computer\fresh-reopen.txt"
