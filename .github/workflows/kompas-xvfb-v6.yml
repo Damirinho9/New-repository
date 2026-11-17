@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload verified native FRW
         uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: 7335493-work1-variant06-native-xvfb
           if-no-files-found: ignore
