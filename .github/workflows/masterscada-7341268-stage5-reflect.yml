@@ -1,0 +1,91 @@
+name: MasterSCADA 7341268 Stage 5 API Reflection
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage5-reflect.yml"
+  workflow_dispatch:
+
+jobs:
+  reflect:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\stage5-reflect" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Generate interop and reflect relevant APIs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $tlbimp=Get-ChildItem "C:\Program Files (x86)\Microsoft SDKs" -Recurse -Filter tlbimp.exe -File | Select-Object -First 1 -ExpandProperty FullName
+          if(!$tlbimp){throw "tlbimp missing"}
+          $dll="$env:GITHUB_WORKSPACE\stage5-reflect\MasterSCADA.Interop.dll"
+          & $tlbimp "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe" "/out:$dll" "/namespace:MasterSCADAInterop" "/silent"
+          if($LASTEXITCODE -ne 0){throw "tlbimp failed"}
+
+          $src=@'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Reflection;
+          using System.Text;
+
+          class P {
+            static void Main() {
+              string asmPath=Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE"),"stage5-reflect","MasterSCADA.Interop.dll");
+              string outPath=Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE"),"stage5-reflect","reflection.txt");
+              var asm=Assembly.LoadFrom(asmPath);
+              var sb=new StringBuilder();
+
+              foreach(var t in asm.GetTypes().OrderBy(x=>x.FullName)) {
+                string n=t.Name.ToLowerInvariant();
+                if(n.Contains("treeitem") || n.Contains("tree") || n.Contains("classinfo") || n.Contains("project") || n.Contains("computer")) {
+                  sb.AppendLine("=== TYPE "+t.FullName+" kind="+(t.IsInterface?"interface":t.IsClass?"class":t.IsEnum?"enum":"other")+" ===");
+                  foreach(var p in t.GetProperties(BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static)) {
+                    sb.AppendLine("PROP "+p.PropertyType.FullName+" "+p.Name);
+                  }
+                  foreach(var m in t.GetMethods(BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static)
+                    .Where(m=>!m.IsSpecialName)
+                    .OrderBy(m=>m.Name)) {
+                    sb.Append("METHOD "+m.ReturnType.FullName+" "+m.Name+"(");
+                    sb.Append(String.Join(", ",m.GetParameters().Select(p=>p.ParameterType.FullName+" "+p.Name+(p.IsOptional?" [optional]":""))));
+                    sb.AppendLine(")");
+                  }
+                  sb.AppendLine();
+                }
+              }
+              File.WriteAllText(outPath,sb.ToString(),Encoding.UTF8);
+              Console.WriteLine(sb.ToString());
+            }
+          }
+          '@
+          Set-Content "$env:GITHUB_WORKSPACE\stage5-reflect\Reflect.cs" $src -Encoding UTF8
+          $csc=Get-ChildItem "C:\Windows\Microsoft.NET\Framework" -Recurse -Filter csc.exe -File | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          & $csc /nologo /platform:x86 /out:"$env:GITHUB_WORKSPACE\stage5-reflect\reflect.exe" "$env:GITHUB_WORKSPACE\stage5-reflect\Reflect.cs"
+          if($LASTEXITCODE -ne 0){throw "compile failed"}
+          & "$env:GITHUB_WORKSPACE\stage5-reflect\reflect.exe"
+
+      - name: Upload reflection
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-reflection
+          path: stage5-reflect/**
+          if-no-files-found: error
+          retention-days: 90
