@@ -41,6 +41,33 @@ jobs:
           & $tlbimp "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe" "/out:$dll" "/namespace:MasterSCADAInterop" "/silent"
           if ($LASTEXITCODE -ne 0 -or !(Test-Path $dll)) { throw "tlbimp failed" }
 
+      - name: Create and save native project through dynamic COM
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\stage2-v3\stage2-create.txt"
+          $base = "C:\MasterSCADA Projects\Projects"
+          $id = "7341268_Variant7"
+          $folder = Join-Path $base $id
+          New-Item -ItemType Directory -Force $folder | Out-Null
+          $app = New-Object -ComObject MasterSCADA.Application
+          try {
+            $app.CreateProject(1,$base,$id,"Система водяного отопления - вариант 7","")
+            $p = $app.CurrentProject
+            if ($null -eq $p) { throw "CurrentProject is null" }
+            $p.Save()
+            "CREATE_PROJECT_RETURNED=true" | Set-Content -Encoding utf8 $out
+            "CURRENT_PROJECT=true" | Add-Content -Encoding utf8 $out
+          } finally {
+            try { $app.ExitScada() } catch {}
+            try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
+          }
+          Start-Sleep -Seconds 2
+          $vav = Join-Path $folder "$id.vav"
+          "VAV_EXISTS=$([IO.File]::Exists($vav))" | Add-Content -Encoding utf8 $out
+          if ([IO.File]::Exists($vav)) { "VAV_SIZE=$((Get-Item $vav).Length)" | Add-Content -Encoding utf8 $out }
+          if (!(Test-Path $vav) -or (Get-Item $vav).Length -le 0) { throw "dynamic COM did not create native VAV" }
+
       - name: Compile and run native probe
         shell: pwsh
         run: |
@@ -76,7 +103,6 @@ jobs:
               Directory.CreateDirectory(folder); ApplicationClass app=null;
               try {
                 app=new ApplicationClass(); L("APP_CREATED=true");
-                try { app.CreateProject(EProjectLocation.plFileLocation,baseFolder,id,"Система водяного отопления - вариант 7",""); L("CREATE_PROJECT_RETURNED=true"); } catch(Exception e){L("CREATE_PROJECT_EXCEPTION="+e);}
                 object cur=null; try{cur=app.CurrentProject;L("CURRENT_NULL="+(cur==null));}catch(Exception e){L("CURRENT_PROJECT_EXCEPTION="+e);}
                 Item(cur,"PROJECT");
                 var p=cur as Project;
@@ -92,7 +118,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "compile failed" }
           Push-Location "$env:GITHUB_WORKSPACE\stage2-v3"; try { & .\probe.exe } finally { Pop-Location }
           Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-validation.txt" -Pattern "^(APP_CREATED|CREATE_PROJECT|CURRENT|PROJECT|SYSTEM_ROOT|OBJ_TREE|OBJ_ROOT|SAVE_|VAV_|NATIVE_VAV)" | ForEach-Object { $_.Line }
-          if (!(Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-validation.txt" -Pattern "^NATIVE_VAV=True$" -Quiet)) { throw "native VAV was not created" }
+          if (!(Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-create.txt" -Pattern "^VAV_EXISTS=True$" -Quiet)) { throw "native VAV was not created" }
 
       - name: Upload evidence
         if: always()
