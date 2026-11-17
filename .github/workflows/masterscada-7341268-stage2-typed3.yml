@@ -80,7 +80,7 @@ jobs:
                 object cur=null; try{cur=app.CurrentProject;L("CURRENT_NULL="+(cur==null));}catch(Exception e){L("CURRENT_PROJECT_EXCEPTION="+e);}
                 Item(cur,"PROJECT");
                 var p=cur as Project;
-                if(p!=null){Item(p.SystemRoot,"SYSTEM_ROOT");Item(p.ObjTree,"OBJ_TREE");try{Item(p.ObjTree.Root,"OBJ_ROOT");}catch(Exception e){L("OBJ_ROOT_EXCEPTION="+e);}try{p.Save();L("SAVE_SUCCESS=true");}catch(Exception e){L("SAVE_EXCEPTION="+e);}}
+                if(p!=null){Item(p.SystemRoot,"SYSTEM_ROOT");var ot=p.ObjTree;Item(ot,"OBJ_TREE");try{var rp=ot.GetType().GetProperty("Root");Item(rp==null?null:rp.GetValue(ot,null),"OBJ_ROOT");}catch(Exception e){L("OBJ_ROOT_EXCEPTION="+e);}try{p.Save();L("SAVE_SUCCESS=true");}catch(Exception e){L("SAVE_EXCEPTION="+e);}}
               } finally {if(app!=null){try{app.ExitScada();}catch{}try{Marshal.FinalReleaseComObject(app);}catch{}}}
               System.Threading.Thread.Sleep(1500); L("VAV_EXISTS="+File.Exists(target)); if(File.Exists(target)){L("VAV_SIZE="+new FileInfo(target).Length);using(var fs=File.OpenRead(target))using(var sha=System.Security.Cryptography.SHA256.Create())L("VAV_SHA256="+BitConverter.ToString(sha.ComputeHash(fs)).Replace("-",""));} L("NATIVE_VAV="+(File.Exists(target)&&new FileInfo(target).Length>0));
             }
