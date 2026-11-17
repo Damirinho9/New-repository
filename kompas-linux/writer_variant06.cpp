@@ -173,9 +173,8 @@ static bool build(){
 
   auto docs=app.GetDocuments(); if(!docs){log("FAIL docs");return false;}
 
-  // Existing native FRW audit mode. The workflow decodes the customer's
-  // archived file before KOMPAS starts. Open it directly and inspect the
-  // already initialized document without creating a Fragment or adding probes.
+  // Existing native FRW mutation audit. The workflow starts KOMPAS
+  // with the decoded customer FRW as its command-line document.
   const std::wstring existingPath=L"/tmp/01_Mekhanizm_Variant_06_BASE.frw";
   {
     std::ifstream in("/tmp/01_Mekhanizm_Variant_06_BASE.frw", std::ios::binary);
@@ -183,9 +182,7 @@ static bool build(){
       log("EXISTING_FRW_FILE_PRESENT");
       auto existing=app.GetActiveDocument();
       log(std::string("EXISTING_FRW_ACTIVE_DOC=")+(existing?"1":"0"));
-      if(!existing){
-        existing=docs->Open(existingPath,true,false);
-      }
+      if(!existing) existing=docs->Open(existingPath,true,false);
       log(std::string("EXISTING_FRW_DOC=")+(existing?"1":"0"));
       if(existing){
         try{
@@ -195,43 +192,59 @@ static bool build(){
           log(std::string("EXISTING_FRW_2D=")+(edoc?"1":"0"));
           if(edoc){
             edoc->SetParametricMode(true);
-            log("EXISTING_FRW_PARAMETRIC_MODE_SET");
             auto vm=edoc->GetViewsAndLayersManager();
             auto views=vm?vm->GetViews():IViewsPtr{};
             auto ev=views?views->GetActiveView():IViewPtr{};
             IDrawingContainerPtr edc=ev;
             ISymbols2DContainerPtr esc=ev;
             auto els=edc?edc->GetLineSegments():ILineSegmentsPtr{};
+            int lineCount=els?els->GetCount():-1;
             log("EXISTING_FRW_VIEW="+std::string(ev?"1":"0")+
                 " DRAWING="+(edc?"1":"0")+
                 " SYMBOLS="+(esc?"1":"0")+
-                " LINE_COLLECTION="+(els?"1":"0"));
-            log("EXISTING_FRW_VARIABLE_COUNT="+std::to_string(edoc->GetVariablesCount(false)));
-            auto vl1=edoc->GetVariableByName(false,L"l1");
-            auto vl2=edoc->GetVariableByName(false,L"l2");
-            auto vl3=edoc->GetVariableByName(false,L"l3");
-            auto vL=edoc->GetVariableByName(false,L"L");
-            auto vfi=edoc->GetVariableByName(false,L"fi");
-            log(std::string("EXISTING_FRW_VARS l1=")+(vl1?"1":"0")+
-                " l2="+(vl2?"1":"0")+" l3="+(vl3?"1":"0")+
-                " L="+(vL?"1":"0")+" fi="+(vfi?"1":"0"));
-            bool rebuilt45=false,rebuilt90=false;
-            if(vfi){
-              vfi->SetValue(45.0);
-              bool uv45=edoc->UpdateVariables();
-              rebuilt45=edoc->CompleteRebuildDocument();
-              log("EXISTING_FRW_FI45 update="+std::to_string(uv45)+
-                  " rebuild="+std::to_string(rebuilt45));
-              vfi->SetValue(FI0);
-              bool uv90=edoc->UpdateVariables();
-              rebuilt90=edoc->CompleteRebuildDocument();
-              log("EXISTING_FRW_FI90 update="+std::to_string(uv90)+
-                  " rebuild="+std::to_string(rebuilt90));
+                " LINE_COLLECTION="+(els?"1":"0")+
+                " LINE_COUNT="+std::to_string(lineCount));
+            if(!els){ log("EXISTING_FRW_LINE_ADD_FAIL_NO_COLLECTION"); return false; }
+
+            auto probe=els->Add();
+            if(!probe){ log("EXISTING_FRW_LINE_ADD_FAIL"); return false; }
+            probe->SetX1(1000.0); probe->SetY1(1000.0);
+            probe->SetX2(1020.0); probe->SetY2(1000.0);
+            probe->SetStyle(ksCSConstruction);
+            if(!probe->Update()){ log("EXISTING_FRW_LINE_ADD_FAIL_UPDATE"); return false; }
+            log("EXISTING_FRW_LINE_ADD_PASS");
+            double x20=probe->GetX2(), y20=probe->GetY2();
+
+            auto probeDim=lin_dim(esc,probe,L"probe_len",20.0,0,15.0);
+            if(!probeDim){ log("EXISTING_FRW_VARIABLE_CREATE_FAIL_DIM"); return false; }
+            auto probeVar=edoc->GetVariableByName(false,L"probe_len");
+            if(!probeVar){ log("EXISTING_FRW_VARIABLE_CREATE_FAIL_LOOKUP"); return false; }
+            log("EXISTING_FRW_VARIABLE_CREATE_PASS");
+
+            probeVar->SetValue(30.0);
+            bool uv30=edoc->UpdateVariables();
+            bool rb30=edoc->CompleteRebuildDocument();
+            double x30=probe->GetX2(), y30=probe->GetY2();
+            log("EXISTING_FRW_PROBE_20="+std::to_string(x20)+","+std::to_string(y20)+
+                " PROBE_30="+std::to_string(x30)+","+std::to_string(y30)+
+                " update="+std::to_string(uv30)+" rebuild="+std::to_string(rb30));
+            double moved=std::hypot(x30-x20,y30-y20);
+            if(!uv30 || !rb30 || moved<5.0){
+              log("EXISTING_FRW_PARAMETRIC_MUTATION_FAIL");
+              return false;
             }
-            if(!vfi || (rebuilt45 && rebuilt90)){
-              log("EXISTING_FRW_OPEN_PASS");
-              return true;
+            log("EXISTING_FRW_PARAMETRIC_MUTATION_PASS moved="+std::to_string(moved));
+            probeVar->SetValue(20.0);
+            edoc->UpdateVariables();
+            edoc->CompleteRebuildDocument();
+            const std::wstring out=L"/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw";
+            if(!existing->SaveAs(out)){
+              log("EXISTING_FRW_PARAMETRIC_SAVE_FAIL");
+              return false;
             }
+            log("EXISTING_FRW_PARAMETRIC_SAVE_PASS");
+            log("RESULT=EXISTING_FRW_PARAMETRIC_MUTATION_PASS");
+            return true;
           }
         }catch(...){
           log("EXISTING_FRW_AUDIT_EXCEPTION");
