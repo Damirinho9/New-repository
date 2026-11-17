@@ -1,0 +1,78 @@
+name: MasterSCADA 7341268 Stage 4 Tutorial Native Files
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage4-tutorial-files.yml"
+  workflow_dispatch:
+
+jobs:
+  tutorial-files:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\tutorial-files" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Copy selected official tutorial projects
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $srcRoot = "C:\MasterSCADA Projects\Projects\Tutorials"
+          $dstRoot = "$env:GITHUB_WORKSPACE\tutorial-files"
+          $names = @(
+            "Demo_Бак",
+            "Demo",
+            "Типизация_демо",
+            "ПИД-регулятор",
+            "Пример задатчика",
+            "Demo_Интеллектуальное Здание"
+          )
+          foreach($name in $names) {
+            $src = Join-Path $srcRoot $name
+            if(Test-Path $src) {
+              Copy-Item $src (Join-Path $dstRoot $name) -Recurse -Force
+            }
+          }
+          Get-ChildItem $dstRoot -Recurse -File | ForEach-Object {
+            "$($_.Length)`t$($_.FullName)`t$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)"
+          } | Set-Content -Encoding utf8 "$dstRoot\manifest.txt"
+
+      - name: Export relevant class registry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $out="$env:GITHUB_WORKSPACE\tutorial-files\class-registry.txt"
+          "=== MasterSCADA-related CLSID registrations ===" | Set-Content -Encoding utf8 $out
+          Get-ChildItem "Registry::HKEY_CLASSES_ROOT\CLSID" -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+              $p=Get-ItemProperty $_.PSPath -ErrorAction Stop
+              $d=[string]$p.'(default)'
+              if($d -match '(?i)MasterSCADA|InSAT|МастерСКАДА|компьют|объект|переменн|значен') {
+                "$($_.PSChildName)`t$d" | Add-Content -Encoding utf8 $out
+              }
+            } catch {}
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-official-tutorial-projects
+          path: tutorial-files/**
+          if-no-files-found: error
+          retention-days: 90
