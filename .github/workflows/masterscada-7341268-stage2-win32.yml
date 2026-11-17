@@ -152,7 +152,9 @@ jobs:
             foreach($nm in @("Компьютер","Объект","Значение","Переменная","Computer","Object","Value")){
               try{
                 $po=$pal.GetObject($nm)
-                "GET[$nm] NULL=$($null -eq $po) TYPE=$(if($po){$po.GetType().FullName}else{""})"|Add-Content -Encoding utf8 $paletteLog
+                $poType="<null>"
+                if($null -ne $po){$poType=$po.GetType().FullName}
+                "GET[$nm] NULL=$($null -eq $po) TYPE=$poType"|Add-Content -Encoding utf8 $paletteLog
                 if($po){
                   $po|Get-Member -Force|Out-String -Width 320|Add-Content -Encoding utf8 $paletteLog
                   foreach($pr in @("Name","DisplayName","CLSID","clsid","ClassInfoObject","ObjectType","ItemType")){
