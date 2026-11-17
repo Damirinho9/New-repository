@@ -1,0 +1,232 @@
+name: MasterSCADA 7341268 Stage 2 Win32 Build
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-win32.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\mswin32" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Create project and add native nodes through Win32 menu commands
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $log="$env:GITHUB_WORKSPACE\mswin32\build.txt"
+          $menuLog="$env:GITHUB_WORKSPACE\mswin32\menu.txt"
+
+          Add-Type @'
+          using System;
+          using System.Text;
+          using System.Runtime.InteropServices;
+          public static class NativeMenu7341268 {
+            [DllImport("user32.dll")] public static extern IntPtr GetMenu(IntPtr hWnd);
+            [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr hMenu);
+            [DllImport("user32.dll")] public static extern IntPtr GetSubMenu(IntPtr hMenu, int nPos);
+            [DllImport("user32.dll")] public static extern uint GetMenuItemID(IntPtr hMenu, int nPos);
+            [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr hMenu, uint uIDItem, StringBuilder lpString, int cchMax, uint flags);
+            [DllImport("user32.dll")] public static extern uint GetMenuState(IntPtr hMenu, uint uId, uint flags);
+            [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+            [DllImport("user32.dll")] public static extern bool DrawMenuBar(IntPtr hWnd);
+          }
+          '@
+
+          function Get-MenuText([IntPtr]$menu,[int]$pos){
+            $sb=New-Object System.Text.StringBuilder 512
+            [void][NativeMenu7341268]::GetMenuString($menu,[uint32]$pos,$sb,$sb.Capacity,0x400)
+            return $sb.ToString().Replace("&","").Trim()
+          }
+          function Dump-Menu([IntPtr]$menu,[string]$prefix){
+            $cnt=[NativeMenu7341268]::GetMenuItemCount($menu)
+            for($i=0;$i -lt $cnt;$i++){
+              $txt=Get-MenuText $menu $i
+              $id=[NativeMenu7341268]::GetMenuItemID($menu,$i)
+              $state=[NativeMenu7341268]::GetMenuState($menu,[uint32]$i,0x400)
+              "$prefix POS=$i ID=$id STATE=$state TEXT=$txt"|Add-Content -Encoding utf8 $menuLog
+              $sub=[NativeMenu7341268]::GetSubMenu($menu,$i)
+              if($sub -ne [IntPtr]::Zero){Dump-Menu $sub ($prefix+"  ")}
+            }
+          }
+          function Find-Command([IntPtr]$menu,[string]$exact){
+            $cnt=[NativeMenu7341268]::GetMenuItemCount($menu)
+            for($i=0;$i -lt $cnt;$i++){
+              $txt=Get-MenuText $menu $i
+              $sub=[NativeMenu7341268]::GetSubMenu($menu,$i)
+              if($sub -ne [IntPtr]::Zero){
+                $r=Find-Command $sub $exact
+                if($r -ge 0){return $r}
+              }
+              $id=[NativeMenu7341268]::GetMenuItemID($menu,$i)
+              if($txt -eq $exact -and $id -ne 0xFFFFFFFF){return [int64]$id}
+            }
+            return -1
+          }
+          function Send-Command([IntPtr]$hwnd,[int64]$id,[string]$name){
+            if($id -lt 0){ "$name COMMAND_NOT_FOUND"|Add-Content -Encoding utf8 $log; return $false }
+            "$name COMMAND_ID=$id"|Add-Content -Encoding utf8 $log
+            [void][NativeMenu7341268]::SendMessage($hwnd,0x111,[IntPtr]$id,[IntPtr]::Zero)
+            Start-Sleep -Seconds 2
+            return $true
+          }
+
+          $projectsFolder="C:\MasterSCADA Projects\Projects"
+          $id="7341268_Variant7"
+          $folder=Join-Path $projectsFolder $id
+          if(Test-Path $folder){Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue}
+
+          $watchLog="$env:GITHUB_WORKSPACE\mswin32\modal.txt"
+          $watcher=Start-Job -ScriptBlock {
+            param($watchLog)
+            $ws=New-Object -ComObject WScript.Shell
+            for($i=0;$i -lt 80;$i++){
+              Get-Process -ErrorAction SilentlyContinue | Where-Object {$_.ProcessName -match "MasterSCADA"} | ForEach-Object {
+                if($_.MainWindowTitle){
+                  "$(Get-Date -Format o) PID=$($_.Id) TITLE=$($_.MainWindowTitle)"|Add-Content -Encoding utf8 $watchLog
+                  if($_.MainWindowTitle -eq "MasterSCADA"){
+                    if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 150;$ws.SendKeys("{ENTER}")}
+                  }
+                }
+              }
+              Start-Sleep -Milliseconds 500
+            }
+          } -ArgumentList $watchLog
+
+          $app=New-Object -ComObject MasterSCADA.Application
+          try{
+            $app.CreateProject(1,$projectsFolder,$id,"Система водяного отопления - вариант 7","")
+            Start-Sleep -Seconds 3
+            $p=$app.CurrentProject
+            if($null -eq $p){throw "CurrentProject null"}
+            "CREATE=true PROJECT=$($p.Name) PATH=$($p.Path)"|Out-File -Encoding utf8 $log
+            "INITIAL_COMPUTERS=$($p.ComputerCount)"|Add-Content -Encoding utf8 $log
+            $hwnd=[IntPtr]([int64]$app.MainWindowHandle)
+            $menu=[NativeMenu7341268]::GetMenu($hwnd)
+            "HWND=$hwnd MENU=$menu"|Add-Content -Encoding utf8 $log
+            Dump-Menu $menu ""
+
+            # Computer
+            $p.CurrentItem=$p.SystemRoot
+            [void][NativeMenu7341268]::DrawMenuBar($hwnd)
+            Start-Sleep -Milliseconds 500
+            $cmdComputer=Find-Command $menu "Компьютер"
+            [void](Send-Command $hwnd $cmdComputer "COMPUTER")
+            "COMPUTERS_AFTER=$($p.ComputerCount)"|Add-Content -Encoding utf8 $log
+            if($p.ComputerCount -gt 0){
+              $comp=$p.Computer(0)
+              try{$comp.Rename("Компьютер системы",1)}catch{}
+              "COMPUTER0 NAME=$($comp.Name) DISPLAY=$($comp.DisplayName) OBJTYPE=$($comp.ObjectType) ITEMTYPE=$($comp.ItemType) CLSID=$($comp.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $log
+            }
+
+            # Object
+            $objRoot=$p.ObjTree.Root
+            "OBJROOT_BEFORE_COUNT=$($objRoot.Count)"|Add-Content -Encoding utf8 $log
+            $p.CurrentItem=$objRoot
+            [void][NativeMenu7341268]::DrawMenuBar($hwnd)
+            Start-Sleep -Milliseconds 500
+            $cmdObject=Find-Command $menu "Объект"
+            [void](Send-Command $hwnd $cmdObject "OBJECT")
+            "OBJROOT_AFTER_COUNT=$($objRoot.Count)"|Add-Content -Encoding utf8 $log
+
+            $obj=$null
+            try{
+              foreach($ch in $objRoot){
+                "OBJ_CHILD NAME=$($ch.Name) DISPLAY=$($ch.DisplayName) OBJTYPE=$($ch.ObjectType) ITEMTYPE=$($ch.ItemType) CLSID=$($ch.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $log
+                if($null -eq $obj -and $ch.ObjectType -notin @(8,9)){$obj=$ch}
+              }
+            }catch{"OBJ_ENUM_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            if($null -eq $obj){
+              try{
+                $en=$objRoot.EnumChilds(0xFFFFFFFF)
+                foreach($ch in $en){
+                  "OBJ_ENUMCHILD NAME=$($ch.Name) DISPLAY=$($ch.DisplayName) OBJTYPE=$($ch.ObjectType) ITEMTYPE=$($ch.ItemType) CLSID=$($ch.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $log
+                  if($null -eq $obj){$obj=$ch}
+                }
+              }catch{"OBJ_ENUMCHILDS_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            }
+            if($obj){
+              try{$obj.Rename("Система водяного отопления",1)}catch{}
+              "OBJECT_SELECTED NAME=$($obj.Name) OBJTYPE=$($obj.ObjectType) CLSID=$($obj.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $log
+
+              # Add one diagnostic Value to establish variable insertion and inspect its API.
+              $p.CurrentItem=$obj
+              [void][NativeMenu7341268]::DrawMenuBar($hwnd)
+              Start-Sleep -Milliseconds 500
+              $cmdValue=Find-Command $menu "Значение"
+              [void](Send-Command $hwnd $cmdValue "VALUE")
+              "OBJECT_CHILD_COUNT_AFTER_VALUE=$($obj.Count)"|Add-Content -Encoding utf8 $log
+              try{
+                foreach($v in $obj){
+                  "VALUE_CHILD NAME=$($v.Name) DISPLAY=$($v.DisplayName) OBJTYPE=$($v.ObjectType) ITEMTYPE=$($v.ItemType) CLSID=$($v.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $log
+                  if($v.ObjectType -eq 3){
+                    "=== VALUE MEMBERS ==="|Add-Content -Encoding utf8 $log
+                    $v|Get-Member -Force|Out-String -Width 320|Add-Content -Encoding utf8 $log
+                    try{
+                      "DESIGN_INITIAL=$($v.DesignInitialValue)"|Add-Content -Encoding utf8 $log
+                    }catch{"DESIGN_INITIAL_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+                    try{
+                      "OBJECT_MEMBER_TYPE=$($v.Object.GetType().FullName)"|Add-Content -Encoding utf8 $log
+                      $v.Object|Get-Member -Force|Out-String -Width 320|Add-Content -Encoding utf8 $log
+                    }catch{"VALUE_OBJECT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+                  }
+                }
+              }catch{"VALUE_ENUM_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            } else {
+              "OBJECT_NOT_RECOVERED=true"|Add-Content -Encoding utf8 $log
+            }
+
+            $p.Save()
+            "SAVE=true"|Add-Content -Encoding utf8 $log
+          }finally{
+            try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
+            try{$app.ExitScada()}catch{}
+            try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
+          }
+
+          Start-Sleep -Seconds 2
+          $target=Join-Path $folder "$id.vav"
+          if(!(Test-Path $target)){throw "VAV missing"}
+          "VAV_SIZE=$((Get-Item $target).Length) SHA256=$((Get-FileHash $target -Algorithm SHA256).Hash)"|Add-Content -Encoding utf8 $log
+          Copy-Item $folder "$env:GITHUB_WORKSPACE\mswin32\$id" -Recurse -Force
+
+      - name: Validate native VAV opens
+        shell: pwsh
+        run: |
+          $v="$env:GITHUB_WORKSPACE\mswin32\7341268_Variant7\7341268_Variant7.vav"
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $p=Start-Process $exe -ArgumentList @($v) -PassThru
+          Start-Sleep -Seconds 10
+          $alive=Get-Process -Id $p.Id -ErrorAction SilentlyContinue
+          "OPEN_ALIVE=$($null -ne $alive)"|Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\mswin32\open.txt"
+          if($null -eq $alive){throw "VAV did not stay open"}
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-win32
+          path: mswin32/**
+          if-no-files-found: warn
