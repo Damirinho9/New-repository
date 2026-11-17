@@ -83,6 +83,22 @@ jobs:
                   print("SOURCE_ERROR",candidate,repr(exc))
           PY
 
+      - name: Inspect native SDK for API5 exports
+        shell: bash
+        run: |
+          set -euxo pipefail
+          dpkg -L ascon-kompas-sdk-v25 | tee api5-sdk-package-files.txt
+          find /opt/ascon -maxdepth 6 -type f \( -name '*.so' -o -name '*.so.*' -o -name '*.h' -o -name '*.hpp' -o -name '*.py' \)             | LC_ALL=C sort | tee api5-sdk-files.txt
+
+          grep -RniE 'ActiveDocument2D|ksLineSeg|LineSeg[[:space:]]*\(|ksSaveDocument|SaveDocument[[:space:]]*\(|ksCreateIterator|TransferInterface'             /opt/ascon/kompas3d-v25 2>/dev/null | head -1000 | tee api5-native-source-hits.txt || true
+
+          : > api5-native-symbol-hits.txt
+          while IFS= read -r so; do
+            echo "=== $so ===" >> api5-native-symbol-hits.txt
+            nm -D --defined-only "$so" 2>/dev/null               | grep -Ei 'ActiveDocument2D|ksLineSeg|LineSeg|ksSaveDocument|SaveDocument|ksCreateIterator|CreateIterator|TransferInterface'               >> api5-native-symbol-hits.txt || true
+          done < <(find /opt/ascon/kompas3d-v25 -type f \( -name '*.so' -o -name '*.so.*' \) | LC_ALL=C sort)
+          cat api5-native-symbol-hits.txt
+
       - name: Launch BASE and probe API5 bridge
         shell: bash
         run: |
@@ -148,6 +164,10 @@ jobs:
             pinned-versions.txt
             api5-source-hits.txt
             api5-introspection.txt
+            api5-sdk-package-files.txt
+            api5-sdk-files.txt
+            api5-native-source-hits.txt
+            api5-native-symbol-hits.txt
             api5-probe.txt
             kompas-live.out
             kompas-live.err
