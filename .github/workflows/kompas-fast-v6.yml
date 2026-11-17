@@ -194,7 +194,7 @@ jobs:
               export QT_QPA_PLATFORM=offscreen
               export LD_LIBRARY_PATH="$BIN"
               unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
-              dbus-run-session -- env LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$BIN/kKompas"                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
+              dbus-run-session -- env LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$BIN/kKompas" /tmp/01_Mekhanizm_Variant_06_BASE.frw                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
               KP=$!
               echo "KOMPAS_PID=$KP"
 
