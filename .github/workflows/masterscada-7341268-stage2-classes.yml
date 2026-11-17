@@ -67,11 +67,21 @@ jobs:
 
           $app=New-Object -ComObject MasterSCADA.Application
           try {
-            $app.OpenProject(1,$baseFolder,$id,$false,"","",$false)
-            "OPEN_SUCCESS=true"|Add-Content -Encoding utf8 $log
+            try {
+              $app.OpenProject(1,$baseFolder,$id,$false,"","",$false)
+              "OPEN_CALL_RETURNED=true"|Add-Content -Encoding utf8 $log
+            } catch {
+              "OPEN_CALL_EXCEPTION=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log
+            }
             Start-Sleep -Seconds 3
-            $p=$app.CurrentProject
-            if($null -eq $p){throw "CurrentProject null"}
+            "PROJECTS_COUNT=$($app.Projects.Count)"|Add-Content -Encoding utf8 $log
+            $p=$null
+            try {$p=$app.CurrentProject} catch {"CURRENT_PROJECT_EXCEPTION=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            if($null -eq $p){
+              try {$p=$app.Projects.Item($id)} catch {"PROJECT_ITEM_EXCEPTION=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            }
+            "PROJECT_RECOVERED=$($null -ne $p)"|Add-Content -Encoding utf8 $log
+            if($null -eq $p){throw "Project object not recoverable"}
             "PROJECT_NAME=$($p.Name)"|Add-Content -Encoding utf8 $log
             "COMPUTER_COUNT=$($p.ComputerCount)"|Add-Content -Encoding utf8 $log
 
