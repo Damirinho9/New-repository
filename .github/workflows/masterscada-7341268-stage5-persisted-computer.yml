@@ -66,7 +66,7 @@ jobs:
             }
           } -ArgumentList $modal
 
-          $app=$null;$rawComputer=$null
+          $app=$null
           try {
             $app=New-Object -ComObject MasterSCADA.Application
             "APP_COM_CREATED=True" | Set-Content -Encoding utf8 $out
@@ -92,12 +92,34 @@ jobs:
             }
 
             if($null -eq $existing){
-              $rawComputer=New-Object -ComObject $progId
-              "RAW_COMPUTER_CREATED=True" | Add-Content -Encoding utf8 $out
-              $node=$p.SystemRoot.InsertExistingObject($rawComputer,$clsid,$name,$null)
-              "INSERT_EXISTING_RETURNED=$($null -ne $node)" | Add-Content -Encoding utf8 $out
-              if($null -eq $node){throw "InsertExistingObject returned null"}
-              try{$node.Rename($name,1)}catch{}
+              "CREATE_STRATEGY=InsertNewChildItem_then_ChangeItemClass" | Add-Content -Encoding utf8 $out
+              $node=$null
+              try{
+                $node=$p.SystemRoot.InsertNewChildItem([int16]1,$null)
+                "INSERT_NEW_CHILD_ITEM_RETURNED=$($null -ne $node)" | Add-Content -Encoding utf8 $out
+              }catch{
+                "INSERT_NEW_CHILD_ITEM_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+              }
+              if($null -eq $node){
+                try{
+                  $node=$p.SystemRoot.InsertNewChildItemEx([int16]1,$null,$true,0,0,$name,"")
+                  "INSERT_NEW_CHILD_ITEM_EX_RETURNED=$($null -ne $node)" | Add-Content -Encoding utf8 $out
+                }catch{
+                  "INSERT_NEW_CHILD_ITEM_EX_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+                }
+              }
+              if($null -eq $node){throw "Native tree item creation returned null"}
+
+              $node.Rename($name,1)
+              "RENAME_AFTER_CREATE=True" | Add-Content -Encoding utf8 $out
+              try{
+                $node.ChangeItemClass($clsid,"",$false)
+                "CHANGE_ITEM_CLASS_RETURNED=True" | Add-Content -Encoding utf8 $out
+              }catch{
+                "CHANGE_ITEM_CLASS_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+                throw
+              }
+
               try{"INSERTED.Name=$($node.Name)"|Add-Content -Encoding utf8 $out}catch{}
               try{"INSERTED.DisplayName=$($node.DisplayName)"|Add-Content -Encoding utf8 $out}catch{}
               try{"INSERTED.ItemType=$($node.ItemType)"|Add-Content -Encoding utf8 $out}catch{}
@@ -133,6 +155,9 @@ jobs:
             "VAV_SIZE=$((Get-Item $vav).Length)" | Add-Content -Encoding utf8 $out
             "VAV_SHA256=$((Get-FileHash $vav -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $out
             "PRODUCER_COM_VALIDATION=PASS" | Add-Content -Encoding utf8 $out
+          } catch {
+            "PRODUCER_EXCEPTION=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            throw
           } finally {
             try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
             try{Receive-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
@@ -141,10 +166,7 @@ jobs:
               try{$app.ExitScada()}catch{}
               try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
             }
-            if($rawComputer -and [Runtime.InteropServices.Marshal]::IsComObject($rawComputer)){
-              try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($rawComputer)|Out-Null}catch{}
-            }
-            Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+                      Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           }
           Get-Content $out
           '@
@@ -243,6 +265,7 @@ jobs:
               raise SystemExit("SysTree ItemCount < 2 - computer not persisted in native VAV")
 
       - name: Upload producer project
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: masterscada-7341268-stage5-computer-native
