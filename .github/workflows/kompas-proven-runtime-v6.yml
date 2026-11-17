@@ -5,40 +5,171 @@ on:
     branches: [kompas-7335493-native-work1]
     paths:
       - '.github/workflows/kompas-proven-runtime-v6.yml'
-      - 'kompas-input/v6.b64.part*'
   workflow_dispatch:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    # Historical run 43746466610 (2026-11-15) used ubuntu-26.04 / resolute.
+    # Do not use floating ubuntu-latest here.
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
+
+    env:
+      HISTORICAL_RUN_ID: "43746466610"
+      HISTORICAL_IMAGE_OS: "ubuntu26"
+      HISTORICAL_IMAGE_VERSION: "20261111.196"
+      ASCON_DEB_DIST: "1.8_x86-64"
+      ASCON_KOMPAS_VERSION: "25.0.5.2780"
+      BIN: "/opt/ascon/kompas3d-v25/Bin"
+
     steps:
       - uses: actions/checkout@v4
         with:
           ref: kompas-7335493-native-work1
 
-      - name: Install historical Debian KOMPAS runtime
+      - name: Record pinned runner baseline
         shell: bash
         run: |
           set -euxo pipefail
+          {
+            echo "HISTORICAL_RUN_ID=$HISTORICAL_RUN_ID"
+            echo "EXPECTED_IMAGE_OS=$HISTORICAL_IMAGE_OS"
+            echo "EXPECTED_IMAGE_VERSION=$HISTORICAL_IMAGE_VERSION"
+            echo "CURRENT_IMAGE_OS=${ImageOS:-unknown}"
+            echo "CURRENT_IMAGE_VERSION=${ImageVersion:-unknown}"
+            echo "RUNNER_OS=${RUNNER_OS:-unknown}"
+            echo "RUNNER_ARCH=${RUNNER_ARCH:-unknown}"
+            echo "RUNNER_NAME=${RUNNER_NAME:-unknown}"
+            uname -a
+            cat /etc/os-release
+            command -v python3
+            python3 -VV
+            python3 - <<'PY'
+          import platform, sys
+          print("PYTHON_EXECUTABLE=", sys.executable)
+          print("PYTHON_VERSION=", sys.version.replace("\n", " "))
+          print("PYTHON_PLATFORM=", platform.platform())
+          PY
+          } | tee runner-baseline.txt
+
+          # The historical success and the 2026-11-17 failed diagnostic both
+          # used this same hosted image release. Log drift explicitly.
+          if [ "${ImageOS:-}" != "$HISTORICAL_IMAGE_OS" ]; then
+            echo "RUNNER_IMAGE_OS_MISMATCH expected=$HISTORICAL_IMAGE_OS actual=${ImageOS:-unknown}" | tee -a runner-baseline.txt
+            exit 11
+          fi
+          if [ "${ImageVersion:-}" != "$HISTORICAL_IMAGE_VERSION" ]; then
+            echo "RUNNER_IMAGE_VERSION_DRIFT expected=$HISTORICAL_IMAGE_VERSION actual=${ImageVersion:-unknown}" | tee -a runner-baseline.txt
+          else
+            echo "RUNNER_IMAGE_EXACT_MATCH" | tee -a runner-baseline.txt
+          fi
+
+      - name: Install exact historical Debian KOMPAS runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          sudo apt-get install -y \
+            wget ca-certificates gnupg xvfb openbox net-tools iproute2 \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+
+          # Keep the vendor script only because it installs the ASCON signing key.
+          # On resolute it is expected to try an unsupported "resolute" repo first.
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
-          sudo bash /tmp/ascon.sh || true
-          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sha256sum /tmp/ascon.sh | tee ascon-script-sha256.txt
+          set +e
+          sudo bash /tmp/ascon.sh >ascon-script.out 2>ascon-script.err
+          ASCON_SCRIPT_RC=$?
+          set -e
+          echo "ASCON_SCRIPT_RC=$ASCON_SCRIPT_RC" | tee ascon-script-rc.txt
+
+          # Reproduce the historical working source exactly, overriding any
+          # distro-codename entry created by the vendor script.
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb $ASCON_DEB_DIST main" \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+
+          grep -Rni "repo.ascon.ru" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null \
+            | tee ascon-sources.txt || true
+
+          # There must be an explicit historical 1.8_x86-64 source.
+          grep -q "repo.ascon.ru/stable/deb $ASCON_DEB_DIST main" ascon-sources.txt
+
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+
+          # Pin the three KOMPAS packages to the exact versions observed in
+          # historical run 43746466610.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            "ascon-kompas-graphic-v25=$ASCON_KOMPAS_VERSION" \
+            "ascon-kompas3d-v25=$ASCON_KOMPAS_VERSION" \
+            "ascon-kompas-sdk-v25=$ASCON_KOMPAS_VERSION"
+
           dpkg -l 'ascon-kompas*' | tee installed.txt
+          dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' \
+            ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25 \
+            xvfb xserver-xorg-core | tee pinned-versions.txt
+
+          test "$(dpkg-query -W -f='${Version}' ascon-kompas-graphic-v25)" = "$ASCON_KOMPAS_VERSION"
+          test "$(dpkg-query -W -f='${Version}' ascon-kompas3d-v25)" = "$ASCON_KOMPAS_VERSION"
+          test "$(dpkg-query -W -f='${Version}' ascon-kompas-sdk-v25)" = "$ASCON_KOMPAS_VERSION"
+
+      - name: Verify historical runtime fingerprint
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          test -x "$BIN/ksinvisible"
+          test -f "$BIN/ksapi.py"
+          test -f "$BIN/constants.py"
+          test -f "$BIN/libksAPI.so"
+
+          export PYTHONPATH="$BIN"
+
+          {
+            echo "BIN=$BIN"
+            ls -l "$BIN/ksinvisible" "$BIN/ksapi.py" "$BIN/constants.py" "$BIN/libksAPI.so"
+            file "$BIN/ksinvisible" "$BIN/libksAPI.so"
+            echo "=== SHA256 ==="
+            sha256sum "$BIN/ksinvisible" "$BIN/ksapi.py" "$BIN/constants.py" "$BIN/libksAPI.so"
+            echo "=== Xvfb ==="
+            command -v Xvfb
+            dpkg-query -W -f='${binary:Package}=${Version}\n' xvfb xserver-xorg-core
+            echo "=== Python / KsAPI ==="
+            python3 -VV
+            python3 - <<'PY'
+          import hashlib
+          import pathlib
+          import sys
+          import ksapi
+          import constants
+
+          print("PYTHON_EXECUTABLE=", sys.executable)
+          print("PYTHON_VERSION=", sys.version.replace("\n", " "))
+          print("KSAPI_FILE=", ksapi.__file__)
+          print("CONSTANTS_FILE=", constants.__file__)
+          for module_file in (ksapi.__file__, constants.__file__):
+              p = pathlib.Path(module_file)
+              print("PY_MODULE_SHA256", p, hashlib.sha256(p.read_bytes()).hexdigest())
+          print("KSAPI_GETKOMPAS_SYMBOL=", getattr(ksapi, "GetKompas", None))
+          PY
+            echo "=== ksinvisible dependencies ==="
+            ldd "$BIN/ksinvisible"
+          } | tee runtime-fingerprint.txt
 
       - name: Launch historical ksinvisible route and smoke API7
         shell: bash
         run: |
           set -euxo pipefail
-          BIN=/opt/ascon/kompas3d-v25/Bin
-          export PYTHONPATH="$BIN"
-          ln -sf "$BIN/ksinvisible" /tmp/kKompas
 
-          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >kompas-live.out 2>kompas-live.err &
+          export PYTHONPATH="$BIN"
+
+          # This symlink name is part of the historical discovery route.
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          test "$(readlink -f /tmp/kKompas)" = "$BIN/ksinvisible"
+          ls -l /tmp/kKompas | tee symlink.txt
+
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
+            /tmp/kKompas -automation >kompas-live.out 2>kompas-live.err &
           WRAPPER_PID=$!
 
           KP=""
@@ -48,12 +179,30 @@ jobs:
             [ -n "$KP" ] && break
           done
           echo "KPID=$KP" | tee kompas-pid.txt
+
           if [ -z "$KP" ]; then
-            ps aux | grep -E 'kKompas|ksinvisible' || true
+            ps aux | grep -E 'kKompas|ksinvisible|Xvfb' || true
             cat kompas-live.err || true
             exit 2
           fi
-          ps -o pid,comm,args -p "$KP" | tee process-ps.txt
+
+          {
+            ps -o pid,ppid,comm,args -p "$KP"
+            echo "EXE=$(readlink -f /proc/$KP/exe)"
+            printf 'CMDLINE='
+            tr '\0' ' ' <"/proc/$KP/cmdline"
+            echo
+          } | tee process-ps.txt
+
+          # Capture the exact KOMPAS process environment for comparison with
+          # historical/next runs. Environment contains no repository secrets.
+          tr '\0' '\n' <"/proc/$KP/environ" | LC_ALL=C sort | tee process-env.txt
+
+          XVFB_PID=$(pgrep -P "$WRAPPER_PID" Xvfb | head -1 || pgrep -x Xvfb | head -1 || true)
+          echo "XVFB_PID=$XVFB_PID" | tee xvfb-process.txt
+          if [ -n "$XVFB_PID" ]; then
+            ps -o pid,ppid,comm,args -p "$XVFB_PID" | tee -a xvfb-process.txt
+          fi
 
           for i in $(seq 1 50); do
             sleep 1
@@ -61,6 +210,7 @@ jobs:
             if grep -q "kKompas" kompas-sockets.txt; then break; fi
           done
           cat kompas-sockets.txt
+
           if ! grep -q "kKompas" kompas-sockets.txt; then
             cat kompas-live.err || true
             exit 3
@@ -73,6 +223,8 @@ jobs:
           import ksapi
           from constants import constants as c
 
+          print("KSAPI_RUNTIME_FILE=", ksapi.__file__)
+
           app = ksapi.GetKompas()
           if app is None:
               raise SystemExit("GetKompas returned None")
@@ -80,7 +232,10 @@ jobs:
           print("APP_NAME=", app.GetApplicationName(True))
           print("BUILD=", app.GetBuildNumber())
 
-          doc = app.GetDocuments().Add(c.ksDocumentFragment, True)
+          docs = app.GetDocuments()
+          print("DOCUMENTS_OBJ=", docs)
+          doc = docs.Add(c.ksDocumentFragment, True)
+          print("DOC_OBJ=", doc)
           if doc is None:
               raise SystemExit("Could not create fragment")
           print("PROVEN_RUNTIME_DOC_ADD_PASS")
@@ -89,6 +244,7 @@ jobs:
           view = d2.GetViewsAndLayersManager().GetViews().GetActiveView()
           dc = ksapi.IDrawingContainer(view)
           s = dc.GetLineSegments().Add()
+          print("LINE_OBJ=", s)
           if s is None:
               raise SystemExit("LineSegments.Add returned None")
           print("PROVEN_RUNTIME_LINE_ADD_PASS")
@@ -112,6 +268,7 @@ jobs:
               names = z.namelist()
               if "Contents" not in names or "FileInfo" not in names:
                   raise SystemExit("Missing Contents/FileInfo")
+
           print("PROVEN_RUNTIME_SAVE_PASS")
           print("SMOKE_SIZE=", out.stat().st_size)
           print("SMOKE_SHA256=", hashlib.sha256(out.read_bytes()).hexdigest())
@@ -121,6 +278,7 @@ jobs:
           kill "$WRAPPER_PID" 2>/dev/null || true
 
       - name: Verify native smoke markers and SHA
+        if: success()
         shell: bash
         run: |
           set -euxo pipefail
@@ -132,7 +290,7 @@ jobs:
           sha256sum smoke_native.frw | tee smoke-sha256.txt
           python3 - <<'PY'
           import pathlib, zipfile
-          p=pathlib.Path("smoke_native.frw")
+          p = pathlib.Path("smoke_native.frw")
           assert p.stat().st_size > 1000
           with zipfile.ZipFile(p) as z:
               assert "Contents" in z.namelist()
@@ -140,19 +298,30 @@ jobs:
           print("PROVEN_RUNTIME_VERIFY_PASS")
           PY
 
-      - name: Upload proven runtime smoke
+      - name: Upload proven runtime diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kompas-proven-runtime-v6-smoke
+          name: kompas-proven-runtime-v6-diagnostics
           path: |
             smoke_native.frw
             smoke-sha256.txt
+            runner-baseline.txt
+            ascon-script-sha256.txt
+            ascon-script.out
+            ascon-script.err
+            ascon-script-rc.txt
+            ascon-sources.txt
             installed.txt
+            pinned-versions.txt
+            runtime-fingerprint.txt
+            symlink.txt
+            process-ps.txt
+            process-env.txt
+            xvfb-process.txt
             kompas-live.out
             kompas-live.err
             kompas-sockets.txt
             kompas-pid.txt
-            process-ps.txt
             api-result.txt
           if-no-files-found: ignore
