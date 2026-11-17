@@ -172,6 +172,73 @@ static bool build(){
   app.SetHideMessage(ksHideMessageYes);
 
   auto docs=app.GetDocuments(); if(!docs){log("FAIL docs");return false;}
+
+  // Existing native FRW audit mode. The workflow decodes the customer's
+  // archived file before KOMPAS starts. Open it directly and inspect the
+  // already initialized document without creating a Fragment or adding probes.
+  const std::wstring existingPath=L"/tmp/01_Mekhanizm_Variant_06_BASE.frw";
+  {
+    std::ifstream in("/tmp/01_Mekhanizm_Variant_06_BASE.frw", std::ios::binary);
+    if(in.good()){
+      log("EXISTING_FRW_FILE_PRESENT");
+      auto existing=docs->Open(existingPath,true,false);
+      log(std::string("EXISTING_FRW_DOC=")+(existing?"1":"0"));
+      if(existing){
+        try{
+          app.SetActiveDocument(existing);
+          existing->SetActive();
+          IKompasDocument2DPtr edoc=existing;
+          log(std::string("EXISTING_FRW_2D=")+(edoc?"1":"0"));
+          if(edoc){
+            log("EXISTING_FRW_PARAMETRIC_MODE_BEFORE="+std::to_string(edoc->IsParametricMode()));
+            edoc->SetParametricMode(true);
+            auto vm=edoc->GetViewsAndLayersManager();
+            auto views=vm?vm->GetViews():IViewsPtr{};
+            auto ev=views?views->GetActiveView():IViewPtr{};
+            IDrawingContainerPtr edc=ev;
+            ISymbols2DContainerPtr esc=ev;
+            auto els=edc?edc->GetLineSegments():ILineSegmentsPtr{};
+            log("EXISTING_FRW_VIEW="+std::string(ev?"1":"0")+
+                " DRAWING="+(edc?"1":"0")+
+                " SYMBOLS="+(esc?"1":"0")+
+                " LINE_COLLECTION="+(els?"1":"0"));
+            log("EXISTING_FRW_VARIABLE_COUNT="+std::to_string(edoc->GetVariablesCount(false)));
+            auto vl1=edoc->GetVariableByName(false,L"l1");
+            auto vl2=edoc->GetVariableByName(false,L"l2");
+            auto vl3=edoc->GetVariableByName(false,L"l3");
+            auto vL=edoc->GetVariableByName(false,L"L");
+            auto vfi=edoc->GetVariableByName(false,L"fi");
+            log(std::string("EXISTING_FRW_VARS l1=")+(vl1?"1":"0")+
+                " l2="+(vl2?"1":"0")+" l3="+(vl3?"1":"0")+
+                " L="+(vL?"1":"0")+" fi="+(vfi?"1":"0"));
+            bool rebuilt45=false,rebuilt90=false;
+            if(vfi){
+              vfi->SetValue(45.0);
+              bool uv45=edoc->UpdateVariables();
+              rebuilt45=edoc->CompleteRebuildDocument();
+              log("EXISTING_FRW_FI45 update="+std::to_string(uv45)+
+                  " rebuild="+std::to_string(rebuilt45));
+              vfi->SetValue(FI0);
+              bool uv90=edoc->UpdateVariables();
+              rebuilt90=edoc->CompleteRebuildDocument();
+              log("EXISTING_FRW_FI90 update="+std::to_string(uv90)+
+                  " rebuild="+std::to_string(rebuilt90));
+            }
+            if(!vfi || (rebuilt45 && rebuilt90)){
+              log("EXISTING_FRW_OPEN_PASS");
+              return true;
+            }
+          }
+        }catch(...){
+          log("EXISTING_FRW_AUDIT_EXCEPTION");
+        }
+      }
+    }else{
+      log("EXISTING_FRW_FILE_MISSING");
+    }
+    log("EXISTING_FRW_OPEN_FAIL");
+  }
+
   const std::wstring templatePath=L"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw";
 
   IKompasDocumentPtr base{};
