@@ -139,7 +139,7 @@ jobs:
 
               # Use an absolute executable path so the Xvfb child cannot
               # invalidate the package mount used as the current directory.
-              dbus-run-session -- sh -c "LD_PRELOAD=/tmp/bootstrap_variant06_qt.so exec $BIN/ksinvisible -automation"                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
+              dbus-run-session -- sh -c "LD_PRELOAD=/tmp/bootstrap_variant06_qt.so exec $BIN/kKompas -automation"                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
               KP=$!
               echo "KOMPAS_PID=$KP"
 
