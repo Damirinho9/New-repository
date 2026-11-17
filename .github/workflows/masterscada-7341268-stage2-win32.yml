@@ -170,7 +170,11 @@ jobs:
             Dump-Menu $menu ""
 
             # Computer
-            $p.CurrentItem=$p.SystemRoot
+            $sysTree=$p.SysTree
+            $sysRoot=$p.SystemRoot
+            try{$sysTree.CurrentItem=$sysRoot}catch{"SYS_TREE_CURRENT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            $p.CurrentItem=$sysRoot
+            "SYSROOT NAME=$($sysRoot.Name) TYPE=$($sysRoot.ObjectType) ITEM=$($sysRoot.ItemType) CLSID=$($sysRoot.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $log
             [void][NativeMenu7341268]::DrawMenuBar($hwnd)
             Start-Sleep -Milliseconds 500
             $addMenu=Refresh-AddMenu $hwnd $menu
@@ -186,8 +190,19 @@ jobs:
             }
 
             # Object
-            $objRoot=$p.ObjTree.Root
+            $objTree=$p.ObjTree
+            $treeRoot=$objTree.Root
+            $objRoot=$null
+            try{
+              foreach($candidate in $treeRoot){
+                "OBJROOT_CAND NAME=$($candidate.Name) TYPE=$($candidate.ObjectType) ITEM=$($candidate.ItemType) CLSID=$($candidate.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $log
+                if($candidate.ObjectType -eq 8 -and $null -eq $objRoot){$objRoot=$candidate}
+              }
+            }catch{"OBJROOT_ENUM_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            if($null -eq $objRoot -and $treeRoot.ObjectType -eq 8){$objRoot=$treeRoot}
+            if($null -eq $objRoot){throw "Visible object root not found"}
             "OBJROOT_BEFORE_COUNT=$($objRoot.Count)"|Add-Content -Encoding utf8 $log
+            try{$objTree.CurrentItem=$objRoot}catch{"OBJ_TREE_CURRENT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
             $p.CurrentItem=$objRoot
             [void][NativeMenu7341268]::DrawMenuBar($hwnd)
             Start-Sleep -Milliseconds 500
@@ -219,6 +234,7 @@ jobs:
               "OBJECT_SELECTED NAME=$($obj.Name) OBJTYPE=$($obj.ObjectType) CLSID=$($obj.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $log
 
               # Add one diagnostic Value to establish variable insertion and inspect its API.
+              try{$objTree.CurrentItem=$obj}catch{"OBJ_TREE_VALUE_CURRENT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
               $p.CurrentItem=$obj
               [void][NativeMenu7341268]::DrawMenuBar($hwnd)
               Start-Sleep -Milliseconds 500
