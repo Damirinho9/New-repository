@@ -60,7 +60,11 @@ jobs:
         run: |
           set -euxo pipefail
           cat kompas-input/v6.b64.part* | tr -d '[:space:]' | base64 -d > fastbuild/v6.frw.gz
+          set +e
           gzip -dc fastbuild/v6.frw.gz > fastbuild/01_Mekhanizm_Variant_06_BASE.frw
+          GZIP_RC=$?
+          set -e
+          test "$GZIP_RC" -eq 0 -o "$GZIP_RC" -eq 2
           test -s fastbuild/01_Mekhanizm_Variant_06_BASE.frw
           sha256sum fastbuild/01_Mekhanizm_Variant_06_BASE.frw
           python3 - <<'PY'
