@@ -1,0 +1,79 @@
+name: MasterSCADA 7341268 Stage 5 Narrow Reflection
+
+on:
+  push:
+    branches: [masterscada-7341268-windows]
+    paths:
+      - ".github/workflows/masterscada-7341268-stage5-narrow-reflect.yml"
+  workflow_dispatch:
+
+jobs:
+  reflect:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MasterSCADA
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\s5n" | Out-Null
+          New-Item -ItemType Directory -Force "C:\msi" | Out-Null
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($b+$n) -o ("C:\msi\"+$n)
+            if($LASTEXITCODE -ne 0){throw $n}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i","C:\msi\data.msi","/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Reflect exact creation APIs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $tlb=Get-ChildItem "C:\Program Files (x86)\Microsoft SDKs" -Recurse -Filter tlbimp.exe -File | Select-Object -First 1 -ExpandProperty FullName
+          $dll="$env:GITHUB_WORKSPACE\s5n\i.dll"
+          & $tlb "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe" "/out:$dll" "/namespace:MS" "/silent"
+          if($LASTEXITCODE -ne 0){throw "tlbimp"}
+          $src=@'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Reflection;
+          using System.Text;
+          class P {
+            static void Main(){
+              var a=Assembly.LoadFrom(Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE"),"s5n","i.dll"));
+              var sb=new StringBuilder();
+              foreach(var t in a.GetTypes().Where(t =>
+                t.Name.IndexOf("TreeItem",StringComparison.OrdinalIgnoreCase)>=0 ||
+                t.Name.IndexOf("ClassInfo",StringComparison.OrdinalIgnoreCase)>=0 ||
+                t.Name.IndexOf("Tree",StringComparison.OrdinalIgnoreCase)>=0)){
+                sb.AppendLine("TYPE="+t.FullName);
+                foreach(var p in t.GetProperties()) sb.AppendLine(" PROP "+p.PropertyType.FullName+" "+p.Name);
+                foreach(var m in t.GetMethods().Where(m=>!m.IsSpecialName &&
+                  (m.Name.IndexOf("Child",StringComparison.OrdinalIgnoreCase)>=0 ||
+                   m.Name.IndexOf("Insert",StringComparison.OrdinalIgnoreCase)>=0 ||
+                   m.Name.IndexOf("Add",StringComparison.OrdinalIgnoreCase)>=0 ||
+                   m.Name.IndexOf("Create",StringComparison.OrdinalIgnoreCase)>=0 ||
+                   m.Name.IndexOf("Class",StringComparison.OrdinalIgnoreCase)>=0))){
+                  sb.Append(" METHOD "+m.ReturnType.FullName+" "+m.Name+"(");
+                  sb.Append(String.Join(", ",m.GetParameters().Select(p=>p.ParameterType.FullName+" "+p.Name+(p.IsOptional?" [optional]":""))));
+                  sb.AppendLine(")");
+                }
+              }
+              File.WriteAllText(Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE"),"s5n","narrow.txt"),sb.ToString(),Encoding.UTF8);
+              Console.Write(sb.ToString());
+            }
+          }'@
+          Set-Content "$env:GITHUB_WORKSPACE\s5n\r.cs" $src -Encoding UTF8
+          $csc=Get-ChildItem "C:\Windows\Microsoft.NET\Framework" -Recurse -Filter csc.exe -File | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          & $csc /nologo /platform:x86 /out:"$env:GITHUB_WORKSPACE\s5n\r.exe" "$env:GITHUB_WORKSPACE\s5n\r.cs"
+          if($LASTEXITCODE -ne 0){throw "compile"}
+          & "$env:GITHUB_WORKSPACE\s5n\r.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-narrow-reflection
+          path: s5n/**
+          if-no-files-found: error
