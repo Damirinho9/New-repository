@@ -1,0 +1,309 @@
+name: MasterSCADA 7341268 Stage 4 Tutorial Type Probe
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage4-tutorial-types.yml"
+  workflow_dispatch:
+
+jobs:
+  tutorial-types:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\stage4-tutorial-types" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          "MSI_EXIT_CODE=$($p.ExitCode)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage4-tutorial-types\install.txt"
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Inventory tutorial VAV files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "C:\MasterSCADA Projects\Projects\Tutorials"
+          if (!(Test-Path $root)) { throw "Tutorials root missing: $root" }
+          $all = @(Get-ChildItem $root -Recurse -Filter *.vav -File | Sort-Object Length -Descending)
+          "TUTORIAL_VAV_COUNT=$($all.Count)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-inventory.txt"
+          $all | ForEach-Object {
+            "$($_.Length)`t$($_.FullName)"
+          } | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-inventory.txt"
+          if ($all.Count -lt 1) { throw "No tutorial VAV files found" }
+
+      - name: Probe multiple tutorial projects and recursively dump trees
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-tree-dump.txt"
+          $summary = "$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-type-summary.txt"
+          $root = "C:\MasterSCADA Projects\Projects\Tutorials"
+          $exe = "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $candidates = @(Get-ChildItem $root -Recurse -Filter *.vav -File | Sort-Object Length -Descending | Select-Object -First 8)
+          "CANDIDATE_COUNT=$($candidates.Count)" | Set-Content -Encoding utf8 $out
+
+          function Fix-Text([object]$value) {
+            if ($null -eq $value) { return "" }
+            $s = [string]$value
+            try {
+              $bytes = [Text.Encoding]::GetEncoding(1251).GetBytes($s)
+              $fixed = [Text.Encoding]::UTF8.GetString($bytes)
+              if ($fixed -match '[А-Яа-яЁё]') { return $fixed }
+            } catch {}
+            return $s
+          }
+
+          function Get-ClsId($item) {
+            try {
+              $ci = $item.ClassInfoObject
+              if ($null -ne $ci) { return [string]$ci.clsid }
+            } catch {}
+            return ""
+          }
+
+          function Dump-Item {
+            param(
+              [object]$Item,
+              [string]$TreeName,
+              [int]$Depth,
+              [string]$ProjectFile
+            )
+            if ($null -eq $Item -or $Depth -gt 12) { return }
+            $name=""; $display=""; $full=""; $itemType=""; $objectType=""; $clsid=""
+            try { $name = Fix-Text $Item.Name } catch {}
+            try { $display = Fix-Text $Item.DisplayName } catch {}
+            try { $full = Fix-Text $Item.FullName } catch {}
+            try { $itemType = [string]$Item.ItemType } catch {}
+            try { $objectType = [string]$Item.ObjectType } catch {}
+            $clsid = Get-ClsId $Item
+            $indent = "  " * $Depth
+            "$indent[$TreeName] Name=$name | DisplayName=$display | ItemType=$itemType | ObjectType=$objectType | CLSID=$clsid | FullName=$full | Project=$ProjectFile" |
+              Add-Content -Encoding utf8 $out
+
+            try {
+              foreach ($child in $Item) {
+                Dump-Item -Item $child -TreeName $TreeName -Depth ($Depth+1) -ProjectFile $ProjectFile
+              }
+            } catch {
+              "$indent[$TreeName] ENUM_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
+          }
+
+          $opened = 0
+          foreach ($vav in $candidates) {
+            if ($opened -ge 5) { break }
+            "================================================================================" | Add-Content -Encoding utf8 $out
+            "TRY_PROJECT=$($vav.FullName) SIZE=$($vav.Length)" | Add-Content -Encoding utf8 $out
+
+            $proc = $null
+            $app = $null
+            try {
+              $proc = Start-Process $exe -ArgumentList @($vav.FullName) -PassThru
+              Start-Sleep -Seconds 10
+              if ($null -eq (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)) {
+                "OPEN_FAILED_PROCESS_EXITED=$($vav.FullName)" | Add-Content -Encoding utf8 $out
+                continue
+              }
+
+              $app = New-Object -ComObject MasterSCADA.Application
+              $p = $app.CurrentProject
+              if ($null -eq $p) {
+                "OPEN_FAILED_CURRENT_PROJECT_NULL=$($vav.FullName)" | Add-Content -Encoding utf8 $out
+                continue
+              }
+
+              $opened++
+              "OPEN_OK_INDEX=$opened" | Add-Content -Encoding utf8 $out
+              try { "PROJECT_NAME=$(Fix-Text $p.Name)" | Add-Content -Encoding utf8 $out } catch {}
+              try { "PROJECT_PATH=$($p.Path)" | Add-Content -Encoding utf8 $out } catch {}
+              try { "COMPUTER_COUNT=$($p.ComputerCount)" | Add-Content -Encoding utf8 $out } catch {}
+
+              try {
+                $sr = $p.SystemRoot
+                "=== SYSTEM ROOT ===" | Add-Content -Encoding utf8 $out
+                Dump-Item -Item $sr -TreeName "System" -Depth 0 -ProjectFile $vav.Name
+              } catch {
+                "SYSTEM_ROOT_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+              }
+
+              try {
+                $ot = $p.ObjTree
+                $or = $ot.Root
+                "=== OBJECT ROOT ===" | Add-Content -Encoding utf8 $out
+                Dump-Item -Item $or -TreeName "Object" -Depth 0 -ProjectFile $vav.Name
+              } catch {
+                "OBJECT_ROOT_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+              }
+            } catch {
+              "PROJECT_PROBE_ERROR=$($vav.FullName) :: $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            } finally {
+              if ($app) {
+                try { $app.ExitScada() } catch {}
+                try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
+              }
+              if ($proc) {
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+              }
+              Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 2
+            }
+          }
+
+          "OPENED_PROJECTS=$opened" | Add-Content -Encoding utf8 $out
+          if ($opened -lt 2) { throw "Fewer than two tutorial projects opened successfully" }
+
+          # Build a compact unique type catalog from actual dumped nodes.
+          $rows = @()
+          Get-Content $out | ForEach-Object {
+            $line = $_
+            if ($line -match '^\s*\[(System|Object)\]\s+Name=(.*?)\s+\|\s+DisplayName=(.*?)\s+\|\s+ItemType=(.*?)\s+\|\s+ObjectType=(.*?)\s+\|\s+CLSID=(.*?)\s+\|\s+FullName=(.*?)\s+\|\s+Project=(.*)$') {
+              $rows += [pscustomobject]@{
+                Tree=$matches[1]; Name=$matches[2]; DisplayName=$matches[3];
+                ItemType=$matches[4]; ObjectType=$matches[5]; CLSID=$matches[6];
+                FullName=$matches[7]; Project=$matches[8]
+              }
+            }
+          }
+
+          "ACTUAL_NODE_COUNT=$($rows.Count)" | Set-Content -Encoding utf8 $summary
+          "UNIQUE_TYPES:" | Add-Content -Encoding utf8 $summary
+          $rows |
+            Where-Object { $_.CLSID } |
+            Group-Object CLSID,ItemType,ObjectType |
+            Sort-Object Count -Descending |
+            ForEach-Object {
+              $first=$_.Group[0]
+              "COUNT=$($_.Count) | CLSID=$($first.CLSID) | ItemType=$($first.ItemType) | ObjectType=$($first.ObjectType) | ExampleName=$($first.Name) | Tree=$($first.Tree) | Project=$($first.Project)" |
+                Add-Content -Encoding utf8 $summary
+            }
+
+          "" | Add-Content -Encoding utf8 $summary
+          "COMPUTER_CANDIDATES:" | Add-Content -Encoding utf8 $summary
+          $rows | Where-Object {
+            $_.Name -match '(?i)комп|computer|pc|station|сервер|server|арм' -or
+            $_.DisplayName -match '(?i)комп|computer|pc|station|сервер|server|арм'
+          } | ForEach-Object {
+            "Name=$($_.Name) | DisplayName=$($_.DisplayName) | ItemType=$($_.ItemType) | ObjectType=$($_.ObjectType) | CLSID=$($_.CLSID) | FullName=$($_.FullName) | Tree=$($_.Tree) | Project=$($_.Project)" |
+              Add-Content -Encoding utf8 $summary
+          }
+
+          "" | Add-Content -Encoding utf8 $summary
+          "ANALOG_OR_VALUE_CANDIDATES:" | Add-Content -Encoding utf8 $summary
+          $rows | Where-Object {
+            $_.Name -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|analog|аналог|ток|current|напр|voltage|speed|скорост' -or
+            $_.DisplayName -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|analog|аналог|ток|current|напр|voltage|speed|скорост'
+          } | Select-Object -First 100 | ForEach-Object {
+            "Name=$($_.Name) | DisplayName=$($_.DisplayName) | ItemType=$($_.ItemType) | ObjectType=$($_.ObjectType) | CLSID=$($_.CLSID) | FullName=$($_.FullName) | Tree=$($_.Tree) | Project=$($_.Project)" |
+              Add-Content -Encoding utf8 $summary
+          }
+
+          "" | Add-Content -Encoding utf8 $summary
+          "OBJECT_CANDIDATES:" | Add-Content -Encoding utf8 $summary
+          $rows | Where-Object {
+            $_.Tree -eq "Object" -and $_.FullName -and $_.FullName -ne $_.Name
+          } | Select-Object -First 100 | ForEach-Object {
+            "Name=$($_.Name) | DisplayName=$($_.DisplayName) | ItemType=$($_.ItemType) | ObjectType=$($_.ObjectType) | CLSID=$($_.CLSID) | FullName=$($_.FullName) | Project=$($_.Project)" |
+              Add-Content -Encoding utf8 $summary
+          }
+
+          "TUTORIAL_TYPE_PROBE=PASS" | Add-Content -Encoding utf8 $summary
+          Get-Content $summary
+
+      - name: Derive verified reference types
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dump = "$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-tree-dump.txt"
+          $out = "$env:GITHUB_WORKSPACE\stage4-tutorial-types\verified-reference-types.txt"
+
+          $rows = @()
+          Get-Content $dump | ForEach-Object {
+            if ($_ -match '^\s*\[(System|Object)\]\s+Name=(.*?)\s+\|\s+DisplayName=(.*?)\s+\|\s+ItemType=(.*?)\s+\|\s+ObjectType=(.*?)\s+\|\s+CLSID=(.*?)\s+\|\s+FullName=(.*?)\s+\|\s+Project=(.*)$') {
+              $rows += [pscustomobject]@{
+                Tree=$matches[1]; Name=$matches[2]; DisplayName=$matches[3];
+                ItemType=$matches[4]; ObjectType=$matches[5]; CLSID=$matches[6];
+                FullName=$matches[7]; Project=$matches[8]
+              }
+            }
+          }
+
+          "REFERENCE TYPES FROM REAL MASTERScada 3.11 TUTORIAL NODES" | Set-Content -Encoding utf8 $out
+
+          # Computer: require system-tree node below root and prefer names that explicitly look like computer/workstation/server.
+          $computer = $rows | Where-Object {
+            $_.Tree -eq "System" -and $_.CLSID -and
+            ($_.Name -match '(?i)комп|computer|pc|station|сервер|server|арм' -or $_.DisplayName -match '(?i)комп|computer|pc|station|сервер|server|арм')
+          } | Select-Object -First 1
+
+          if ($null -eq $computer) {
+            # Fallback: most common non-root System-tree CLSID from opened tutorials.
+            $computer = $rows | Where-Object {
+              $_.Tree -eq "System" -and $_.CLSID -and
+              $_.CLSID -ne '{48EC81C3-3370-11D4-AC35-B6DC66C5D90A}'
+            } | Group-Object CLSID,ItemType,ObjectType | Sort-Object Count -Descending |
+              Select-Object -First 1 | ForEach-Object { $_.Group[0] }
+          }
+
+          # Technological object: Object tree, non-root, favor node with children implied by dotted/full path.
+          $object = $rows | Where-Object {
+            $_.Tree -eq "Object" -and $_.CLSID -and
+            $_.CLSID -ne '{B4AFE1A6-850A-4B07-A18B-1FE260E2FAB7}' -and
+            $_.FullName -and $_.FullName -ne $_.Name
+          } | Group-Object CLSID,ItemType,ObjectType | Sort-Object Count -Descending |
+            Select-Object -First 1 | ForEach-Object { $_.Group[0] }
+
+          # Analog/value: favor variable-looking names in Object tree.
+          $value = $rows | Where-Object {
+            $_.Tree -eq "Object" -and $_.CLSID -and
+            ($_.Name -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|analog|аналог|ток|current|напр|voltage|speed|скорост' -or
+             $_.DisplayName -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|analog|аналог|ток|current|напр|voltage|speed|скорост')
+          } | Group-Object CLSID,ItemType,ObjectType | Sort-Object Count -Descending |
+            Select-Object -First 1 | ForEach-Object { $_.Group[0] }
+
+          function Emit($tag,$x) {
+            if ($null -eq $x) {
+              "$tag.FOUND=False" | Add-Content -Encoding utf8 $out
+            } else {
+              "$tag.FOUND=True" | Add-Content -Encoding utf8 $out
+              "$tag.Name=$($x.Name)" | Add-Content -Encoding utf8 $out
+              "$tag.DisplayName=$($x.DisplayName)" | Add-Content -Encoding utf8 $out
+              "$tag.ItemType=$($x.ItemType)" | Add-Content -Encoding utf8 $out
+              "$tag.ObjectType=$($x.ObjectType)" | Add-Content -Encoding utf8 $out
+              "$tag.CLSID=$($x.CLSID)" | Add-Content -Encoding utf8 $out
+              "$tag.FullName=$($x.FullName)" | Add-Content -Encoding utf8 $out
+              "$tag.Project=$($x.Project)" | Add-Content -Encoding utf8 $out
+            }
+          }
+
+          Emit "COMPUTER" $computer
+          Emit "TECH_OBJECT" $object
+          Emit "ANALOG_VALUE" $value
+
+          if ($null -eq $computer) { throw "Computer type not found in tutorials" }
+          if ($null -eq $object) { throw "Technological object type not found in tutorials" }
+          if ($null -eq $value) { throw "Analog/value type not found in tutorials" }
+
+          "REFERENCE_TYPE_VALIDATION=PASS" | Add-Content -Encoding utf8 $out
+          Get-Content $out
+
+      - name: Upload tutorial type evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage4-tutorial-types
+          path: stage4-tutorial-types/**
+          if-no-files-found: error
+          retention-days: 90
