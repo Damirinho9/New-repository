@@ -1,0 +1,121 @@
+name: MasterSCADA 7341268 Stage 2 Class Probe
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-classes.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\msclasses" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Open tutorial project and dump native tree classes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $log="$env:GITHUB_WORKSPACE\msclasses\classes.txt"
+          $tutorialRoot="C:\MasterSCADA Projects\Projects\Tutorials"
+          $all=@(Get-ChildItem $tutorialRoot -Recurse -Filter *.vav -File -ErrorAction Stop)
+          "VAV_COUNT=$($all.Count)" | Out-File -Encoding utf8 $log
+          $all | Select-Object -First 30 | ForEach-Object {"VAV=$($_.FullName)"|Add-Content -Encoding utf8 $log}
+
+          $demo=$all | Where-Object { $_.BaseName -eq $_.Directory.Name } | Select-Object -First 1
+          if($null -eq $demo){$demo=$all | Select-Object -First 1}
+          "SELECTED=$($demo.FullName)" | Add-Content -Encoding utf8 $log
+
+          $projectFolder=$demo.Directory.FullName
+          $baseFolder=Split-Path $projectFolder -Parent
+          $id=$demo.BaseName
+          "OPEN_BASE=$baseFolder" | Add-Content -Encoding utf8 $log
+          "OPEN_ID=$id" | Add-Content -Encoding utf8 $log
+
+          $watchLog="$env:GITHUB_WORKSPACE\msclasses\modal.txt"
+          $watcher=Start-Job -ScriptBlock {
+            param($watchLog)
+            $ws=New-Object -ComObject WScript.Shell
+            for($i=0;$i -lt 40;$i++){
+              Get-Process -ErrorAction SilentlyContinue | Where-Object {$_.ProcessName -match "MasterSCADA"} | ForEach-Object {
+                if($_.MainWindowTitle){
+                  "$(Get-Date -Format o) PID=$($_.Id) TITLE=$($_.MainWindowTitle)"|Add-Content -Encoding utf8 $watchLog
+                  if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 200;$ws.SendKeys("{ENTER}")}
+                }
+              }
+              Start-Sleep -Milliseconds 750
+            }
+          } -ArgumentList $watchLog
+
+          $app=New-Object -ComObject MasterSCADA.Application
+          try {
+            $app.OpenProject(1,$baseFolder,$id,$false,"","",$false)
+            "OPEN_SUCCESS=true"|Add-Content -Encoding utf8 $log
+            Start-Sleep -Seconds 3
+            $p=$app.CurrentProject
+            if($null -eq $p){throw "CurrentProject null"}
+            "PROJECT_NAME=$($p.Name)"|Add-Content -Encoding utf8 $log
+            "COMPUTER_COUNT=$($p.ComputerCount)"|Add-Content -Encoding utf8 $log
+
+            function Dump-Item($item,[string]$prefix,[int]$depth){
+              if($null -eq $item -or $depth -gt 5){return}
+              $cls=""
+              try{$cls=$item.ClassInfoObject.clsid}catch{}
+              $line="$prefix NAME=$($item.Name) DISPLAY=$($item.DisplayName) ITEMTYPE=$($item.ItemType) OBJECTTYPE=$($item.ObjectType) CLSID=$cls FULL=$($item.FullName)"
+              $line|Add-Content -Encoding utf8 $log
+              if($depth -lt 5){
+                try {
+                  foreach($ch in $item){
+                    Dump-Item $ch ($prefix+"  ") ($depth+1)
+                  }
+                } catch {
+                  "$prefix ENUM_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log
+                }
+              }
+            }
+
+            "=== SYSTEM TREE ==="|Add-Content -Encoding utf8 $log
+            Dump-Item $p.SystemRoot "" 0
+            "=== OBJECT TREE ==="|Add-Content -Encoding utf8 $log
+            Dump-Item $p.ObjTree.Root "" 0
+
+            for($i=0;$i -lt $p.ComputerCount;$i++){
+              try{
+                $c=$p.Computer($i)
+                $cls=""
+                try{$cls=$c.ClassInfoObject.clsid}catch{}
+                "COMPUTER[$i] NAME=$($c.Name) DISPLAY=$($c.DisplayName) TYPE=$($c.ObjectType) ITEM=$($c.ItemType) CLSID=$cls FULL=$($c.FullName)"|Add-Content -Encoding utf8 $log
+              }catch{"COMPUTER[$i]_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $log}
+            }
+          } finally {
+            try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
+            try{$app.ExitScada()}catch{}
+            try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
+          }
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-classes
+          path: msclasses/**
+          if-no-files-found: warn
