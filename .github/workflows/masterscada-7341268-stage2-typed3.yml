@@ -131,6 +131,24 @@ jobs:
           Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-validation.txt" -Pattern "^(APP_CREATED|CREATE_PROJECT|CURRENT|PROJECT|SYSTEM_ROOT|OBJ_TREE|OBJ_ROOT|SAVE_|VAV_|NATIVE_VAV)" | ForEach-Object { $_.Line }
           if (!(Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-create.txt" -Pattern "^VAV_EXISTS=True$" -Quiet)) { throw "native VAV was not created" }
 
+      - name: Fresh reopen native project
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\stage2-v3\stage2-reopen.txt"
+          $app = New-Object -ComObject MasterSCADA.Application
+          try {
+            $folder = "C:\MasterSCADA Projects\Projects\7341268_Variant7"
+            $app.OpenProject(1,$folder,"7341268_Variant7",$false,"","",$false)
+            $p = $app.CurrentProject
+            "PROJECT_OPEN=$($null -ne $p)" | Set-Content -Encoding utf8 $out
+            if ($null -ne $p) { "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $out }
+          } finally {
+            try { $app.ExitScada() } catch {}
+            try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
+          }
+          if (!(Select-String -Path $out -Pattern "^PROJECT_OPEN=True$" -Quiet)) { throw "fresh reopen failed" }
+
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
