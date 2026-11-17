@@ -68,7 +68,8 @@ jobs:
               File.WriteAllText(Path.Combine(root,"helpers.txt"),sb.ToString(),Encoding.UTF8);
               Console.Write(sb.ToString());
             }
-          }'@
+          }
+          '@
           Set-Content "$env:GITHUB_WORKSPACE\helper-reflect\r.cs" $src -Encoding UTF8
           $csc=Get-ChildItem "C:\Windows\Microsoft.NET\Framework64" -Recurse -Filter csc.exe -File|Sort-Object FullName -Descending|Select-Object -First 1 -ExpandProperty FullName
           & $csc /nologo /out:"$env:GITHUB_WORKSPACE\helper-reflect\r.exe" "$env:GITHUB_WORKSPACE\helper-reflect\r.cs"
