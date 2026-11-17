@@ -45,7 +45,7 @@ jobs:
           "SELECTED=$($demo.FullName)" | Add-Content -Encoding utf8 $log
 
           $projectFolder=$demo.Directory.FullName
-          $baseFolder=Split-Path $projectFolder -Parent
+          $baseFolder=$projectFolder
           $id=$demo.BaseName
           "OPEN_BASE=$baseFolder" | Add-Content -Encoding utf8 $log
           "OPEN_ID=$id" | Add-Content -Encoding utf8 $log
