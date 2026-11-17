@@ -259,6 +259,15 @@ jobs:
 
             if(!$found){throw "Expected computer CLSID missing after fresh reopen"}
             if(!$named){throw "Expected computer name missing after fresh reopen"}
+
+            $sha=(Get-FileHash $vav -Algorithm SHA256).Hash
+            "STAGE5_COMPUTER_COUNT=$count" | Add-Content -Encoding utf8 $env:GITHUB_ENV
+            "STAGE5_COMPUTER_NAME=АРМ оператора" | Add-Content -Encoding utf8 $env:GITHUB_ENV
+            "STAGE5_COMPUTER_CLSID=$computerClsid" | Add-Content -Encoding utf8 $env:GITHUB_ENV
+            "STAGE5_VAV_SIZE=$((Get-Item $vav).Length)" | Add-Content -Encoding utf8 $env:GITHUB_ENV
+            "STAGE5_VAV_SHA256=$sha" | Add-Content -Encoding utf8 $env:GITHUB_ENV
+            "STAGE5_FRESH_REOPEN=PASS" | Add-Content -Encoding utf8 $env:GITHUB_ENV
+
             "FRESH_REOPEN_VALIDATION=PASS" | Add-Content -Encoding utf8 $out
           } finally {
             try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
@@ -279,23 +288,24 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference="Stop"
-          $mutation="$env:GITHUB_WORKSPACE\stage5-computer\mutation.txt"
-          $reopen="$env:GITHUB_WORKSPACE\stage5-computer\fresh-reopen.txt"
           $status="$env:GITHUB_WORKSPACE\stage5-computer\STAGE5_STATUS.txt"
           $vav="$env:GITHUB_WORKSPACE\stage5-computer\project\7341268_Variant7\7341268_Variant7.vav"
+          if(!(Test-Path $vav)){throw "Stage 5 VAV missing"}
+          if([int]$env:STAGE5_COMPUTER_COUNT -lt 1){throw "Validated ComputerCount is missing or < 1"}
+          if($env:STAGE5_FRESH_REOPEN -ne "PASS"){throw "Fresh reopen environment proof missing"}
           "STAGE5_ADD_COMPUTER=PASS" | Set-Content -Encoding utf8 $status
-          "COMPUTER_CLSID={33A04CE5-4692-11D4-B153-87EB14408E58}" | Add-Content -Encoding utf8 $status
-          "COMPUTER_NAME=АРМ оператора" | Add-Content -Encoding utf8 $status
-          $countLine=(Select-String -Path $reopen -Pattern '^COMPUTER_COUNT=' | Select-Object -First 1).Line
-          if(!$countLine){throw "COMPUTER_COUNT line missing from fresh reopen evidence"}
-          "COMPUTER_COUNT=$($countLine.Split('=')[1])" | Add-Content -Encoding utf8 $status
-          "VAV_SIZE=$((Get-Item $vav).Length)" | Add-Content -Encoding utf8 $status
-          "VAV_SHA256=$((Get-FileHash $vav -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $status
+          "COMPUTER_CLSID=$env:STAGE5_COMPUTER_CLSID" | Add-Content -Encoding utf8 $status
+          "COMPUTER_NAME=$env:STAGE5_COMPUTER_NAME" | Add-Content -Encoding utf8 $status
+          "COMPUTER_COUNT=$env:STAGE5_COMPUTER_COUNT" | Add-Content -Encoding utf8 $status
+          "VAV_SIZE=$env:STAGE5_VAV_SIZE" | Add-Content -Encoding utf8 $status
+          "VAV_SHA256=$env:STAGE5_VAV_SHA256" | Add-Content -Encoding utf8 $status
           "SAVE_CONFIRMED=True" | Add-Content -Encoding utf8 $status
           "FRESH_REOPEN_CONFIRMED=True" | Add-Content -Encoding utf8 $status
+          "WORKFLOW_RUN=$env:GITHUB_RUN_ID" | Add-Content -Encoding utf8 $status
           Get-Content $status
 
       - name: Upload Stage 5 native project and evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: masterscada-7341268-stage5-computer
