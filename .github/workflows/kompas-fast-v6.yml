@@ -68,7 +68,40 @@ jobs:
               find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i                 -e "s#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"                 -e "s#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"
               find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i                 "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
 
-              apt-get update
+              # ALT mirror metadata can be briefly inconsistent. Retry from a
+              # clean lists directory and switch the base mirror before giving up.
+              rewrite_alt_sources() {
+                local mirror="$1"
+                for src in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+                  [ -f "$src" ] || continue
+                  sed -i -E                     -e "s#https?://mirror\\.yandex\\.ru/altlinux#\${mirror}#g"                     -e "s#https?://mirror\\.truenetwork\\.ru/altlinux#\${mirror}#g"                     -e "s#https?://ftp\\.altlinux\\.org/pub/distributions/ALTLinux#\${mirror}#g"                     -e "s#https?://ftp\\.altlinux\\.org#\${mirror}#g" "$src"
+                  sed -i '/x86_64-i586/s/^[[:space:]]*rpm/# rpm/' "$src"
+                done
+              }
+              clear_alt_metadata() {
+                rm -rf /var/lib/apt/lists/*
+                mkdir -p /var/lib/apt/lists/partial
+                apt-get clean
+              }
+              apt_update_resilient() {
+                local mirror attempt
+                for mirror in                   "http://mirror.yandex.ru/altlinux"                   "http://mirror.truenetwork.ru/altlinux"                   "http://ftp.altlinux.org/pub/distributions/ALTLinux"; do
+                  rewrite_alt_sources "$mirror"
+                  for attempt in 1 2 3; do
+                    clear_alt_metadata
+                    echo "ALT_UPDATE mirror=$mirror attempt=$attempt"
+                    if apt-get -o Acquire::Retries=2                       -o Acquire::http::No-Cache=true                       -o Acquire::https::No-Cache=true update; then
+                      echo "ALT_UPDATE_PASS mirror=$mirror attempt=$attempt"
+                      return 0
+                    fi
+                    sleep $((attempt * 5))
+                  done
+                done
+                echo "ALT_UPDATE_FAIL all mirrors"
+                return 1
+              }
+
+              apt_update_resilient
               # Keep bootstrap dependencies separate: ALT p11 has no package named xvfb.
               # A failed optional X package must not prevent wget and the ASCON repo setup.
               apt-get install -y wget ca-certificates dbus procps iproute2 glibc-i18ndata fontconfig
@@ -81,7 +114,7 @@ jobs:
               find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i                 -e "s#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"                 -e "s#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"
               find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i                 "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
 
-              apt-get update
+              apt_update_resilient
 
               mkdir -p /var/cache/apt/archives
               PRINT=$(apt-get --print-uris install ascon-kompas-graphic-v25 2>/dev/null || true)
