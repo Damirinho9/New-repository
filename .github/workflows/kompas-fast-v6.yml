@@ -162,7 +162,7 @@ jobs:
               # this container. Keep the native binary launch direct so the
               # injected writer reaches KsAPI.
               BIN=/opt/ascon/kompas3d-v25/Bin
-              export QT_QPA_PLATFORM=offscreen
+              export QT_QPA_PLATFORM=minimal
               export LD_LIBRARY_PATH="$BIN"
               unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
               dbus-run-session -- env LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$BIN/kKompas"                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
