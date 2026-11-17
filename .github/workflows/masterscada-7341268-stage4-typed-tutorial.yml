@@ -266,12 +266,34 @@ jobs:
           & $csc /nologo /platform:x86 /reference:"$env:GITHUB_WORKSPACE\stage4-typed\MasterSCADA.Interop.dll" /out:"$env:GITHUB_WORKSPACE\stage4-typed\typed-tutorial.exe" $srcPath
           if($LASTEXITCODE -ne 0){throw "typed tutorial compile failed"}
 
-      - name: Run typed STA tutorial inspector
+      - name: Run typed STA tutorial inspector with modal watcher
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $watchLog="$env:GITHUB_WORKSPACE\stage4-typed\modal-watcher.txt"
+          $watcher=Start-Job -ScriptBlock {
+            param($watchLog)
+            $ws=New-Object -ComObject WScript.Shell
+            for($i=0;$i -lt 360;$i++){
+              Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle} | ForEach-Object {
+                "$(Get-Date -Format o) PID=$($_.Id) TITLE=$($_.MainWindowTitle)" | Add-Content -Encoding utf8 $watchLog
+                if($ws.AppActivate($_.Id)){
+                  Start-Sleep -Milliseconds 250
+                  $ws.SendKeys("{ENTER}")
+                }
+              }
+              Start-Sleep -Milliseconds 500
+            }
+          } -ArgumentList $watchLog
           Push-Location "$env:GITHUB_WORKSPACE\stage4-typed"
-          try { & .\typed-tutorial.exe } finally { Pop-Location }
+          try {
+            & .\typed-tutorial.exe
+          } finally {
+            Pop-Location
+            try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Receive-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
+          }
           Get-Content "$env:GITHUB_WORKSPACE\stage4-typed\typed-tutorial-tree-dump.txt"
           if (!(Select-String -Path "$env:GITHUB_WORKSPACE\stage4-typed\typed-tutorial-tree-dump.txt" -Pattern "^TYPED_TUTORIAL_OPEN=PASS$" -Quiet)) {
             throw "typed tutorial opening did not pass"
