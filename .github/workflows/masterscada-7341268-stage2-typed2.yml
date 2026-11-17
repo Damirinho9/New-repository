@@ -119,7 +119,7 @@ jobs:
 
             static void DumpTree(TreeItem item,string tag,string log) {
               if(item==null){File.AppendAllText(log,tag+"_NULL=true\r\n");return;}
-              File.AppendAllText(log,tag+" Name="+item.Name+" Display="+item.DisplayName+" Count="+item.Count+" ItemType="+item.ItemType+" ObjectType="+item.ObjectType+" CLSID="+(item.ClassInfoObject==null?"":item.ClassInfoObject.clsid)+"\r\n");
+              File.AppendAllText(log,tag+" Name="+item.Name+" Display="+item.DisplayName+" ItemType="+item.ItemType+" ObjectType="+item.ObjectType+" CLSID="+(item.ClassInfoObject==null?"":item.ClassInfoObject.clsid)+"\r\n");
             }
           }
           '@
