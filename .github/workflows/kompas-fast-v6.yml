@@ -204,6 +204,10 @@ jobs:
                 echo "poll=$i"
                 tail -80 /tmp/work1_bootstrap.log 2>/dev/null || true
                 tail -80 /tmp/work1_v6_inject.log 2>/dev/null || true
+                if grep -q "EXISTING_FRW_PARAMETRIC_MUTATION_PASS" /tmp/work1_v6_inject.log 2>/dev/null; then
+                  PASS=3
+                  break
+                fi
                 if grep -q "EXISTING_FRW_OPEN_PASS" /tmp/work1_v6_inject.log 2>/dev/null; then
                   PASS=2
                   break
@@ -224,6 +228,15 @@ jobs:
               cat /tmp/work1_v6_inject.log 2>/dev/null || true
               echo "=== KOMPAS STDERR ==="
               tail -250 /tmp/kompas-fast.err 2>/dev/null || true
+
+              if [ "$PASS" = "3" ] && [ -s /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw ]; then
+                sha256sum /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+                cp /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw /work/result/
+                cp /tmp/work1_v6_inject.log /work/result/
+                cp /tmp/work1_bootstrap.log /work/result/
+                echo "RESULT=EXISTING_FRW_PARAMETRIC_MUTATION_PASS"
+                exit 0
+              fi
 
               if [ "$PASS" = "2" ] && [ -s /tmp/01_Mekhanizm_Variant_06_BASE.frw ]; then
                 sha256sum /tmp/01_Mekhanizm_Variant_06_BASE.frw
@@ -260,6 +273,13 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          if grep -q 'EXISTING_FRW_PARAMETRIC_MUTATION_PASS' result/work1_v6_inject.log 2>/dev/null; then
+            BASE=$(find result -maxdepth 1 -type f -name '*PARAMETRIC.frw' -print -quit)
+            test -n "$BASE"
+            test -s "$BASE"
+            python3 -c 'import sys,zipfile; p=sys.argv[1]; assert zipfile.is_zipfile(p); assert {"Contents","FileInfo"}.issubset(set(zipfile.ZipFile(p).namelist())); print("EXISTING_FRW_MUTATION_VERIFY_PASS", p)' "$BASE"
+            exit 0
+          fi
           if grep -q 'EXISTING_FRW_OPEN_PASS' result/work1_v6_inject.log 2>/dev/null; then
             BASE=$(find result -maxdepth 1 -type f -name '*BASE.frw' -print -quit)
             test -n "$BASE"
