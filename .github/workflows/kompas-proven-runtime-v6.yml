@@ -5,6 +5,7 @@ on:
     branches: [kompas-7335493-native-work1]
     paths:
       - '.github/workflows/kompas-proven-runtime-v6.yml'
+      - 'kompas-input/v6.b64.part*'
   workflow_dispatch:
 
 jobs:
@@ -22,6 +23,7 @@ jobs:
       HISTORICAL_RUNNER_IMAGE_VERSION: "20261111.196.1"
       ASCON_DEB_DIST: "1.8_x86-64"
       ASCON_KOMPAS_VERSION: "25.0.5.2780"
+      BASE_FRW_SHA256: "599bc2dc4962a85ec656f6977f3d82311e0a0a04f0cc7862a12f1221ac216d82"
       BIN: "/opt/ascon/kompas3d-v25/Bin"
 
     steps:
@@ -158,20 +160,67 @@ jobs:
             ldd "$BIN/ksinvisible"
           } | tee runtime-fingerprint.txt
 
-      - name: Launch historical ksinvisible route and smoke API7
+      - name: Restore verified existing Variant 06 FRW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf proven-input result
+          mkdir -p proven-input result
+
+          cat kompas-input/v6.b64.part* | tr -d '[:space:]' | base64 -d > proven-input/v6.frw.gz
+
+          set +e
+          gzip -dc proven-input/v6.frw.gz > proven-input/01_Mekhanizm_Variant_06_BASE.frw
+          GZIP_RC=$?
+          set -e
+          test "$GZIP_RC" -eq 0 -o "$GZIP_RC" -eq 2
+
+          BASE=proven-input/01_Mekhanizm_Variant_06_BASE.frw
+          test -s "$BASE"
+          ACTUAL_SHA=$(sha256sum "$BASE" | awk '{print $1}')
+          echo "BASE_FRW_SHA256=$ACTUAL_SHA" | tee base-frw-sha256.txt
+          test "$ACTUAL_SHA" = "$BASE_FRW_SHA256"
+
+          python3 - <<'PY' | tee base-frw-verify.txt
+          import hashlib
+          import pathlib
+          import zipfile
+
+          p = pathlib.Path("proven-input/01_Mekhanizm_Variant_06_BASE.frw")
+          print("BASE_SIZE=", p.stat().st_size)
+          print("BASE_SHA256=", hashlib.sha256(p.read_bytes()).hexdigest())
+          print("BASE_IS_ZIP=", zipfile.is_zipfile(p))
+          assert p.stat().st_size == 71953
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              names = z.namelist()
+              print("BASE_MEMBERS=", names)
+              assert "Contents" in names
+              assert "FileInfo" in names
+          print("PROVEN_RUNTIME_BASE_FRW_VERIFY_PASS")
+          PY
+
+      - name: Open existing FRW in proven runtime and mutate only after non-null document
         shell: bash
         run: |
           set -euxo pipefail
 
           export PYTHONPATH="$BIN"
+          export PROVEN_BASE_FRW="$PWD/proven-input/01_Mekhanizm_Variant_06_BASE.frw"
+          export PROVEN_MUTATED_FRW="$PWD/result/01_Mekhanizm_Variant_06_PROVEN_MUTATION.frw"
 
-          # This symlink name is part of the historical discovery route.
+          test -s "$PROVEN_BASE_FRW"
+          test "$(sha256sum "$PROVEN_BASE_FRW" | awk '{print $1}')" = "$BASE_FRW_SHA256"
+
           ln -sf "$BIN/ksinvisible" /tmp/kKompas
           test "$(readlink -f /tmp/kKompas)" = "$BIN/ksinvisible"
           ls -l /tmp/kKompas | tee symlink.txt
 
+          # First attempt: ask the historical ksinvisible/kKompas route to open
+          # the known-good FRW immediately at process start.
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
-            /tmp/kKompas -automation >kompas-live.out 2>kompas-live.err &
+            /tmp/kKompas -automation "$PROVEN_BASE_FRW" \
+            >kompas-live.out 2>kompas-live.err &
           WRAPPER_PID=$!
 
           KP=""
@@ -196,8 +245,6 @@ jobs:
             echo
           } | tee process-ps.txt
 
-          # Capture the exact KOMPAS process environment for comparison with
-          # historical/next runs. Environment contains no repository secrets.
           tr '\0' '\n' <"/proc/$KP/environ" | LC_ALL=C sort | tee process-env.txt
 
           XVFB_PID=$(pgrep -P "$WRAPPER_PID" Xvfb | head -1 || pgrep -x Xvfb | head -1 || true)
@@ -212,20 +259,29 @@ jobs:
             if grep -q "kKompas" kompas-sockets.txt; then break; fi
           done
           cat kompas-sockets.txt
-
           if ! grep -q "kKompas" kompas-sockets.txt; then
             cat kompas-live.err || true
             exit 3
           fi
 
           python3 - <<'PY' | tee api-result.txt
+          import hashlib
           import inspect
+          import os
+          import pathlib
           import traceback
+          import zipfile
+
           import ksapi
           from constants import constants as c
 
+          base = pathlib.Path(os.environ["PROVEN_BASE_FRW"]).resolve()
+          out = pathlib.Path(os.environ["PROVEN_MUTATED_FRW"]).resolve()
+
+          print("BASE_PATH=", base)
+          print("BASE_SIZE=", base.stat().st_size)
+          print("BASE_SHA256=", hashlib.sha256(base.read_bytes()).hexdigest())
           print("KSAPI_RUNTIME_FILE=", ksapi.__file__)
-          print("KS_DOCUMENT_FRAGMENT=", c.ksDocumentFragment)
 
           def call(label, fn):
               print(f"CALL_BEGIN {label}", flush=True)
@@ -242,133 +298,187 @@ jobs:
                   print(f"CALL_END {label} EXCEPTION", flush=True)
                   return None
 
-          def optional_zero_arg(obj, method_name):
-              method = getattr(obj, method_name, None)
-              if method is None:
-                  print(f"{method_name}_UNAVAILABLE")
-                  return None
-              return call(method_name.upper(), method)
-
-          def doc_count(docs, label):
+          def count_docs(docs, label):
               getter = getattr(docs, "GetCount", None)
-              if getter is not None:
-                  return call(label, getter)
-              try:
-                  value = getattr(docs, "Count")
-                  print(f"{label}_RETURN_TYPE=", type(value).__name__)
-                  print(f"{label}_RETURN=", repr(value))
-                  return value
-              except BaseException as exc:
-                  print(f"{label}_EXCEPTION_TYPE=", type(exc).__name__)
-                  print(f"{label}_EXCEPTION=", repr(exc))
+              if getter is None:
+                  print(f"{label}=UNAVAILABLE")
                   return None
+              return call(label, getter)
 
-          # 1. Entry point only.
           app = call("GETKOMPAS", ksapi.GetKompas)
           if app is None:
               print("PROVEN_RUNTIME_GETKOMPAS_FAIL")
               raise SystemExit(10)
           print("PROVEN_RUNTIME_GETKOMPAS_PASS")
 
-          # 2. Application state only. No document creation here.
-          print("APP_TYPE=", type(app).__name__)
-          optional_zero_arg(app, "GetReference")
-          call("APP_NAME", lambda: app.GetApplicationName(True))
-          optional_zero_arg(app, "GetBuildNumber")
-          optional_zero_arg(app, "GetVisible")
-          optional_zero_arg(app, "GetActiveDocument")
-          optional_zero_arg(app, "GetCurrentDirectory")
+          print("APP_NAME=", call("APP_NAME", lambda: app.GetApplicationName(True)))
+          print("BUILD=", call("APP_BUILD", app.GetBuildNumber))
 
-          # 3. Obtain the collection only.
           docs = call("GETDOCUMENTS", app.GetDocuments)
           if docs is None:
               print("PROVEN_RUNTIME_GETDOCUMENTS_FAIL")
               raise SystemExit(11)
           print("PROVEN_RUNTIME_GETDOCUMENTS_PASS")
-          print("DOCUMENTS_TYPE=", type(docs).__name__)
 
-          public_names = sorted(
-              name for name in dir(docs)
-              if not name.startswith("_") and (
-                  "Add" in name or "Count" in name or "Item" in name
-              )
-          )
-          print("DOCUMENTS_RELEVANT_METHODS=", public_names)
+          count_docs(docs, "DOCUMENT_COUNT_AFTER_PROCESS_START")
 
-          for method_name in ("Add", "AddWithDefaultSettings", "GetCount"):
-              method = getattr(docs, method_name, None)
-              if method is None:
-                  print(f"{method_name}_SIGNATURE=UNAVAILABLE")
-                  continue
-              try:
-                  print(f"{method_name}_SIGNATURE=", inspect.signature(method))
-              except BaseException as exc:
-                  print(f"{method_name}_SIGNATURE_ERROR=", repr(exc))
-
-          doc_count(docs, "DOCUMENT_COUNT_INITIAL")
-
-          # 4. Three isolated document creation calls. No geometry at all.
-          doc_true = call(
-              "DOC_ADD_FRAGMENT_VISIBLE_TRUE",
-              lambda: docs.Add(c.ksDocumentFragment, True),
-          )
-          doc_count(docs, "DOCUMENT_COUNT_AFTER_ADD_TRUE")
-
-          doc_false = call(
-              "DOC_ADD_FRAGMENT_VISIBLE_FALSE",
-              lambda: docs.Add(c.ksDocumentFragment, False),
-          )
-          doc_count(docs, "DOCUMENT_COUNT_AFTER_ADD_FALSE")
-
-          add_default = getattr(docs, "AddWithDefaultSettings", None)
-          if add_default is None:
-              print("DOC_ADD_DEFAULT_SETTINGS_UNAVAILABLE")
-              doc_default = None
+          open_method = getattr(docs, "Open", None)
+          if open_method is None:
+              print("DOCUMENTS_OPEN_SIGNATURE=UNAVAILABLE")
           else:
-              doc_default = call(
-                  "DOC_ADD_WITH_DEFAULT_SETTINGS",
-                  lambda: add_default(c.ksDocumentFragment, True),
+              try:
+                  print("DOCUMENTS_OPEN_SIGNATURE=", inspect.signature(open_method))
+              except BaseException as exc:
+                  print("DOCUMENTS_OPEN_SIGNATURE_ERROR=", repr(exc))
+
+          # Direct-launch result first.
+          active = call("ACTIVE_DOCUMENT_AFTER_PROCESS_START", app.GetActiveDocument)
+          doc = active
+          if doc is not None:
+              print("PROVEN_RUNTIME_EXISTING_DIRECT_OPEN_PASS")
+
+          # Fallback 1: invisible editable open.
+          if doc is None and open_method is not None:
+              opened = call(
+                  "DOCUMENTS_OPEN_INVISIBLE_EDITABLE",
+                  lambda: open_method(str(base), False, False),
               )
-          doc_count(docs, "DOCUMENT_COUNT_AFTER_ADD_DEFAULT")
+              count_docs(docs, "DOCUMENT_COUNT_AFTER_OPEN_INVISIBLE")
+              active_after = call("ACTIVE_DOCUMENT_AFTER_OPEN_INVISIBLE", app.GetActiveDocument)
+              doc = opened if opened is not None else active_after
+              if doc is not None:
+                  print("PROVEN_RUNTIME_EXISTING_DOCUMENTS_OPEN_PASS")
 
-          results = {
-              "Add(fragment, True)": doc_true,
-              "Add(fragment, False)": doc_false,
-              "AddWithDefaultSettings(fragment, True)": doc_default,
-          }
-          for name, value in results.items():
-              print("DOC_RESULT", name, "NON_NULL=", value is not None)
+          # Fallback 2: visible editable open under Xvfb.
+          if doc is None and open_method is not None:
+              opened_visible = call(
+                  "DOCUMENTS_OPEN_VISIBLE_EDITABLE",
+                  lambda: open_method(str(base), True, False),
+              )
+              count_docs(docs, "DOCUMENT_COUNT_AFTER_OPEN_VISIBLE")
+              active_visible = call("ACTIVE_DOCUMENT_AFTER_OPEN_VISIBLE", app.GetActiveDocument)
+              doc = opened_visible if opened_visible is not None else active_visible
+              if doc is not None:
+                  print("PROVEN_RUNTIME_EXISTING_DOCUMENTS_OPEN_VISIBLE_PASS")
 
-          if any(value is not None for value in results.values()):
-              print("PROVEN_RUNTIME_DOC_ADD_PASS")
-              raise SystemExit(0)
+          if doc is None:
+              print("PROVEN_RUNTIME_EXISTING_OPEN_FAIL")
+              raise SystemExit(40)
 
-          print("PROVEN_RUNTIME_DOC_ADD_FAIL")
-          raise SystemExit(20)
+          print("PROVEN_RUNTIME_EXISTING_OPEN_PASS")
+          print("OPENED_DOCUMENT_TYPE=", type(doc).__name__)
+          try:
+              print("OPENED_DOCUMENT_REFERENCE=", doc.GetReference())
+          except BaseException as exc:
+              print("OPENED_DOCUMENT_REFERENCE_ERROR=", repr(exc))
+
+          # No mutation is attempted before this point.
+          d2 = call("DOCUMENT2D_WRAP", lambda: ksapi.IKompasDocument2D(doc))
+          if d2 is None:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_FAIL=document2d")
+              raise SystemExit(41)
+
+          manager = call("VIEWS_MANAGER", d2.GetViewsAndLayersManager)
+          views = call("VIEWS_COLLECTION", manager.GetViews) if manager is not None else None
+          view = call("ACTIVE_VIEW", views.GetActiveView) if views is not None else None
+          if view is None:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_FAIL=active_view")
+              raise SystemExit(42)
+
+          dc = call("DRAWING_CONTAINER", lambda: ksapi.IDrawingContainer(view))
+          segments = call("LINE_SEGMENTS_COLLECTION", dc.GetLineSegments) if dc is not None else None
+          if segments is None:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_FAIL=line_collection")
+              raise SystemExit(43)
+
+          line = call("EXISTING_FRW_LINE_ADD", segments.Add)
+          if line is None:
+              print("PROVEN_RUNTIME_EXISTING_LINE_ADD_FAIL")
+              raise SystemExit(44)
+
+          line.SetX1(0.0)
+          line.SetY1(-20.0)
+          line.SetX2(15.0)
+          line.SetY2(-20.0)
+          line.SetStyle(c.ksCSNormal)
+
+          updated = call("EXISTING_FRW_LINE_UPDATE", line.Update)
+          if not updated:
+              print("PROVEN_RUNTIME_EXISTING_LINE_UPDATE_FAIL")
+              raise SystemExit(45)
+
+          print("PROVEN_RUNTIME_EXISTING_LINE_ADD_PASS")
+
+          saved = call("EXISTING_FRW_SAVE_AS", lambda: doc.SaveAs(str(out)))
+          if not saved:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_SAVE_FAIL")
+              raise SystemExit(46)
+
+          if not out.exists() or out.stat().st_size <= 1000:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_FILE_FAIL")
+              raise SystemExit(47)
+
+          if not zipfile.is_zipfile(out):
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_CONTAINER_FAIL")
+              raise SystemExit(48)
+
+          with zipfile.ZipFile(out) as z:
+              names = z.namelist()
+              print("MUTATED_MEMBERS=", names)
+              if "Contents" not in names or "FileInfo" not in names:
+                  print("PROVEN_RUNTIME_EXISTING_MUTATION_MEMBERS_FAIL")
+                  raise SystemExit(49)
+
+          print("MUTATED_SIZE=", out.stat().st_size)
+          print("MUTATED_SHA256=", hashlib.sha256(out.read_bytes()).hexdigest())
+          print("PROVEN_RUNTIME_EXISTING_MUTATION_SAVE_PASS")
           PY
 
           kill "$WRAPPER_PID" 2>/dev/null || true
 
-      - name: Verify document creation marker only
+          # The source file must remain byte-identical.
+          test "$(sha256sum "$PROVEN_BASE_FRW" | awk '{print $1}')" = "$BASE_FRW_SHA256"
+          echo "PROVEN_RUNTIME_BASE_FRW_UNCHANGED_PASS" | tee base-frw-unchanged.txt
+
+      - name: Verify existing FRW open and mutation markers
         if: success()
         shell: bash
         run: |
           set -euxo pipefail
           grep -q 'PROVEN_RUNTIME_GETKOMPAS_PASS' api-result.txt
           grep -q 'PROVEN_RUNTIME_GETDOCUMENTS_PASS' api-result.txt
-          grep -q 'PROVEN_RUNTIME_DOC_ADD_PASS' api-result.txt
-          if grep -q 'PROVEN_RUNTIME_LINE_ADD_PASS' api-result.txt; then
-            echo "UNEXPECTED_GEOMETRY_MARKER_PRESENT"
-            exit 31
-          fi
-          echo "PROVEN_RUNTIME_DOCUMENT_SMOKE_VERIFY_PASS"
+          grep -q 'PROVEN_RUNTIME_EXISTING_OPEN_PASS' api-result.txt
+          grep -q 'PROVEN_RUNTIME_EXISTING_LINE_ADD_PASS' api-result.txt
+          grep -q 'PROVEN_RUNTIME_EXISTING_MUTATION_SAVE_PASS' api-result.txt
+          grep -q 'PROVEN_RUNTIME_BASE_FRW_UNCHANGED_PASS' base-frw-unchanged.txt
+
+          OUT=result/01_Mekhanizm_Variant_06_PROVEN_MUTATION.frw
+          test -s "$OUT"
+          sha256sum "$OUT" | tee mutation-sha256.txt
+          python3 - <<'PY'
+          import pathlib
+          import zipfile
+          p = pathlib.Path("result/01_Mekhanizm_Variant_06_PROVEN_MUTATION.frw")
+          assert p.stat().st_size > 1000
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              assert "Contents" in z.namelist()
+              assert "FileInfo" in z.namelist()
+          print("PROVEN_RUNTIME_EXISTING_MUTATION_VERIFY_PASS")
+          PY
 
       - name: Upload proven runtime diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kompas-proven-runtime-v6-document-diagnostics
+          name: kompas-proven-runtime-v6-existing-frw-diagnostics
           path: |
+            proven-input/01_Mekhanizm_Variant_06_BASE.frw
+            result/01_Mekhanizm_Variant_06_PROVEN_MUTATION.frw
+            base-frw-sha256.txt
+            base-frw-verify.txt
+            base-frw-unchanged.txt
+            mutation-sha256.txt
             runner-baseline.txt
             ascon-script-sha256.txt
             ascon-script.out
