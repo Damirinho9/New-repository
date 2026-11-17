@@ -49,6 +49,7 @@ jobs:
           $base = "C:\MasterSCADA Projects\Projects"
           $id = "7341268_Variant7"
           $folder = Join-Path $base $id
+          if (Test-Path $folder) { Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue }
           New-Item -ItemType Directory -Force $folder | Out-Null
           $app = New-Object -ComObject MasterSCADA.Application
           $watcher = Start-Job -ScriptBlock {
@@ -67,6 +68,8 @@ jobs:
             $p.Save()
             "CREATE_PROJECT_RETURNED=true" | Set-Content -Encoding utf8 $out
             "CURRENT_PROJECT=true" | Add-Content -Encoding utf8 $out
+            try { "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $out } catch {}
+            try { "PROJECT_PATH=$($p.Path)" | Add-Content -Encoding utf8 $out } catch {}
           } finally {
             try { Stop-Job $watcher -ErrorAction SilentlyContinue | Out-Null } catch {}
             try { Remove-Job $watcher -Force -ErrorAction SilentlyContinue } catch {}
@@ -76,7 +79,10 @@ jobs:
           Start-Sleep -Seconds 2
           $vav = Join-Path $folder "$id.vav"
           "VAV_EXISTS=$([IO.File]::Exists($vav))" | Add-Content -Encoding utf8 $out
-          if ([IO.File]::Exists($vav)) { "VAV_SIZE=$((Get-Item $vav).Length)" | Add-Content -Encoding utf8 $out }
+          if ([IO.File]::Exists($vav)) {
+            "VAV_SIZE=$((Get-Item $vav).Length)" | Add-Content -Encoding utf8 $out
+            "VAV_SHA256=$((Get-FileHash $vav -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $out
+          }
           if (!(Test-Path $vav) -or (Get-Item $vav).Length -le 0) { throw "dynamic COM did not create native VAV" }
 
       - name: Compile and run native probe
@@ -99,27 +105,18 @@ jobs:
               foreach (var m in t.GetMethods().OrderBy(x => x.Name))
                 L("METHOD " + m + " PARAMS=" + string.Join(";", m.GetParameters().Select(p => p.ParameterType.FullName + " " + p.Name)));
             }
-            static void Item(object x, string tag) {
-              if (x == null) { L(tag + "=<null>"); return; }
-              L(tag + "_TYPE=" + x.GetType().FullName);
-              foreach (var n in new[]{"Name","DisplayName","ItemType","ObjectType","FullName","Id"}) try {
-                var p=x.GetType().GetProperty(n); if(p!=null) L(tag+"_"+n+"="+(p.GetValue(x,null)??""));
-              } catch(Exception e) { L(tag+"_"+n+"_ERR="+e.Message); }
-              try { var p=x.GetType().GetProperty("ClassInfoObject"); var ci=p==null?null:p.GetValue(x,null); if(ci!=null) L(tag+"_CLSID="+ci.GetType().GetProperty("clsid").GetValue(ci,null)); } catch(Exception e){L(tag+"_CLSID_ERR="+e.Message);}
-            }
             static void Main() {
               Directory.CreateDirectory(dir); File.WriteAllText(log, "START" + Environment.NewLine);
               foreach(var t in typeof(ApplicationClass).Assembly.GetTypes().Where(t=>new[]{"Project","TreeItem","ObjTree","SysTree","Variable","Parameter","Formula"}.Any(k=>t.Name.IndexOf(k,StringComparison.OrdinalIgnoreCase)>=0))) Dump(t);
-              string baseFolder=@"C:\MasterSCADA Projects\Projects", id="7341268_Variant7", folder=Path.Combine(baseFolder,id), target=Path.Combine(folder,id+".vav");
-              Directory.CreateDirectory(folder); ApplicationClass app=null;
-              try {
-                app=new ApplicationClass(); L("APP_CREATED=true");
-                object cur=null; try{cur=app.CurrentProject;L("CURRENT_NULL="+(cur==null));}catch(Exception e){L("CURRENT_PROJECT_EXCEPTION="+e);}
-                Item(cur,"PROJECT");
-                var p=cur as Project;
-                if(p!=null){Item(p.SystemRoot,"SYSTEM_ROOT");var ot=p.ObjTree;Item(ot,"OBJ_TREE");try{var rp=ot.GetType().GetProperty("Root");Item(rp==null?null:rp.GetValue(ot,null),"OBJ_ROOT");}catch(Exception e){L("OBJ_ROOT_EXCEPTION="+e);}try{p.Save();L("SAVE_SUCCESS=true");}catch(Exception e){L("SAVE_EXCEPTION="+e);}}
-              } finally {if(app!=null){try{app.ExitScada();}catch{}try{Marshal.FinalReleaseComObject(app);}catch{}}}
-              System.Threading.Thread.Sleep(1500); L("VAV_EXISTS="+File.Exists(target)); if(File.Exists(target)){L("VAV_SIZE="+new FileInfo(target).Length);using(var fs=File.OpenRead(target))using(var sha=System.Security.Cryptography.SHA256.Create())L("VAV_SHA256="+BitConverter.ToString(sha.ComputeHash(fs)).Replace("-",""));} L("NATIVE_VAV="+(File.Exists(target)&&new FileInfo(target).Length>0));
+              string target=@"C:\MasterSCADA Projects\Projects\7341268_Variant7\7341268_Variant7.vav";
+              L("VAV_EXISTS="+File.Exists(target));
+              if(File.Exists(target)){
+                L("VAV_SIZE="+new FileInfo(target).Length);
+                using(var fs=File.OpenRead(target))
+                using(var sha=System.Security.Cryptography.SHA256.Create())
+                  L("VAV_SHA256="+BitConverter.ToString(sha.ComputeHash(fs)).Replace("-",""));
+              }
+              L("NATIVE_VAV="+(File.Exists(target)&&new FileInfo(target).Length>0));
             }
           }
           '@
@@ -128,31 +125,176 @@ jobs:
           & $csc /nologo /platform:x86 /reference:"$env:GITHUB_WORKSPACE\stage2-v3\MasterSCADA.Interop.dll" /out:"$env:GITHUB_WORKSPACE\stage2-v3\probe.exe" "$env:GITHUB_WORKSPACE\stage2-v3\Program.cs"
           if ($LASTEXITCODE -ne 0) { throw "compile failed" }
           Push-Location "$env:GITHUB_WORKSPACE\stage2-v3"; try { & .\probe.exe } finally { Pop-Location }
-          Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-validation.txt" -Pattern "^(APP_CREATED|CREATE_PROJECT|CURRENT|PROJECT|SYSTEM_ROOT|OBJ_TREE|OBJ_ROOT|SAVE_|VAV_|NATIVE_VAV)" | ForEach-Object { $_.Line }
+          Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-validation.txt" -Pattern "^(VAV_|NATIVE_VAV)" | ForEach-Object { $_.Line }
           if (!(Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-create.txt" -Pattern "^VAV_EXISTS=True$" -Quiet)) { throw "native VAV was not created" }
 
-      - name: Fresh reopen native project
+      - name: Copy exact native project into workspace
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $out = "$env:GITHUB_WORKSPACE\stage2-v3\stage2-reopen.txt"
-          $app = New-Object -ComObject MasterSCADA.Application
-          try {
-            $folder = "C:\MasterSCADA Projects\Projects\7341268_Variant7"
-            $app.OpenProject(1,$folder,"7341268_Variant7",$false,"","",$false)
-            $p = $app.CurrentProject
-            "PROJECT_OPEN=$($null -ne $p)" | Set-Content -Encoding utf8 $out
-            if ($null -ne $p) { "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $out }
-          } finally {
-            try { $app.ExitScada() } catch {}
-            try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
-          }
-          if (!(Select-String -Path $out -Pattern "^PROJECT_OPEN=True$" -Quiet)) { throw "fresh reopen failed" }
+          $src = "C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          $dstRoot = "$env:GITHUB_WORKSPACE\stage2-project"
+          $dst = Join-Path $dstRoot "7341268_Variant7"
+          if (!(Test-Path $src)) { throw "source project folder missing" }
+          if (Test-Path $dstRoot) { Remove-Item $dstRoot -Recurse -Force }
+          New-Item -ItemType Directory -Force $dstRoot | Out-Null
+          Copy-Item $src $dst -Recurse -Force
+          $vav = Join-Path $dst "7341268_Variant7.vav"
+          if (!(Test-Path $vav)) { throw "VAV missing after workspace copy" }
+          $hash = (Get-FileHash $vav -Algorithm SHA256).Hash
+          $size = (Get-Item $vav).Length
+          @(
+            "PROJECT_FOLDER=$dst",
+            "VAV_EXISTS=True",
+            "VAV_SIZE=$size",
+            "VAV_SHA256=$hash"
+          ) | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage2-v3\artifact-project.txt"
+          Get-ChildItem $dst -Recurse -Force | ForEach-Object {
+            "$($_.FullName)`t$($_.Length)"
+          } | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage2-v3\artifact-project-files.txt"
 
-      - name: Upload evidence
+      - name: Upload native project artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-native-project
+          path: stage2-project/**
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload producer evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: masterscada-7341268-stage2-v3
+          name: masterscada-7341268-stage2-v3-evidence
           path: stage2-v3/**
           if-no-files-found: warn
+          retention-days: 90
+
+  fresh-reopen:
+    needs: native-probe
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11 on fresh runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\fresh-reopen" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          "MSI_EXIT_CODE=$($p.ExitCode)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\fresh-reopen\install.txt"
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Download exact project artifact from producer job
+        uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-native-project
+          path: downloaded-project
+
+      - name: Validate downloaded artifact contents
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "$env:GITHUB_WORKSPACE\downloaded-project"
+          $vav = Get-ChildItem $root -Recurse -Filter "7341268_Variant7.vav" -File | Select-Object -First 1
+          if ($null -eq $vav) { throw "downloaded artifact does not contain 7341268_Variant7.vav" }
+          $projectFolder = $vav.Directory.FullName
+          $hash = (Get-FileHash $vav.FullName -Algorithm SHA256).Hash
+          $size = $vav.Length
+          @(
+            "ARTIFACT_DOWNLOADED=True",
+            "DOWNLOADED_VAV=$($vav.FullName)",
+            "DOWNLOADED_PROJECT_FOLDER=$projectFolder",
+            "DOWNLOADED_VAV_SIZE=$size",
+            "DOWNLOADED_VAV_SHA256=$hash"
+          ) | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\fresh-reopen\downloaded-project.txt"
+          $projectFolder | Set-Content -Encoding ascii "$env:GITHUB_WORKSPACE\fresh-reopen\project-folder-path.txt"
+
+      - name: Open downloaded native VAV through MasterSCADA COM
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\fresh-reopen\stage2-fresh-reopen.txt"
+          $projectFolder = (Get-Content "$env:GITHUB_WORKSPACE\fresh-reopen\project-folder-path.txt" -Raw).Trim()
+          $vav = Join-Path $projectFolder "7341268_Variant7.vav"
+          if (!(Test-Path $vav)) { throw "downloaded VAV missing immediately before reopen" }
+          $beforeHash = (Get-FileHash $vav -Algorithm SHA256).Hash
+          $beforeSize = (Get-Item $vav).Length
+          $watchLog = "$env:GITHUB_WORKSPACE\fresh-reopen\modal-watcher.txt"
+          $watcher = Start-Job -ScriptBlock {
+            param($watchLog)
+            $ws = New-Object -ComObject WScript.Shell
+            for ($i=0; $i -lt 90; $i++) {
+              Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "MasterSCADA" -and $_.MainWindowTitle } | ForEach-Object {
+                "$(Get-Date -Format o) PID=$($_.Id) TITLE=$($_.MainWindowTitle)" | Add-Content -Encoding utf8 $watchLog
+                if ($ws.AppActivate($_.Id)) { Start-Sleep -Milliseconds 250; $ws.SendKeys("{ENTER}") }
+              }
+              Start-Sleep -Seconds 1
+            }
+          } -ArgumentList $watchLog
+
+          $app = $null
+          $p = $null
+          try {
+            $app = New-Object -ComObject MasterSCADA.Application
+            "APP_CREATED=True" | Set-Content -Encoding utf8 $out
+            $app.OpenProject(1,$projectFolder,"7341268_Variant7",$false,"","",$false)
+            "OPENPROJECT_RETURNED=True" | Add-Content -Encoding utf8 $out
+            Start-Sleep -Seconds 3
+            $p = $app.CurrentProject
+            "CURRENT_PROJECT=$($null -ne $p)" | Add-Content -Encoding utf8 $out
+            if ($null -eq $p) { throw "CurrentProject is null on fresh runner" }
+
+            try { "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $out } catch { "PROJECT_NAME_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+            try { "PROJECT_PATH=$($p.Path)" | Add-Content -Encoding utf8 $out } catch { "PROJECT_PATH_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+            try { "PROJECT_GUID=$($p.ProjectGUID)" | Add-Content -Encoding utf8 $out } catch {}
+            try { "COMPUTER_COUNT=$($p.ComputerCount)" | Add-Content -Encoding utf8 $out } catch {}
+            try { "SYSTEM_ROOT_PRESENT=$($null -ne $p.SystemRoot)" | Add-Content -Encoding utf8 $out } catch { "SYSTEM_ROOT_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+            try { "OBJ_TREE_PRESENT=$($null -ne $p.ObjTree)" | Add-Content -Encoding utf8 $out } catch { "OBJ_TREE_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+
+            $proc = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "^MasterSCADA$" } | Select-Object -First 1
+            "MASTERSCADA_PROCESS_ALIVE=$($null -ne $proc)" | Add-Content -Encoding utf8 $out
+            if ($null -eq $proc) { throw "MasterSCADA process is not alive after opening project" }
+
+            "PROJECT_OPEN=True" | Add-Content -Encoding utf8 $out
+          } finally {
+            try { Stop-Job $watcher -ErrorAction SilentlyContinue | Out-Null } catch {}
+            try { Receive-Job $watcher -ErrorAction SilentlyContinue | Out-Null } catch {}
+            try { Remove-Job $watcher -Force -ErrorAction SilentlyContinue } catch {}
+            if ($app) {
+              try { $app.ExitScada() } catch {}
+              try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
+            }
+          }
+          Start-Sleep -Seconds 2
+          "VAV_STILL_EXISTS=$(Test-Path $vav)" | Add-Content -Encoding utf8 $out
+          if (Test-Path $vav) {
+            "VAV_SIZE_AFTER=$((Get-Item $vav).Length)" | Add-Content -Encoding utf8 $out
+            "VAV_SHA256_AFTER=$((Get-FileHash $vav -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $out
+            "VAV_SHA256_BEFORE=$beforeHash" | Add-Content -Encoding utf8 $out
+            "VAV_SIZE_BEFORE=$beforeSize" | Add-Content -Encoding utf8 $out
+          }
+
+          if (!(Select-String -Path $out -Pattern "^PROJECT_OPEN=True$" -Quiet)) { throw "fresh reopen validation failed: PROJECT_OPEN" }
+          if (!(Select-String -Path $out -Pattern "^CURRENT_PROJECT=True$" -Quiet)) { throw "fresh reopen validation failed: CurrentProject" }
+          if (!(Select-String -Path $out -Pattern "^MASTERSCADA_PROCESS_ALIVE=True$" -Quiet)) { throw "fresh reopen validation failed: process" }
+          if (!(Select-String -Path $out -Pattern "^VAV_STILL_EXISTS=True$" -Quiet)) { throw "fresh reopen validation failed: VAV disappeared" }
+          "FRESH_REOPEN_VALIDATION=PASS" | Add-Content -Encoding utf8 $out
+          Get-Content $out
+
+      - name: Upload fresh reopen evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-fresh-reopen-validation
+          path: fresh-reopen/**
+          if-no-files-found: error
+          retention-days: 90
