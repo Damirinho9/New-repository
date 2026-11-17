@@ -1,0 +1,493 @@
+name: MasterSCADA 7341268 Stage 5 x86 ROT Computer
+
+on:
+  push:
+    branches: [masterscada-7341268-windows]
+    paths:
+      - ".github/workflows/masterscada-7341268-stage5-x86-rot-computer.yml"
+  workflow_dispatch:
+
+jobs:
+  producer:
+    runs-on: windows-latest
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\stage5-rot" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Download validated native project
+        uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-native-project
+          path: input-project
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44094325226
+
+      - name: Place project in native folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $srcVav=Get-ChildItem "$env:GITHUB_WORKSPACE\input-project" -Recurse -Filter "7341268_Variant7.vav" -File | Select-Object -First 1
+          if($null -eq $srcVav){throw "source VAV missing"}
+          $dst="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          if(Test-Path $dst){Remove-Item $dst -Recurse -Force}
+          Copy-Item $srcVav.Directory.FullName $dst -Recurse -Force
+          $vav="$dst\7341268_Variant7.vav"
+          "SOURCE_SHA256=$((Get-FileHash $vav -Algorithm SHA256).Hash)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage5-rot\source.txt"
+          "SOURCE_SIZE=$((Get-Item $vav).Length)" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage5-rot\source.txt"
+
+      - name: Compile x86 ROT mutator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $src=@'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Text;
+          using System.Threading;
+          using System.Collections.Generic;
+          using System.Runtime.InteropServices;
+          using System.Runtime.InteropServices.ComTypes;
+
+          class Program {
+            [DllImport("ole32.dll")]
+            static extern int GetRunningObjectTable(int reserved, out IRunningObjectTable prot);
+            [DllImport("ole32.dll")]
+            static extern int CreateBindCtx(int reserved, out IBindCtx ppbc);
+
+            static string log;
+            static void L(string s){File.AppendAllText(log,s+Environment.NewLine,Encoding.UTF8);}
+
+            static object FindApplication(string expectedPath) {
+              IRunningObjectTable rot=null;
+              int hr=GetRunningObjectTable(0,out rot);
+              L("ROT_HR="+hr);
+              if(hr!=0 || rot==null) return null;
+              IEnumMoniker em=null;
+              rot.EnumRunning(out em);
+              var mons=new IMoniker[1];
+              int idx=0;
+              while(em.Next(1,mons,IntPtr.Zero)==0) {
+                idx++;
+                object obj=null;
+                IBindCtx ctx=null;
+                try {
+                  CreateBindCtx(0,out ctx);
+                  string dn="";
+                  try{mons[0].GetDisplayName(ctx,null,out dn);}catch{}
+                  L("ROT["+idx+"]="+dn);
+                  rot.GetObject(mons[0],out obj);
+                  if(obj==null) continue;
+                  try {
+                    dynamic a=obj;
+                    object cur=null;
+                    try{cur=a.CurrentProject;}catch(Exception e){L("  CURRENT_ERR="+e.GetType().Name+": "+e.Message);}
+                    L("  CURRENT_PRESENT="+(cur!=null));
+                    if(cur!=null) {
+                      dynamic p=cur;
+                      string path=""; string name="";
+                      try{path=Convert.ToString(p.Path);}catch{}
+                      try{name=Convert.ToString(p.Name);}catch{}
+                      L("  PROJECT_PATH="+path);
+                      L("  PROJECT_NAME="+name);
+                      if((path??"").IndexOf("7341268_Variant7",StringComparison.OrdinalIgnoreCase)>=0 ||
+                         (name??"").IndexOf("7341268_Variant7",StringComparison.OrdinalIgnoreCase)>=0) {
+                        L("ROT_MATCH=True");
+                        return obj;
+                      }
+                    }
+                  } catch(Exception e) {
+                    L("  PROBE_ERR="+e.GetType().FullName+": "+e.Message);
+                  }
+                } catch(Exception e) {
+                  L("  ROT_OBJECT_ERR="+e.GetType().FullName+": "+e.Message);
+                } finally {
+                  if(ctx!=null && Marshal.IsComObject(ctx)){try{Marshal.ReleaseComObject(ctx);}catch{}}
+                  if(mons[0]!=null && Marshal.IsComObject(mons[0])){try{Marshal.ReleaseComObject(mons[0]);}catch{}}
+                  // Do not release obj when returning it. Non-matching objects are released below.
+                }
+                if(obj!=null && Marshal.IsComObject(obj)){try{Marshal.ReleaseComObject(obj);}catch{}}
+              }
+              L("ROT_COUNT="+idx);
+              return null;
+            }
+
+            [STAThread]
+            static int Main(string[] args) {
+              string ws=Environment.GetEnvironmentVariable("GITHUB_WORKSPACE");
+              log=Path.Combine(ws,"stage5-rot","rot-mutation.txt");
+              File.WriteAllText(log,"X86_ROT_MUTATOR_START"+Environment.NewLine,Encoding.UTF8);
+              string clsid="{33A04CE5-4692-11D4-B153-87EB14408E58}";
+              string progId="Vavobj.Computer.1";
+              string desiredName="АРМ оператора";
+              object appObj=null,raw=null;
+              try {
+                for(int attempt=1;attempt<=8 && appObj==null;attempt++){
+                  L("ROT_SCAN_ATTEMPT="+attempt);
+                  appObj=FindApplication(@"C:\MasterSCADA Projects\Projects\7341268_Variant7");
+                  if(appObj==null) Thread.Sleep(1500);
+                }
+                if(appObj==null) throw new Exception("MasterSCADA application with CurrentProject was not found in ROT");
+
+                dynamic app=appObj;
+                dynamic p=app.CurrentProject;
+                if(p==null) throw new Exception("ROT application CurrentProject is null");
+                L("PROJECT_NAME="+Convert.ToString(p.Name));
+                L("PROJECT_PATH="+Convert.ToString(p.Path));
+                int before=Convert.ToInt32(p.ComputerCount);
+                L("COMPUTER_COUNT_BEFORE="+before);
+
+                dynamic existing=null;
+                for(int i=0;i<before;i++){
+                  try{
+                    dynamic c=p.get_Computer(i);
+                    string cc=""; try{cc=Convert.ToString(c.ClassInfoObject.clsid);}catch{}
+                    L("BEFORE["+i+"].Name="+Convert.ToString(c.Name)+" CLSID="+cc+
+                      " ItemType="+Convert.ToString(c.ItemType)+" ObjectType="+Convert.ToString(c.ObjectType));
+                    if(String.Equals(cc,clsid,StringComparison.OrdinalIgnoreCase)) existing=c;
+                  }catch(Exception e){L("BEFORE["+i+"].ERR="+e.Message);}
+                }
+
+                dynamic node=existing;
+                if(node==null) {
+                  Type t=Type.GetTypeFromProgID(progId,true);
+                  raw=Activator.CreateInstance(t);
+                  L("RAW_COMPUTER_CREATED=True");
+                  dynamic root=p.SystemRoot;
+                  try{
+                    node=root.InsertExistingObjectEx(raw,clsid,desiredName,null,true);
+                    L("INSERT_EXISTING_EX_RETURNED="+(node!=null));
+                  }catch(Exception e){
+                    L("INSERT_EXISTING_EX_ERROR="+e.GetType().FullName+": "+e.Message);
+                  }
+                  if(node==null){
+                    try{
+                      node=root.InsertExistingObject(raw,clsid,desiredName,null);
+                      L("INSERT_EXISTING_RETURNED="+(node!=null));
+                    }catch(Exception e){
+                      L("INSERT_EXISTING_ERROR="+e.GetType().FullName+": "+e.Message);
+                    }
+                  }
+                  if(node==null) throw new Exception("Computer insertion returned null");
+                  try{node.Rename(desiredName,1);}catch(Exception e){L("RENAME_ERR="+e.Message);}
+                } else {
+                  L("EXISTING_COMPUTER_REUSED=True");
+                  try{node.Rename(desiredName,1);}catch{}
+                }
+
+                try{L("NODE.Name="+Convert.ToString(node.Name));}catch{}
+                try{L("NODE.DisplayName="+Convert.ToString(node.DisplayName));}catch{}
+                try{L("NODE.ItemType="+Convert.ToString(node.ItemType));}catch{}
+                try{L("NODE.ObjectType="+Convert.ToString(node.ObjectType));}catch{}
+                try{L("NODE.CLSID="+Convert.ToString(node.ClassInfoObject.clsid));}catch{}
+                try{L("NODE.FullName="+Convert.ToString(node.FullName));}catch{}
+
+                int after=Convert.ToInt32(p.ComputerCount);
+                L("COMPUTER_COUNT_AFTER_INSERT="+after);
+                if(after<1) throw new Exception("ComputerCount < 1 after insert");
+
+                bool found=false;
+                for(int i=0;i<after;i++){
+                  dynamic c=p.get_Computer(i);
+                  string cc="";try{cc=Convert.ToString(c.ClassInfoObject.clsid);}catch{}
+                  L("AFTER["+i+"].Name="+Convert.ToString(c.Name)+" CLSID="+cc+
+                    " ItemType="+Convert.ToString(c.ItemType)+" ObjectType="+Convert.ToString(c.ObjectType)+
+                    " FullName="+Convert.ToString(c.FullName));
+                  if(String.Equals(cc,clsid,StringComparison.OrdinalIgnoreCase)) found=true;
+                }
+                L("EXPECTED_CLSID_FOUND="+found);
+                if(!found) throw new Exception("Expected computer CLSID missing before save");
+
+                try{
+                  dynamic sys=p.SysTree;
+                  sys.IsDirty();
+                  L("SYSTREE_ISDIRTY_CALLED=True");
+                }catch(Exception e){L("SYSTREE_ISDIRTY_ERROR="+e.GetType().FullName+": "+e.Message);}
+
+                p.Save();
+                L("PROJECT_SAVE=True");
+                Thread.Sleep(3000);
+                L("ROT_MUTATION=PASS");
+                return 0;
+              } catch(Exception e) {
+                L("FATAL="+e.GetType().FullName+": "+e.Message);
+                return 2;
+              } finally {
+                if(raw!=null && Marshal.IsComObject(raw)){try{Marshal.ReleaseComObject(raw);}catch{}}
+                if(appObj!=null && Marshal.IsComObject(appObj)){try{Marshal.ReleaseComObject(appObj);}catch{}}
+              }
+            }
+          }
+          '@
+          $srcPath="$env:GITHUB_WORKSPACE\stage5-rot\RotMutator.cs"
+          Set-Content $srcPath $src -Encoding UTF8
+          $csc=Get-ChildItem "C:\Windows\Microsoft.NET\Framework" -Recurse -Filter csc.exe -File | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if(!$csc){throw "x86 csc not found"}
+          & $csc /nologo /platform:x86 /reference:Microsoft.CSharp.dll /out:"$env:GITHUB_WORKSPACE\stage5-rot\rot-mutator.exe" $srcPath
+          if($LASTEXITCODE -ne 0){throw "x86 ROT mutator compile failed"}
+
+      - name: Launch VAV and mutate exact running instance through x86 ROT
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $vav="C:\MasterSCADA Projects\Projects\7341268_Variant7\7341268_Variant7.vav"
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
+          $watcher=Start-Job -ScriptBlock {
+            param($log)
+            $ws=New-Object -ComObject WScript.Shell
+            for($i=0;$i -lt 180;$i++){
+              Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Where-Object{$_.MainWindowTitle}|ForEach-Object{
+                "$(Get-Date -Format o) PID=$($_.Id) TITLE=$($_.MainWindowTitle)"|Add-Content -Encoding utf8 $log
+                if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 200;$ws.SendKeys("{ENTER}")}
+              }
+              Start-Sleep -Milliseconds 500
+            }
+          } -ArgumentList "$env:GITHUB_WORKSPACE\stage5-rot\modal.txt"
+          $p=$null
+          try{
+            $p=Start-Process $exe -ArgumentList @($vav) -PassThru
+            "MASTER_PID=$($p.Id)"|Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage5-rot\launch.txt"
+            Start-Sleep -Seconds 14
+            "MASTER_ALIVE=$(($null -ne (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)))"|Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage5-rot\launch.txt"
+            & "$env:GITHUB_WORKSPACE\stage5-rot\rot-mutator.exe"
+            $code=$LASTEXITCODE
+            if(Test-Path "$env:GITHUB_WORKSPACE\stage5-rot\rot-mutation.txt"){Get-Content "$env:GITHUB_WORKSPACE\stage5-rot\rot-mutation.txt"}
+            if($code -ne 0){throw "ROT mutator failed $code"}
+            if(!(Select-String -Path "$env:GITHUB_WORKSPACE\stage5-rot\rot-mutation.txt" -Pattern '^ROT_MUTATION=PASS$' -Quiet)){throw "ROT mutation marker missing"}
+          } finally {
+            try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Receive-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
+            Start-Sleep -Seconds 2
+            if($p){try{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}catch{}}
+            Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+          }
+
+      - name: Copy project after shutdown
+        if: always()
+        shell: pwsh
+        run: |
+          $src="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          $dst="$env:GITHUB_WORKSPACE\stage5-rot\project\7341268_Variant7"
+          if(Test-Path "$src\7341268_Variant7.vav"){
+            New-Item -ItemType Directory -Force (Split-Path $dst -Parent)|Out-Null
+            Copy-Item $src $dst -Recurse -Force
+          }
+
+      - name: Native CFB persistence check
+        if: always()
+        shell: python
+        run: |
+          import struct,pathlib,hashlib
+          root=pathlib.Path(r"${{ github.workspace }}")/"stage5-rot"
+          p=root/"project"/"7341268_Variant7"/"7341268_Variant7.vav"
+          if not p.exists():
+              (root/"native-cfb.txt").write_text("VAV_EXISTS=False\n",encoding="utf-8")
+              raise SystemExit("VAV missing")
+          d=p.read_bytes()
+          if d[:8]!=bytes.fromhex("d0cf11e0a1b11ae1"): raise SystemExit("not CFB")
+          ss=1<<struct.unpack_from("<H",d,30)[0];mini=1<<struct.unpack_from("<H",d,32)[0]
+          nfat=struct.unpack_from("<I",d,44)[0];firstdir=struct.unpack_from("<I",d,48)[0]
+          cutoff=struct.unpack_from("<I",d,56)[0];firstmini=struct.unpack_from("<I",d,60)[0]
+          FREE=0xffffffff;END=0xfffffffe;NO=0xffffffff
+          def sec(n):return d[(n+1)*ss:(n+2)*ss]
+          dif=[x for x in struct.unpack_from("<109I",d,76) if x!=FREE][:nfat]
+          fat=[]
+          for x in dif:fat+=list(struct.unpack("<%dI"%(ss//4),sec(x)))
+          def chain(st,tab):
+              o=[];seen=set();x=st
+              while x not in (END,FREE) and x<len(tab) and x not in seen:
+                  o.append(x);seen.add(x);x=tab[x]
+              return o
+          db=b"".join(sec(x) for x in chain(firstdir,fat))
+          E=[]
+          for o in range(0,len(db),128):
+              q=db[o:o+128]
+              if len(q)<128:break
+              nl=struct.unpack_from("<H",q,64)[0]
+              name=q[:max(0,nl-2)].decode("utf-16le","replace") if nl>=2 else ""
+              typ=q[66];left,right,child=struct.unpack_from("<III",q,68)
+              start=struct.unpack_from("<I",q,116)[0];size=struct.unpack_from("<Q",q,120)[0]
+              E.append(dict(name=name,typ=typ,left=left,right=right,child=child,start=start,size=size))
+          rootent=E[0]
+          mfb=b"".join(sec(x) for x in chain(firstmini,fat))
+          minifat=list(struct.unpack("<%dI"%(len(mfb)//4),mfb)) if mfb else []
+          ministream=b"".join(sec(x) for x in chain(rootent["start"],fat))[:rootent["size"]]
+          def read(e):
+              if e["size"]<cutoff and e["typ"]==2:
+                  return b"".join(ministream[x*mini:(x+1)*mini] for x in chain(e["start"],minifat))[:e["size"]]
+              return b"".join(sec(x) for x in chain(e["start"],fat))[:e["size"]]
+          def rb(i):
+              out=[];seen=set()
+              def rec(x):
+                  if x==NO or x>=len(E) or x in seen:return
+                  seen.add(x);rec(E[x]["left"]);out.append(x);rec(E[x]["right"])
+              rec(i);return out
+          def kids(i):return rb(E[i]["child"]) if E[i]["child"]!=NO else []
+          sid=next(i for i in kids(0) if E[i]["name"]=="SysTree")
+          cid=next(i for i in kids(sid) if E[i]["name"]=="ItemCount")
+          count=struct.unpack("<I",read(E[cid]))[0]
+          sha=hashlib.sha256(d).hexdigest().upper()
+          txt=f"VAV_EXISTS=True\nSYSTREE_ITEM_COUNT={count}\nVAV_SIZE={len(d)}\nVAV_SHA256={sha}\nPERSISTED_COMPUTER_NODE={'True' if count>=2 else 'False'}\n"
+          (root/"native-cfb.txt").write_text(txt,encoding="utf-8")
+          print(txt)
+          if count<2:raise SystemExit("SysTree ItemCount < 2")
+
+      - name: Upload producer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-x86-rot-producer
+          path: stage5-rot/**
+          if-no-files-found: error
+          retention-days: 90
+
+  fresh-reopen:
+    needs: producer
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\fresh" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/";$dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw $n}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-x86-rot-producer
+          path: producer
+      - name: Fresh reopen and verify via x86 ROT
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $srcVav=Get-ChildItem "$env:GITHUB_WORKSPACE\producer" -Recurse -Filter "7341268_Variant7.vav" -File|Select-Object -First 1
+          if($null -eq $srcVav){throw "producer VAV missing"}
+          $dst="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          if(Test-Path $dst){Remove-Item $dst -Recurse -Force}
+          Copy-Item $srcVav.Directory.FullName $dst -Recurse -Force
+
+          $src=@'
+          using System;
+          using System.IO;
+          using System.Text;
+          using System.Threading;
+          using System.Runtime.InteropServices;
+          using System.Runtime.InteropServices.ComTypes;
+          class V {
+            [DllImport("ole32.dll")] static extern int GetRunningObjectTable(int r,out IRunningObjectTable rot);
+            [DllImport("ole32.dll")] static extern int CreateBindCtx(int r,out IBindCtx ctx);
+            static string log;
+            static void L(string s){File.AppendAllText(log,s+Environment.NewLine,Encoding.UTF8);}
+            static object Find(){
+              IRunningObjectTable rot; if(GetRunningObjectTable(0,out rot)!=0)return null;
+              IEnumMoniker em;rot.EnumRunning(out em);var m=new IMoniker[1];
+              while(em.Next(1,m,IntPtr.Zero)==0){
+                object o=null;
+                try{
+                  rot.GetObject(m[0],out o);
+                  if(o!=null){
+                    dynamic a=o;object cur=null;try{cur=a.CurrentProject;}catch{}
+                    if(cur!=null){
+                      dynamic p=cur;string path="";try{path=Convert.ToString(p.Path);}catch{}
+                      if((path??"").IndexOf("7341268_Variant7",StringComparison.OrdinalIgnoreCase)>=0)return o;
+                    }
+                  }
+                }catch{}
+                if(o!=null&&Marshal.IsComObject(o)){try{Marshal.ReleaseComObject(o);}catch{}}
+              }
+              return null;
+            }
+            [STAThread] static int Main(){
+              string ws=Environment.GetEnvironmentVariable("GITHUB_WORKSPACE");
+              log=Path.Combine(ws,"fresh","fresh-reopen.txt");
+              File.WriteAllText(log,"FRESH_X86_ROT_START"+Environment.NewLine,Encoding.UTF8);
+              object ao=null;
+              try{
+                for(int i=0;i<8&&ao==null;i++){ao=Find();if(ao==null)Thread.Sleep(1500);}
+                if(ao==null)throw new Exception("app not found in ROT");
+                dynamic a=ao;dynamic p=a.CurrentProject;
+                int count=Convert.ToInt32(p.ComputerCount);L("COMPUTER_COUNT="+count);
+                if(count<1)throw new Exception("ComputerCount < 1");
+                string expected="{33A04CE5-4692-11D4-B153-87EB14408E58}";bool found=false;
+                for(int i=0;i<count;i++){
+                  dynamic c=p.get_Computer(i);string cc="";try{cc=Convert.ToString(c.ClassInfoObject.clsid);}catch{}
+                  L("COMPUTER["+i+"].Name="+Convert.ToString(c.Name));
+                  L("COMPUTER["+i+"].ItemType="+Convert.ToString(c.ItemType));
+                  L("COMPUTER["+i+"].ObjectType="+Convert.ToString(c.ObjectType));
+                  L("COMPUTER["+i+"].CLSID="+cc);
+                  L("COMPUTER["+i+"].FullName="+Convert.ToString(c.FullName));
+                  if(String.Equals(cc,expected,StringComparison.OrdinalIgnoreCase))found=true;
+                }
+                L("EXPECTED_CLSID_FOUND="+found);
+                if(!found)throw new Exception("expected CLSID missing");
+                L("FRESH_REOPEN_VALIDATION=PASS");return 0;
+              }catch(Exception e){L("FATAL="+e.GetType().FullName+": "+e.Message);return 2;}
+              finally{if(ao!=null&&Marshal.IsComObject(ao)){try{Marshal.ReleaseComObject(ao);}catch{}}}
+            }
+          }
+          '@
+          Set-Content "$env:GITHUB_WORKSPACE\fresh\Verify.cs" $src -Encoding UTF8
+          $csc=Get-ChildItem "C:\Windows\Microsoft.NET\Framework" -Recurse -Filter csc.exe -File|Sort-Object FullName -Descending|Select-Object -First 1 -ExpandProperty FullName
+          & $csc /nologo /platform:x86 /reference:Microsoft.CSharp.dll /out:"$env:GITHUB_WORKSPACE\fresh\verify.exe" "$env:GITHUB_WORKSPACE\fresh\Verify.cs"
+          if($LASTEXITCODE -ne 0){throw "compile verify failed"}
+
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe";$vav="$dst\7341268_Variant7.vav"
+          $watcher=Start-Job -ScriptBlock{
+            $ws=New-Object -ComObject WScript.Shell
+            for($i=0;$i -lt 180;$i++){
+              Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Where-Object{$_.MainWindowTitle}|ForEach-Object{
+                if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 200;$ws.SendKeys("{ENTER}")}
+              }
+              Start-Sleep -Milliseconds 500
+            }
+          }
+          $p=$null
+          try{
+            $p=Start-Process $exe -ArgumentList @($vav) -PassThru
+            Start-Sleep -Seconds 14
+            & "$env:GITHUB_WORKSPACE\fresh\verify.exe"
+            $code=$LASTEXITCODE
+            Get-Content "$env:GITHUB_WORKSPACE\fresh\fresh-reopen.txt"
+            if($code -ne 0){throw "fresh verify failed $code"}
+            if(!(Select-String -Path "$env:GITHUB_WORKSPACE\fresh\fresh-reopen.txt" -Pattern '^FRESH_REOPEN_VALIDATION=PASS$' -Quiet)){throw "fresh marker missing"}
+          }finally{
+            try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
+            if($p){try{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}catch{}}
+            Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+      - name: Upload fresh evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-x86-rot-fresh
+          path: fresh/**
+          if-no-files-found: error
+          retention-days: 90
