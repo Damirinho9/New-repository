@@ -1,0 +1,153 @@
+name: MasterSCADA 7341268 Stage 5 ProjectHlp Service Probe
+
+on:
+  push:
+    branches: [masterscada-7341268-windows]
+    paths:
+      - ".github/workflows/masterscada-7341268-stage5-projecthlp-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\hlpprobe"|Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer"|Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/";$dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw $n}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-native-project
+          path: input-project
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44094325226
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-stage4-reference-validation
+          path: interop-input
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44106772811
+
+      - name: Probe ProjectHlp service interfaces and factory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $src=Get-ChildItem "$env:GITHUB_WORKSPACE\input-project" -Recurse -Filter "7341268_Variant7.vav" -File|Select-Object -First 1
+          if($null -eq $src){throw "source VAV missing"}
+          $dst="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          if(Test-Path $dst){Remove-Item $dst -Recurse -Force}
+          Copy-Item $src.Directory.FullName $dst -Recurse -Force
+
+          $interop=Get-ChildItem "$env:GITHUB_WORKSPACE\interop-input" -Recurse -Filter "MasterSCADA.Interop.dll" -File|Select-Object -First 1 -ExpandProperty FullName
+          Add-Type -Path $interop
+          $out="$env:GITHUB_WORKSPACE\hlpprobe\probe.txt"
+
+          function Get-TypedCom([object]$obj,[Type]$iface,[string]$tag){
+            if($null -eq $obj){"$tag.OBJECT_NULL=True"|Add-Content -Encoding utf8 $out;return $null}
+            $unk=[IntPtr]::Zero;$qi=[IntPtr]::Zero
+            try{
+              $unk=[Runtime.InteropServices.Marshal]::GetIUnknownForObject($obj)
+              $iid=$iface.GUID
+              $hr=[Runtime.InteropServices.Marshal]::QueryInterface($unk,[ref]$iid,[ref]$qi)
+              "$tag.IID=$iid"|Add-Content -Encoding utf8 $out
+              "$tag.QI_HR=$hr"|Add-Content -Encoding utf8 $out
+              "$tag.QI_PTR_ZERO=$($qi -eq [IntPtr]::Zero)"|Add-Content -Encoding utf8 $out
+              if($hr -eq 0 -and $qi -ne [IntPtr]::Zero){
+                try{
+                  $typed=[Runtime.InteropServices.Marshal]::GetTypedObjectForIUnknown($qi,$iface)
+                  "$tag.GET_TYPED=True"|Add-Content -Encoding utf8 $out
+                  return $typed
+                }catch{
+                  "$tag.GET_TYPED_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+                }
+              }
+            }finally{
+              if($qi -ne [IntPtr]::Zero){[Runtime.InteropServices.Marshal]::Release($qi)|Out-Null}
+              if($unk -ne [IntPtr]::Zero){[Runtime.InteropServices.Marshal]::Release($unk)|Out-Null}
+            }
+            return $null
+          }
+
+          $app=$null
+          try{
+            $app=New-Object -ComObject MasterSCADA.Application
+            "APP_CREATED=True"|Set-Content -Encoding utf8 $out
+            $p=$app.OpenProjectTemp(1,"C:\MasterSCADA Projects\Projects","7341268_Variant7",$false,"","",$false)
+            "PROJECT_RETURNED=$($null -ne $p)"|Add-Content -Encoding utf8 $out
+            if($null -eq $p){throw "project null"}
+            try{$app.CurrentProject=$p}catch{}
+            "PROJECT_HLP_PRESENT=$($null -ne $p.ProjectHlp)"|Add-Content -Encoding utf8 $out
+            if($null -ne $p.ProjectHlp){
+              "PROJECT_HLP_RUNTIME_TYPE=$($p.ProjectHlp.GetType().FullName)"|Add-Content -Encoding utf8 $out
+            }
+
+            $holder=Get-TypedCom $p.ProjectHlp ([MasterSCADAInterop.IServicesHolder]) "SERVICES_HOLDER"
+            "SERVICES_HOLDER_PRESENT=$($null -ne $holder)"|Add-Content -Encoding utf8 $out
+
+            if($null -ne $holder){
+              $factoryIface=[MasterSCADAInterop.IObjectFactoryService]
+              $factoryGuid=$factoryIface.GUID
+              "FACTORY_IID=$factoryGuid"|Add-Content -Encoding utf8 $out
+              $serviceNames=@(
+                "ObjectFactoryService",
+                "IObjectFactoryService",
+                "MasterSCADAInterop.IObjectFactoryService",
+                $factoryGuid.ToString("B"),
+                $factoryGuid.ToString()
+              )
+              foreach($s in $serviceNames){
+                try{
+                  $svc=$holder.GetService($s)
+                  "GETSERVICE[$s].RETURNED=$($null -ne $svc)"|Add-Content -Encoding utf8 $out
+                  if($null -ne $svc){
+                    $typedFactory=Get-TypedCom $svc $factoryIface "FACTORY_FROM_$s"
+                    if($null -ne $typedFactory){
+                      foreach($id in @(
+                        "{33A04CE5-4692-11D4-B153-87EB14408E58}",
+                        "Vavobj.Computer.1",
+                        "Компьютер"
+                      )){
+                        try{
+                          $o=$typedFactory.CreateNetObject($id)
+                          "CREATE_NET_OBJECT[$id].RETURNED=$($null -ne $o)"|Add-Content -Encoding utf8 $out
+                          if($null -ne $o){"CREATE_NET_OBJECT[$id].TYPE=$($o.GetType().FullName)"|Add-Content -Encoding utf8 $out}
+                        }catch{
+                          "CREATE_NET_OBJECT[$id].ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+                        }
+                      }
+                    }
+                  }
+                }catch{
+                  "GETSERVICE[$s].ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+                }
+              }
+            }
+            "PROJECTHLP_PROBE_COMPLETE=True"|Add-Content -Encoding utf8 $out
+          }finally{
+            if($app){try{$app.CloseProjectTemp("7341268_Variant7")}catch{};try{$app.ExitScada()}catch{}}
+          }
+          Get-Content $out
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: masterscada-7341268-stage5-projecthlp-probe
+          path: hlpprobe/**
+          if-no-files-found: error
+          retention-days: 90
