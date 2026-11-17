@@ -1,0 +1,191 @@
+name: MasterSCADA 7341268 Stage 2 UI Build
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-ui.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\msui" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Create native project and automate Add menu
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          Add-Type -AssemblyName UIAutomationClient
+          Add-Type -AssemblyName UIAutomationTypes
+          Add-Type -AssemblyName System.Windows.Forms
+
+          $log="$env:GITHUB_WORKSPACE\msui\ui-build.txt"
+          $dump="$env:GITHUB_WORKSPACE\msui\ui-dump.txt"
+          $projectsFolder="C:\MasterSCADA Projects\Projects"
+          $id="7341268_Variant7"
+          $folder=Join-Path $projectsFolder $id
+          if(Test-Path $folder){Remove-Item $folder -Recurse -Force -ErrorAction SilentlyContinue}
+
+          function Invoke-AutoElementByName([System.Windows.Automation.AutomationElement]$root,[string]$name,[string]$typeName){
+            $all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+            for($i=0;$i -lt $all.Count;$i++){
+              $e=$all.Item($i)
+              try{
+                if($e.Current.Name -eq $name -and ($typeName -eq "" -or $e.Current.ControlType.ProgrammaticName -like "*$typeName*")){
+                  "FOUND name=$name type=$($e.Current.ControlType.ProgrammaticName) enabled=$($e.Current.IsEnabled)"|Add-Content -Encoding utf8 $log
+                  $pat=$null
+                  if($e.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$pat)){
+                    ([System.Windows.Automation.InvokePattern]$pat).Invoke()
+                    return $true
+                  }
+                  if($e.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern,[ref]$pat)){
+                    ([System.Windows.Automation.ExpandCollapsePattern]$pat).Expand()
+                    return $true
+                  }
+                  if($e.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pat)){
+                    ([System.Windows.Automation.SelectionItemPattern]$pat).Select()
+                    return $true
+                  }
+                }
+              }catch{}
+            }
+            return $false
+          }
+
+          function Select-TreeByName([System.Windows.Automation.AutomationElement]$root,[string]$name){
+            $all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+            for($i=0;$i -lt $all.Count;$i++){
+              $e=$all.Item($i)
+              try{
+                if($e.Current.Name -eq $name -and $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::TreeItem){
+                  $pat=$null
+                  if($e.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pat)){
+                    ([System.Windows.Automation.SelectionItemPattern]$pat).Select()
+                    "SELECTED_TREE=$name"|Add-Content -Encoding utf8 $log
+                    return $true
+                  }
+                }
+              }catch{}
+            }
+            "TREE_NOT_FOUND=$name"|Add-Content -Encoding utf8 $log
+            return $false
+          }
+
+          function Dump-UI([System.Windows.Automation.AutomationElement]$root,[string]$tag){
+            "=== $tag ==="|Add-Content -Encoding utf8 $dump
+            $all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+            for($i=0;$i -lt $all.Count;$i++){
+              try{
+                $e=$all.Item($i)
+                $ct=$e.Current.ControlType.ProgrammaticName
+                if($ct -match "MenuItem|TreeItem|Button|TabItem|Window|Edit"){
+                  ("{0} NAME={1} ID={2} EN={3}" -f $ct,$e.Current.Name,$e.Current.AutomationId,$e.Current.IsEnabled)|Add-Content -Encoding utf8 $dump
+                }
+              }catch{}
+            }
+          }
+
+          $watchLog="$env:GITHUB_WORKSPACE\msui\modal.txt"
+          $watcher=Start-Job -ScriptBlock {
+            param($watchLog)
+            $ws=New-Object -ComObject WScript.Shell
+            for($i=0;$i -lt 50;$i++){
+              Get-Process -ErrorAction SilentlyContinue | Where-Object {$_.ProcessName -match "MasterSCADA"} | ForEach-Object {
+                if($_.MainWindowTitle){
+                  "$(Get-Date -Format o) PID=$($_.Id) TITLE=$($_.MainWindowTitle)"|Add-Content -Encoding utf8 $watchLog
+                  if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 150;$ws.SendKeys("{ENTER}")}
+                }
+              }
+              Start-Sleep -Milliseconds 500
+            }
+          } -ArgumentList $watchLog
+
+          $app=New-Object -ComObject MasterSCADA.Application
+          try {
+            $app.CreateProject(1,$projectsFolder,$id,"Система водяного отопления - вариант 7","")
+            "CREATE_RETURNED=true"|Out-File -Encoding utf8 $log
+            Start-Sleep -Seconds 3
+            $p=$app.CurrentProject
+            if($null -eq $p){throw "CurrentProject null"}
+            "PROJECT=$($p.Name) PATH=$($p.Path) COMPUTERS=$($p.ComputerCount)"|Add-Content -Encoding utf8 $log
+
+            $hwnd=[IntPtr]([int64]$app.MainWindowHandle)
+            "HWND=$hwnd"|Add-Content -Encoding utf8 $log
+            $root=[System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+            if($null -eq $root){throw "Automation root null"}
+            Dump-UI $root "BEFORE"
+
+            $selected=Select-TreeByName $root "Система"
+            $add=Invoke-AutoElementByName $root "Добавить" "MenuItem"
+            "ADD_MENU_INVOKED=$add"|Add-Content -Encoding utf8 $log
+            Start-Sleep -Seconds 1
+            Dump-UI $root "ADD_MENU_OPEN"
+            $computer=Invoke-AutoElementByName $root "Компьютер" "MenuItem"
+            "COMPUTER_MENU_INVOKED=$computer"|Add-Content -Encoding utf8 $log
+            Start-Sleep -Seconds 3
+            "COMPUTERS_AFTER=$($p.ComputerCount)"|Add-Content -Encoding utf8 $log
+            Dump-UI $root "AFTER_COMPUTER"
+
+            if($p.ComputerCount -gt 0){
+              $c=$p.Computer(0)
+              try{$c.Rename("Компьютер системы",1)}catch{
+                try{$c.Name="Компьютер системы"}catch{}
+              }
+              "COMPUTER0 NAME=$($c.Name) DISPLAY=$($c.DisplayName) TYPE=$($c.ObjectType) ITEM=$($c.ItemType) CLSID=$($c.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $log
+            }
+
+            $p.Save()
+            "SAVE=true"|Add-Content -Encoding utf8 $log
+          } finally {
+            try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
+            try{$app.ExitScada()}catch{}
+            try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
+          }
+
+          Start-Sleep -Seconds 2
+          $target=Join-Path $folder "$id.vav"
+          if(Test-Path $target){
+            "VAV=$target SIZE=$((Get-Item $target).Length) SHA256=$((Get-FileHash $target -Algorithm SHA256).Hash)"|Add-Content -Encoding utf8 $log
+            Copy-Item $folder "$env:GITHUB_WORKSPACE\msui\$id" -Recurse -Force
+          } else {throw "native VAV missing"}
+
+      - name: Validate VAV opens
+        shell: pwsh
+        run: |
+          $v="$env:GITHUB_WORKSPACE\msui\7341268_Variant7\7341268_Variant7.vav"
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          if(!(Test-Path $v)){throw "VAV not copied"}
+          $p=Start-Process $exe -ArgumentList @($v) -PassThru
+          Start-Sleep -Seconds 10
+          $alive=Get-Process -Id $p.Id -ErrorAction SilentlyContinue
+          "OPEN_ALIVE=$($null -ne $alive)"|Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\msui\open.txt"
+          if($null -eq $alive){throw "VAV did not remain open"}
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-ui
+          path: msui/**
+          if-no-files-found: warn
