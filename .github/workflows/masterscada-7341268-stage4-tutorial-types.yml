@@ -161,15 +161,27 @@ jobs:
             try {
               $app=New-Object -ComObject MasterSCADA.Application
               try {
-                $app.OpenProject(1,$baseFolder,$projectId,$false,"","",$false)
-                "OPENPROJECT_RETURNED=True" | Add-Content -Encoding utf8 $out
+                $ret=$app.OpenProject(1,$baseFolder,$projectId,$false,"","",$false)
+                "OPENPROJECT_RETURNED=True RETURN=$ret" | Add-Content -Encoding utf8 $out
               } catch {
                 "OPENPROJECT_EXCEPTION=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
-                continue
               }
 
               Start-Sleep -Seconds 3
-              $p=$app.CurrentProject
+              $p=$null
+              try{$p=$app.CurrentProject}catch{"CURRENT_PROJECT_EXCEPTION=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out}
+              try{"PROJECTS_COUNT_AFTER_OPEN=$($app.Projects.Count)"|Add-Content -Encoding utf8 $out}catch{}
+              if($null -eq $p){
+                try{
+                  foreach($proj in $app.Projects){
+                    if($null -ne $proj){
+                      $p=$proj
+                      "PROJECT_RECOVERED_FROM_COLLECTION=True"|Add-Content -Encoding utf8 $out
+                      break
+                    }
+                  }
+                }catch{"PROJECT_COLLECTION_ENUM_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out}
+              }
               if($null -eq $p){
                 "CURRENT_PROJECT_NULL=True" | Add-Content -Encoding utf8 $out
                 continue
