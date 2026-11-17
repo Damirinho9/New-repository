@@ -367,10 +367,17 @@ jobs:
 
           print("PROVEN_RUNTIME_EXISTING_OPEN_PASS")
           print("OPENED_DOCUMENT_TYPE=", type(doc).__name__)
-          try:
-              print("OPENED_DOCUMENT_REFERENCE=", doc.GetReference())
-          except BaseException as exc:
-              print("OPENED_DOCUMENT_REFERENCE_ERROR=", repr(exc))
+
+          # Match the only runtime path where the same BASE exposed a real
+          # active 2D view: explicitly activate both at application and
+          # document level before asking IViews for GetActiveView().
+          set_active_document = getattr(app, "SetActiveDocument", None)
+          if set_active_document is not None:
+              call("APP_SET_ACTIVE_DOCUMENT", lambda: set_active_document(doc))
+          doc_set_active = getattr(doc, "SetActive", None)
+          if doc_set_active is not None:
+              call("DOCUMENT_SET_ACTIVE", doc_set_active)
+          call("ACTIVE_DOCUMENT_AFTER_EXPLICIT_ACTIVATE", app.GetActiveDocument)
 
           # No mutation is attempted before this point.
           d2 = call("DOCUMENT2D_WRAP", lambda: ksapi.IKompasDocument2D(doc))
