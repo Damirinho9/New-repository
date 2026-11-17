@@ -51,6 +51,15 @@ jobs:
           $folder = Join-Path $base $id
           New-Item -ItemType Directory -Force $folder | Out-Null
           $app = New-Object -ComObject MasterSCADA.Application
+          $watcher = Start-Job -ScriptBlock {
+            $ws = New-Object -ComObject WScript.Shell
+            for ($i=0; $i -lt 120; $i++) {
+              Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "MasterSCADA" -and $_.MainWindowTitle } | ForEach-Object {
+                if ($ws.AppActivate($_.Id)) { Start-Sleep -Milliseconds 200; $ws.SendKeys("{ENTER}") }
+              }
+              Start-Sleep -Seconds 1
+            }
+          }
           try {
             $app.CreateProject(1,$base,$id,"Система водяного отопления - вариант 7","")
             $p = $app.CurrentProject
@@ -59,6 +68,8 @@ jobs:
             "CREATE_PROJECT_RETURNED=true" | Set-Content -Encoding utf8 $out
             "CURRENT_PROJECT=true" | Add-Content -Encoding utf8 $out
           } finally {
+            try { Stop-Job $watcher -ErrorAction SilentlyContinue | Out-Null } catch {}
+            try { Remove-Job $watcher -Force -ErrorAction SilentlyContinue } catch {}
             try { $app.ExitScada() } catch {}
             try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
           }
