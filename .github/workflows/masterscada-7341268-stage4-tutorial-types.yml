@@ -41,51 +41,12 @@ jobs:
           $all | ForEach-Object { "$($_.Length)`t$($_.FullName)" } | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-inventory.txt"
           if ($all.Count -lt 1) { throw "No tutorial VAV files found" }
 
-      - name: Probe tutorial trees through exact ROT instance
+      - name: Open tutorial projects through COM OpenProject and dump trees
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $out = "$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-tree-dump.txt"
           $root = "C:\MasterSCADA Projects\Projects\Tutorials"
-          $exe = "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
-
-          $src = @'
-          using System;
-          using System.Runtime.InteropServices;
-          using System.Runtime.InteropServices.ComTypes;
-
-          public static class RotAttach {
-            [DllImport("ole32.dll")]
-            static extern int GetRunningObjectTable(int reserved, out IRunningObjectTable prot);
-            [DllImport("ole32.dll")]
-            static extern int CreateBindCtx(int reserved, out IBindCtx ppbc);
-
-            public static object FindProjectApplication() {
-              IRunningObjectTable rot;
-              if (GetRunningObjectTable(0, out rot) != 0 || rot == null) return null;
-              rot.EnumRunning(out IEnumMoniker em);
-              IMoniker[] mons = new IMoniker[1];
-              while (em.Next(1, mons, IntPtr.Zero) == 0) {
-                object obj = null;
-                try {
-                  rot.GetObject(mons[0], out obj);
-                  if (obj != null) {
-                    dynamic d = obj;
-                    object p = null;
-                    try { p = d.CurrentProject; } catch {}
-                    if (p != null) return obj;
-                  }
-                } catch {}
-                if (obj != null && Marshal.IsComObject(obj)) {
-                  try { Marshal.FinalReleaseComObject(obj); } catch {}
-                }
-                try { Marshal.FinalReleaseComObject(mons[0]); } catch {}
-              }
-              return null;
-            }
-          }
-          '@
-          Add-Type -TypeDefinition $src -Language CSharp
 
           function Fix-Text([object]$value) {
             if ($null -eq $value) { return "" }
@@ -107,7 +68,7 @@ jobs:
           }
 
           function Get-ChildCount($item) {
-            foreach($mask in @([uint32]0xFFFFFFFF,[uint32]0,[uint32]1,[uint32]2,[uint32]4,[uint32]8,[uint32]16,[uint32]32,[uint32]64,[uint32]128,[uint32]256,[uint32]512,[uint32]1024)) {
+            foreach($mask in @([uint32]4294967295,[uint32]0,[uint32]1,[uint32]2,[uint32]4,[uint32]8,[uint32]16,[uint32]32,[uint32]64,[uint32]128,[uint32]256,[uint32]512,[uint32]1024)) {
               try {
                 $n = $item.GetChildsCount($mask,1)
                 if($n -gt 0){ return [int]$n }
@@ -120,9 +81,9 @@ jobs:
           function Dump-Item {
             param([object]$Item,[string]$TreeName,[int]$Depth,[string]$ProjectFile)
             if ($null -eq $Item -or $Depth -gt 16) { return }
-            $id=""
+
+            $id="";$fullRaw=""
             try{$id=[string]$Item.Id}catch{}
-            $fullRaw=""
             try{$fullRaw=[string]$Item.FullName}catch{}
             $key="$ProjectFile|$TreeName|$id|$fullRaw"
             if($script:seen.ContainsKey($key)){return}
@@ -146,7 +107,7 @@ jobs:
             } catch {}
 
             if($children.Count -eq 0) {
-              foreach($mask in @([uint32]0xFFFFFFFF,[uint32]0,[uint32]1,[uint32]2,[uint32]4,[uint32]8,[uint32]16,[uint32]32,[uint32]64,[uint32]128,[uint32]256,[uint32]512,[uint32]1024)) {
+              foreach($mask in @([uint32]4294967295,[uint32]0,[uint32]1,[uint32]2,[uint32]4,[uint32]8,[uint32]16,[uint32]32,[uint32]64,[uint32]128,[uint32]256,[uint32]512,[uint32]1024)) {
                 try {
                   $e=$Item.EnumChilds($mask)
                   if($null -ne $e){
@@ -157,7 +118,6 @@ jobs:
                 } catch {}
               }
             }
-
             foreach($child in $children){
               Dump-Item -Item $child -TreeName $TreeName -Depth ($Depth+1) -ProjectFile $ProjectFile
             }
@@ -171,18 +131,25 @@ jobs:
           $preferred += @($all | Where-Object {$_.BaseName -match "ПИД"} | Select-Object -First 1)
           $preferred += @($all | Where-Object {$_.BaseName -match "задатчика"} | Select-Object -First 1)
           $preferred += @($all | Sort-Object Length -Descending | Select-Object -First 3)
-          $preferred = @($preferred | Where-Object {$null -ne $_} | Sort-Object FullName -Unique)
+          $preferred=@($preferred | Where-Object {$null -ne $_} | Sort-Object FullName -Unique)
 
           "SELECTED_PROJECTS=$($preferred.Count)" | Set-Content -Encoding utf8 $out
           $opened=0
+
           foreach($vav in $preferred){
             if($opened -ge 5){break}
             "================================================================================" | Add-Content -Encoding utf8 $out
             "TRY_PROJECT=$($vav.FullName) SIZE=$($vav.Length)" | Add-Content -Encoding utf8 $out
 
+            $projectFolder=$vav.Directory.FullName
+            $baseFolder=Split-Path $projectFolder -Parent
+            $projectId=$vav.Directory.Name
+            "OPEN_BASE=$baseFolder" | Add-Content -Encoding utf8 $out
+            "OPEN_ID=$projectId" | Add-Content -Encoding utf8 $out
+
             $watcher=Start-Job -ScriptBlock {
               $ws=New-Object -ComObject WScript.Shell
-              for($i=0;$i -lt 45;$i++){
+              for($i=0;$i -lt 40;$i++){
                 Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle} | ForEach-Object {
                   if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 250;$ws.SendKeys("{ENTER}")}
                 }
@@ -190,39 +157,48 @@ jobs:
               }
             }
 
-            $proc=$null;$app=$null
+            $app=$null
             try {
-              $proc=Start-Process $exe -ArgumentList @($vav.FullName) -PassThru
-              Start-Sleep -Seconds 12
-              $app=[RotAttach]::FindProjectApplication()
-              if($null -eq $app){
-                "ROT_PROJECT_APP_NOT_FOUND=True" | Add-Content -Encoding utf8 $out
+              $app=New-Object -ComObject MasterSCADA.Application
+              try {
+                $app.OpenProject(1,$baseFolder,$projectId,$false,"","",$false)
+                "OPENPROJECT_RETURNED=True" | Add-Content -Encoding utf8 $out
+              } catch {
+                "OPENPROJECT_EXCEPTION=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
                 continue
               }
+
+              Start-Sleep -Seconds 3
               $p=$app.CurrentProject
               if($null -eq $p){
                 "CURRENT_PROJECT_NULL=True" | Add-Content -Encoding utf8 $out
                 continue
               }
+
               $opened++
               "OPEN_OK_INDEX=$opened" | Add-Content -Encoding utf8 $out
               try{"PROJECT_NAME=$(Fix-Text $p.Name)"|Add-Content -Encoding utf8 $out}catch{}
               try{"PROJECT_PATH=$($p.Path)"|Add-Content -Encoding utf8 $out}catch{}
+
               $cc=0
               try{$cc=[int]$p.ComputerCount}catch{}
               "COMPUTER_COUNT=$cc" | Add-Content -Encoding utf8 $out
-
               for($i=0;$i -lt $cc;$i++){
                 try{
                   $comp=$p.Computer($i)
                   $n=Fix-Text $comp.Name
                   $d=Fix-Text $comp.DisplayName
                   $f=Fix-Text $comp.FullName
-                  $it="";$ot="";$id="";try{$it=[string]$comp.ItemType}catch{};try{$ot=[string]$comp.ObjectType}catch{};try{$id=[string]$comp.Id}catch{}
+                  $it="";$ot="";$id=""
+                  try{$it=[string]$comp.ItemType}catch{}
+                  try{$ot=[string]$comp.ObjectType}catch{}
+                  try{$id=[string]$comp.Id}catch{}
                   $cl=Get-ClsId $comp
                   "[ComputerDirect] Index=$i | Name=$n | DisplayName=$d | ItemType=$it | ObjectType=$ot | CLSID=$cl | Id=$id | FullName=$f | Project=$($vav.Name)" |
                     Add-Content -Encoding utf8 $out
-                }catch{"COMPUTER_DIRECT_ERROR[$i]=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out}
+                } catch {
+                  "COMPUTER_DIRECT_ERROR[$i]=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+                }
               }
 
               $script:seen=@{}
@@ -237,13 +213,13 @@ jobs:
                 try{$app.ExitScada()}catch{}
                 try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
               }
-              if($proc){try{Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue}catch{}}
               Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
               Start-Sleep -Seconds 2
             }
           }
+
           "OPENED_PROJECTS=$opened" | Add-Content -Encoding utf8 $out
-          if($opened -lt 2){throw "Fewer than two tutorial projects opened through ROT"}
+          if($opened -lt 2){throw "Fewer than two tutorial projects opened with COM OpenProject"}
 
       - name: Derive real CLSID catalog and verified reference types
         shell: pwsh
@@ -253,8 +229,7 @@ jobs:
           $catalog="$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-type-catalog.txt"
           $verified="$env:GITHUB_WORKSPACE\stage4-tutorial-types\verified-reference-types.txt"
 
-          $rows=@()
-          $computers=@()
+          $rows=@();$computers=@()
           Get-Content $dump | ForEach-Object {
             if($_ -match '^\s*\[(System|Object)\]\s+Name=(.*?)\s+\|\s+DisplayName=(.*?)\s+\|\s+ItemType=(.*?)\s+\|\s+ObjectType=(.*?)\s+\|\s+CLSID=(.*?)\s+\|\s+ChildCount=(.*?)\s+\|\s+Id=(.*?)\s+\|\s+FullName=(.*?)\s+\|\s+Project=(.*)$'){
               $rows += [pscustomobject]@{Tree=$matches[1];Name=$matches[2];DisplayName=$matches[3];ItemType=$matches[4];ObjectType=$matches[5];CLSID=$matches[6];ChildCount=[int]$matches[7];Id=$matches[8];FullName=$matches[9];Project=$matches[10]}
