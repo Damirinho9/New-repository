@@ -260,13 +260,13 @@ jobs:
             test -s result/01_Mekhanizm_Variant_06_BASE.frw
             grep -q 'EXISTING_FRW_OPEN_PASS' result/work1_v6_inject.log
             python3 - <<'PY'
-import pathlib, zipfile
-p=pathlib.Path("result/01_Mekhanizm_Variant_06_BASE.frw")
-assert zipfile.is_zipfile(p)
-with zipfile.ZipFile(p) as z:
-    assert "Contents" in z.namelist() and "FileInfo" in z.namelist()
-print("EXISTING_FRW_VERIFY_PASS", p.stat().st_size)
-PY
+            import pathlib, zipfile
+            p=pathlib.Path("result/01_Mekhanizm_Variant_06_BASE.frw")
+            assert zipfile.is_zipfile(p)
+            with zipfile.ZipFile(p) as z:
+                assert "Contents" in z.namelist() and "FileInfo" in z.namelist()
+            print("EXISTING_FRW_VERIFY_PASS", p.stat().st_size)
+            PY
             exit 0
           fi
           OUT=result/01_Mekhanizm_Variant_06_PARAMETRIC.frw
