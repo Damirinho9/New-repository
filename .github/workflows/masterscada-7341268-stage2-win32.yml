@@ -36,6 +36,7 @@ jobs:
           $ErrorActionPreference="Stop"
           $log="$env:GITHUB_WORKSPACE\mswin32\build.txt"
           $menuLog="$env:GITHUB_WORKSPACE\mswin32\menu.txt"
+          $paletteLog="$env:GITHUB_WORKSPACE\mswin32\palette.txt"
 
           Add-Type @'
           using System;
@@ -144,6 +145,23 @@ jobs:
             if($null -eq $p){throw "CurrentProject is null after CreateProject"}
             "CREATE=true PROJECT=$($p.Name) PATH=$($p.Path)"|Out-File -Encoding utf8 $log
             "INITIAL_COMPUTERS=$($p.ComputerCount)"|Add-Content -Encoding utf8 $log
+
+            $pal=$app.ObjPalette
+            "PALETTE_TYPE=$($pal.GetType().FullName)"|Out-File -Encoding utf8 $paletteLog
+            $pal|Get-Member -Force|Out-String -Width 320|Add-Content -Encoding utf8 $paletteLog
+            foreach($nm in @("Компьютер","Объект","Значение","Переменная","Computer","Object","Value")){
+              try{
+                $po=$pal.GetObject($nm)
+                "GET[$nm] NULL=$($null -eq $po) TYPE=$(if($po){$po.GetType().FullName}else{""})"|Add-Content -Encoding utf8 $paletteLog
+                if($po){
+                  $po|Get-Member -Force|Out-String -Width 320|Add-Content -Encoding utf8 $paletteLog
+                  foreach($pr in @("Name","DisplayName","CLSID","clsid","ClassInfoObject","ObjectType","ItemType")){
+                    try{"GET[$nm].$pr=$($po.$pr)"|Add-Content -Encoding utf8 $paletteLog}catch{}
+                  }
+                  try{"GET[$nm].CLASSINFO_CLSID=$($po.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $paletteLog}catch{}
+                }
+              }catch{"GET[$nm]_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $paletteLog}
+            }
             $hwnd=[IntPtr]([int64]$app.MainWindowHandle)
             $menu=[NativeMenu7341268]::GetMenu($hwnd)
             "HWND=$hwnd MENU=$menu"|Add-Content -Encoding utf8 $log
