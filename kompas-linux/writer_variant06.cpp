@@ -181,7 +181,11 @@ static bool build(){
     std::ifstream in("/tmp/01_Mekhanizm_Variant_06_BASE.frw", std::ios::binary);
     if(in.good()){
       log("EXISTING_FRW_FILE_PRESENT");
-      auto existing=docs->Open(existingPath,true,false);
+      auto existing=app.GetActiveDocument();
+      log(std::string("EXISTING_FRW_ACTIVE_DOC=")+(existing?"1":"0"));
+      if(!existing){
+        existing=docs->Open(existingPath,true,false);
+      }
       log(std::string("EXISTING_FRW_DOC=")+(existing?"1":"0"));
       if(existing){
         try{
