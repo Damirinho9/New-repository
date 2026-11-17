@@ -1,4 +1,4 @@
-import csv,json,math,os,shutil,subprocess,sys
+import csv,json,math,os,re,shutil,subprocess,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent; OUT=ROOT/"stage3-final"; OUT.mkdir(parents=True,exist_ok=True); BUILD=ROOT/"fullv6"/"build_stage3_sim.py"
 NETS=["sens","u_ctrl","t1","t2","drv","g18","g25","l","sw"]
@@ -6,7 +6,8 @@ def run(label,u,dur=.2,rate=8000,cfg=None):
  env=os.environ.copy(); cfg=cfg or {}; env.update({k:str(v) for k,v in cfg.items()})
  p=subprocess.run([sys.executable,str(BUILD),label,str(u*1e-6)],capture_output=True,text=True,encoding="utf-8",errors="replace",env=env)
  (OUT/f"{label}_build.log").write_text((p.stdout or "")+"\n--- STDERR ---\n"+(p.stderr or ""),encoding="utf-8")
- fms=ROOT/"stage3-out"/f"7330744_PhotoRelay_V6_SIM_{label}.ms14"; rec={"label":label,"photocurrent_uA":u,"cfg":cfg,"ms14":str(fms),"build_rc":p.returncode}
+ safe=re.sub(r"[^A-Za-z0-9_-]+","p",label).strip("p") or "probe"
+ fms=ROOT/"stage3-out"/f"7330744_PhotoRelay_V6_SIM_{safe}.ms14"; rec={"label":label,"photocurrent_uA":u,"cfg":cfg,"ms14":str(fms),"build_rc":p.returncode}
  if p.returncode or not fms.exists():rec["failure"]="build";return rec
  d=OUT/f"{label}_csv"; q=subprocess.run([sys.executable,"-m","multisimforge","sim",str(fms),"--nets",",".join(NETS),"--tran",f"{dur},{rate}","--csv",str(d)],capture_output=True,text=True,encoding="utf-8",errors="replace",env=env)
  (OUT/f"{label}_sim.log").write_text((q.stdout or "")+"\n--- STDERR ---\n"+(q.stderr or ""),encoding="utf-8"); rec["sim_rc"]=q.returncode

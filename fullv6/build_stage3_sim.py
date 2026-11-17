@@ -1,4 +1,4 @@
-import json, math, sys, hashlib, os
+import json, math, sys, hashlib, os, re
 from pathlib import Path
 from multisimforge import builder, check, xmlio
 from multisimforge.parts import Library
