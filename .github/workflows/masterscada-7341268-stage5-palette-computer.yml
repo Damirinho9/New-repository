@@ -28,7 +28,28 @@ jobs:
           $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
           if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
 
-      - name: Create project, obtain Computer from ObjPalette, insert and save
+      - name: Download original validated project
+        uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-native-project
+          path: input-project
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44094325226
+
+      - name: Place original project in MasterSCADA folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $src=Get-ChildItem "$env:GITHUB_WORKSPACE\\input-project" -Recurse -Filter "7341268_Variant7.vav" -File|Select-Object -First 1
+          if($null -eq $src){throw "source VAV missing"}
+          $dst="C:\\MasterSCADA Projects\\Projects\\7341268_Variant7"
+          if(Test-Path $dst){Remove-Item $dst -Recurse -Force}
+          Copy-Item $src.Directory.FullName $dst -Recurse -Force
+          $vav="$dst\\7341268_Variant7.vav"
+          "SOURCE_SHA256=$((Get-FileHash $vav -Algorithm SHA256).Hash)"|Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\\stage5-palette\\source.txt"
+
+      - name: Open temp project, bind CurrentProject, obtain Computer from ObjPalette, insert and save
         shell: pwsh
         run: |
           $ErrorActionPreference="Stop"
@@ -39,8 +60,6 @@ jobs:
           $name="АРМ оператора"
 
           Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
-          if(Test-Path $folder){Remove-Item $folder -Recurse -Force}
-          New-Item -ItemType Directory -Force $base|Out-Null
 
           $watcher=Start-Job -ScriptBlock{
             $ws=New-Object -ComObject WScript.Shell
@@ -56,13 +75,26 @@ jobs:
           try{
             $app=New-Object -ComObject MasterSCADA.Application
             "APP_CREATED=True"|Set-Content -Encoding utf8 $out
-            $app.CreateProject(1,$base,$id,"Система водяного отопления - вариант 7","")
-            "CREATE_PROJECT=True"|Add-Content -Encoding utf8 $out
-            Start-Sleep -Seconds 3
-            $p=$app.CurrentProject
-            "CURRENT_PROJECT_PRESENT=$($null -ne $p)"|Add-Content -Encoding utf8 $out
-            if($null -eq $p){throw "CurrentProject null"}
+            $p=$null
+            try{
+              $p=$app.OpenProjectTemp(1,$base,$id,$false,"","",$false)
+              "OPENPROJECTTEMP_RETURNED=$($null -ne $p)"|Add-Content -Encoding utf8 $out
+              if($null -ne $p){"OPENPROJECTTEMP_TYPE=$($p.GetType().FullName)"|Add-Content -Encoding utf8 $out}
+            }catch{
+              "OPENPROJECTTEMP_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+            }
+            if($null -eq $p){throw "OpenProjectTemp did not return project"}
+            try{
+              $app.CurrentProject=$p
+              "CURRENT_PROJECT_SET=True"|Add-Content -Encoding utf8 $out
+            }catch{
+              "CURRENT_PROJECT_SET_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+            }
+            $cur=$null
+            try{$cur=$app.CurrentProject}catch{}
+            "CURRENT_PROJECT_PRESENT_AFTER_SET=$($null -ne $cur)"|Add-Content -Encoding utf8 $out
             "PROJECT_PATH=$($p.Path)"|Add-Content -Encoding utf8 $out
+            "PROJECT_NAME=$($p.Name)"|Add-Content -Encoding utf8 $out
             "COMPUTER_COUNT_BEFORE=$($p.ComputerCount)"|Add-Content -Encoding utf8 $out
 
             $palette=$app.ObjPalette
@@ -157,7 +189,7 @@ jobs:
           }finally{
             try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
             try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
-            if($app){try{$app.ExitScada()}catch{};try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}}
+            if($app){try{$app.CloseProjectTemp($id)}catch{};try{$app.ExitScada()}catch{};try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}}
             Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
           }
           Get-Content $out
