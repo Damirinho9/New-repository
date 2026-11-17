@@ -37,6 +37,15 @@ jobs:
           repository: Damirinho9/New-repository
           run-id: 44094325226
 
+      - name: Download generated MasterSCADA interop
+        uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-stage4-reference-validation
+          path: interop-input
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44106772811
+
       - name: Place original project in MasterSCADA folder
         shell: pwsh
         run: |
@@ -53,6 +62,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference="Stop"
+          $interop=Get-ChildItem "$env:GITHUB_WORKSPACE\interop-input" -Recurse -Filter "MasterSCADA.Interop.dll" -File|Select-Object -First 1 -ExpandProperty FullName
+          if(!$interop){throw "MasterSCADA.Interop.dll missing"}
+          Add-Type -Path $interop
           $out="$env:GITHUB_WORKSPACE\stage5-palette\producer.txt"
           $base="C:\MasterSCADA Projects\Projects";$id="7341268_Variant7"
           $folder=Join-Path $base $id
@@ -111,12 +123,14 @@ jobs:
             }
 
             $paletteNames=New-Object System.Collections.Generic.List[string]
-            $catTree=$null
-            try{$catTree=$palette.CatidTree}catch{}
-            "CATIDTREE_PRESENT=$($null -ne $catTree)"|Add-Content -Encoding utf8 $out
-            if($null -ne $catTree){
+            $catTreeRaw=$null
+            try{$catTreeRaw=$palette.CatidTree}catch{}
+            "CATIDTREE_PRESENT=$($null -ne $catTreeRaw)"|Add-Content -Encoding utf8 $out
+            if($null -ne $catTreeRaw){
               try{
-                $catEnum=$null
+                $catTree=[MasterSCADAInterop.ICatidTree]$catTreeRaw
+                "CATIDTREE_CAST=True"|Add-Content -Encoding utf8 $out
+                [MasterSCADAInterop.IEnumGUID]$catEnum=$null
                 $catTree.EnumImplCategoriesOfClass([guid]$clsid,[ref]$catEnum)
                 "ENUM_IMPL_CATEGORIES_RETURNED=$($null -ne $catEnum)"|Add-Content -Encoding utf8 $out
                 if($null -ne $catEnum){
@@ -131,9 +145,10 @@ jobs:
                     "CATEGORY[$ci].NAME=$catName"|Add-Content -Encoding utf8 $out
                     "CATEGORY[$ci].HELP=$catHelp"|Add-Content -Encoding utf8 $out
                     try{
-                      $objEnum=$palette.EnumCategoryObjects($catName)
-                      "CATEGORY[$ci].OBJECT_ENUM=$($null -ne $objEnum)"|Add-Content -Encoding utf8 $out
-                      if($null -ne $objEnum){
+                      $objEnumRaw=$palette.EnumCategoryObjects($catName)
+                      "CATEGORY[$ci].OBJECT_ENUM=$($null -ne $objEnumRaw)"|Add-Content -Encoding utf8 $out
+                      if($null -ne $objEnumRaw){
+                        $objEnum=[MasterSCADAInterop.IEnumString]$objEnumRaw
                         for($oi=0;$oi -lt 256;$oi++){
                           $objName=""
                           [uint32]$of=0
