@@ -75,7 +75,7 @@ jobs:
                 for src in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
                   [ -f "$src" ] || continue
                   sed -i -E                     -e "s#https?://mirror\\.yandex\\.ru/altlinux#${mirror}#g"                     -e "s#https?://mirror\\.truenetwork\\.ru/altlinux#${mirror}#g"                     -e "s#https?://ftp\\.altlinux\\.org/pub/distributions/ALTLinux#${mirror}#g"                     -e "s#https?://ftp\\.altlinux\\.org#${mirror}#g" "$src"
-                  sed -i '/x86_64-i586/s/^[[:space:]]*rpm/# rpm/' "$src"
+                  sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/" "$src"
                 done
               }
               clear_alt_metadata() {
