@@ -158,20 +158,13 @@ jobs:
 
               export LANG=C.UTF-8
               export LC_ALL=C.UTF-8
-              # Use the full GUI backend under Xvfb. KOMPAS's 2D document
-              # editor keeps fragments pending with the offscreen backend.
+              # KOMPAS starts reliably with its offscreen Qt backend in
+              # this container. Keep the native binary launch direct so the
+              # injected writer reaches KsAPI.
               BIN=/opt/ascon/kompas3d-v25/Bin
-              export QT_QPA_PLATFORM=xcb
+              export QT_QPA_PLATFORM=offscreen
               export LD_LIBRARY_PATH="$BIN"
-              unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
-              command -v Xvfb
-              Xvfb :99 -screen 0 1920x1080x24 -ac >/tmp/xvfb.out 2>/tmp/xvfb.err &
-              XVFB_PID=$!
-              export DISPLAY=:99
-              sleep 2
-
-              # Use an absolute executable path so the Xvfb child cannot
-              # invalidate the package mount used as the current directory.
+              unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
               dbus-run-session -- env LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$BIN/kKompas" -automation                 >/tmp/kompas-fast.out 2>/tmp/kompas-fast.err &
               KP=$!
               echo "KOMPAS_PID=$KP"
@@ -216,7 +209,6 @@ jobs:
               cp /tmp/work1_bootstrap.log /work/result/ 2>/dev/null || true
               cp /tmp/kompas-fast.out /work/result/ 2>/dev/null || true
               cp /tmp/kompas-fast.err /work/result/ 2>/dev/null || true
-              kill "$XVFB_PID" 2>/dev/null || true
               echo "RESULT=FAIL_FAST_NATIVE_VARIANT06"
               exit 30
             '
