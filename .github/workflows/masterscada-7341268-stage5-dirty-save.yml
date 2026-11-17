@@ -1,0 +1,363 @@
+name: MasterSCADA 7341268 Stage 5 Dirty Save Computer
+
+on:
+  push:
+    branches: [masterscada-7341268-windows]
+    paths:
+      - ".github/workflows/masterscada-7341268-stage5-dirty-save.yml"
+  workflow_dispatch:
+
+jobs:
+  producer:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare and install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\stage5-dirty" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw "download $n failed"}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+
+      - name: Download original validated project
+        uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-native-project
+          path: input-project
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44094325226
+
+      - name: Place source project in standard MasterSCADA folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $srcVav=Get-ChildItem "$env:GITHUB_WORKSPACE\input-project" -Recurse -Filter "7341268_Variant7.vav" -File | Select-Object -First 1
+          if($null -eq $srcVav){throw "source VAV missing"}
+          $src=$srcVav.Directory.FullName
+          $dst="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          if(Test-Path $dst){Remove-Item $dst -Recurse -Force}
+          Copy-Item $src $dst -Recurse -Force
+          $vav="$dst\7341268_Variant7.vav"
+          "SOURCE_SIZE=$((Get-Item $vav).Length)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage5-dirty\source.txt"
+          "SOURCE_SHA256=$((Get-FileHash $vav -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage5-dirty\source.txt"
+
+      - name: Insert Computer and mark SysTree dirty in x86 COM
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $scriptPath="$env:GITHUB_WORKSPACE\stage5-dirty\mutate32.ps1"
+          $script=@'
+          param([Parameter(Mandatory=$true)][string]$Workspace)
+          $ErrorActionPreference="Stop"
+          $out=Join-Path $Workspace "stage5-dirty\mutation.txt"
+          $modal=Join-Path $Workspace "stage5-dirty\modal.txt"
+          $vav="C:\MasterSCADA Projects\Projects\7341268_Variant7\7341268_Variant7.vav"
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $clsid="{33A04CE5-4692-11D4-B153-87EB14408E58}"
+          $progId="Vavobj.Computer.1"
+          $name="АРМ оператора"
+
+          Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+
+          $watcher=Start-Job -ScriptBlock {
+            param($modal)
+            $ws=New-Object -ComObject WScript.Shell
+            for($i=0;$i -lt 180;$i++){
+              Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle} | ForEach-Object {
+                "$(Get-Date -Format o) PID=$($_.Id) TITLE=$($_.MainWindowTitle)" | Add-Content -Encoding utf8 $modal
+                if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 200;$ws.SendKeys("{ENTER}")}
+              }
+              Start-Sleep -Milliseconds 500
+            }
+          } -ArgumentList $modal
+
+          $proc=$null;$app=$null;$raw=$null
+          try{
+            $proc=Start-Process $exe -ArgumentList @($vav) -PassThru
+            Start-Sleep -Seconds 12
+            "PROCESS_ALIVE=$(($null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)))" | Set-Content -Encoding utf8 $out
+            $app=New-Object -ComObject MasterSCADA.Application
+            $p=$app.CurrentProject
+            "CURRENT_PROJECT_PRESENT=$($null -ne $p)" | Add-Content -Encoding utf8 $out
+            if($null -eq $p){throw "CurrentProject null"}
+            "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $out
+            "PROJECT_PATH=$($p.Path)" | Add-Content -Encoding utf8 $out
+            "COMPUTER_COUNT_BEFORE=$($p.ComputerCount)" | Add-Content -Encoding utf8 $out
+
+            try{$p.CurrentItem=$p.SystemRoot;"PROJECT_CURRENT_SET=True"|Add-Content -Encoding utf8 $out}catch{}
+            try{$p.SysTree.CurrentItem=$p.SystemRoot;"SYSTREE_CURRENT_SET=True"|Add-Content -Encoding utf8 $out}catch{}
+
+            $existing=$null
+            for($i=0;$i -lt $p.ComputerCount;$i++){
+              try{
+                $c=$p.Computer($i);$cc=""
+                try{$cc=[string]$c.ClassInfoObject.clsid}catch{}
+                "BEFORE[$i].Name=$($c.Name) CLSID=$cc ObjectType=$($c.ObjectType) ItemType=$($c.ItemType)"|Add-Content -Encoding utf8 $out
+                if($cc -ieq $clsid){$existing=$c}
+              }catch{}
+            }
+
+            if($null -eq $existing){
+              $raw=New-Object -ComObject $progId
+              "RAW_COMPUTER_CREATED=True"|Add-Content -Encoding utf8 $out
+              $node=$null
+              try{
+                $node=$p.SystemRoot.InsertExistingObjectEx($raw,$clsid,$name,$null,$true)
+                "INSERT_EXISTING_EX_RETURNED=$($null -ne $node)"|Add-Content -Encoding utf8 $out
+              }catch{
+                "INSERT_EXISTING_EX_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+              }
+              if($null -eq $node){
+                try{
+                  $node=$p.SystemRoot.InsertExistingObject($raw,$clsid,$name,$null)
+                  "INSERT_EXISTING_RETURNED=$($null -ne $node)"|Add-Content -Encoding utf8 $out
+                }catch{
+                  "INSERT_EXISTING_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+                }
+              }
+              if($null -eq $node){throw "existing-object insertion returned null"}
+              try{$node.Rename($name,1)}catch{}
+              try{"NODE.Name=$($node.Name)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"NODE.ItemType=$($node.ItemType)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"NODE.ObjectType=$($node.ObjectType)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"NODE.CLSID=$($node.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"NODE.FullName=$($node.FullName)"|Add-Content -Encoding utf8 $out}catch{}
+            } else {
+              "EXISTING_COMPUTER=True"|Add-Content -Encoding utf8 $out
+              try{$existing.Rename($name,1)}catch{}
+            }
+
+            $count=[int]$p.ComputerCount
+            "COMPUTER_COUNT_AFTER_INSERT=$count"|Add-Content -Encoding utf8 $out
+            if($count -lt 1){throw "ComputerCount < 1 after insertion"}
+
+            $found=$false
+            for($i=0;$i -lt $count;$i++){
+              $c=$p.Computer($i);$cc=""
+              try{$cc=[string]$c.ClassInfoObject.clsid}catch{}
+              "AFTER[$i].Name=$($c.Name) CLSID=$cc ObjectType=$($c.ObjectType) ItemType=$($c.ItemType) FullName=$($c.FullName)"|Add-Content -Encoding utf8 $out
+              if($cc -ieq $clsid){$found=$true}
+            }
+            "EXPECTED_CLSID_FOUND=$found"|Add-Content -Encoding utf8 $out
+            if(!$found){throw "expected CLSID missing before save"}
+
+            try{$p.SysTree.IsDirty();"SYSTREE_ISDIRTY_CALLED=True"|Add-Content -Encoding utf8 $out}catch{
+              "SYSTREE_ISDIRTY_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+            }
+            $p.Save()
+            "PROJECT_SAVE=True"|Add-Content -Encoding utf8 $out
+            Start-Sleep -Seconds 4
+            "VAV_SIZE_AFTER_SAVE=$((Get-Item $vav).Length)"|Add-Content -Encoding utf8 $out
+            "VAV_SHA256_AFTER_SAVE=$((Get-FileHash $vav -Algorithm SHA256).Hash)"|Add-Content -Encoding utf8 $out
+            "MUTATION_COM_PASS=True"|Add-Content -Encoding utf8 $out
+          } catch {
+            "MUTATION_EXCEPTION=$($_.Exception.GetType().FullName): $($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+            throw
+          } finally {
+            try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Receive-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
+            if($app){try{$app.ExitScada()}catch{};try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}}
+            if($raw -and [Runtime.InteropServices.Marshal]::IsComObject($raw)){try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($raw)|Out-Null}catch{}}
+            if($proc){try{Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue}catch{}}
+            Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+          Get-Content $out
+          '@
+          Set-Content $scriptPath $script -Encoding UTF8
+          $ps32="$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+          & $ps32 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Workspace "$env:GITHUB_WORKSPACE"
+          $code=$LASTEXITCODE
+          $out="$env:GITHUB_WORKSPACE\stage5-dirty\mutation.txt"
+          if(Test-Path $out){Get-Content $out}
+          if($code -ne 0){throw "x86 mutation failed $code"}
+          if(!(Select-String -Path $out -Pattern '^MUTATION_COM_PASS=True$' -Quiet)){throw "COM mutation marker missing"}
+
+      - name: Copy project and verify native SysTree item count
+        if: always()
+        shell: pwsh
+        run: |
+          $src="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          $dst="$env:GITHUB_WORKSPACE\stage5-dirty\project\7341268_Variant7"
+          if(Test-Path "$src\7341268_Variant7.vav"){
+            New-Item -ItemType Directory -Force (Split-Path $dst -Parent)|Out-Null
+            Copy-Item $src $dst -Recurse -Force
+          }
+
+      - name: Native CFB persistence check
+        if: always()
+        shell: python
+        run: |
+          import struct, pathlib, hashlib, sys
+          root=pathlib.Path(r"${{ github.workspace }}")/"stage5-dirty"
+          p=root/"project"/"7341268_Variant7"/"7341268_Variant7.vav"
+          if not p.exists():
+              (root/"native-cfb.txt").write_text("VAV_EXISTS=False\n",encoding="utf-8")
+              raise SystemExit("VAV missing")
+          d=p.read_bytes()
+          ss=1<<struct.unpack_from("<H",d,30)[0]; mini=1<<struct.unpack_from("<H",d,32)[0]
+          nfat=struct.unpack_from("<I",d,44)[0]; firstdir=struct.unpack_from("<I",d,48)[0]
+          cutoff=struct.unpack_from("<I",d,56)[0]; firstmini=struct.unpack_from("<I",d,60)[0]
+          FREE=0xffffffff;END=0xfffffffe;NO=0xffffffff
+          def sec(n): return d[(n+1)*ss:(n+2)*ss]
+          dif=[x for x in struct.unpack_from("<109I",d,76) if x!=FREE][:nfat]
+          fat=[]
+          for x in dif: fat+=list(struct.unpack("<%dI"%(ss//4),sec(x)))
+          def chain(start,tab):
+              o=[];seen=set();x=start
+              while x not in (END,FREE) and x<len(tab) and x not in seen:
+                  o.append(x);seen.add(x);x=tab[x]
+              return o
+          db=b"".join(sec(x) for x in chain(firstdir,fat))
+          E=[]
+          for o in range(0,len(db),128):
+              q=db[o:o+128]
+              if len(q)<128:break
+              nl=struct.unpack_from("<H",q,64)[0]
+              name=q[:max(0,nl-2)].decode("utf-16le","replace") if nl>=2 else ""
+              typ=q[66];left,right,child=struct.unpack_from("<III",q,68)
+              start=struct.unpack_from("<I",q,116)[0];size=struct.unpack_from("<Q",q,120)[0]
+              E.append(dict(name=name,typ=typ,left=left,right=right,child=child,start=start,size=size))
+          rootent=E[0]
+          mfb=b"".join(sec(x) for x in chain(firstmini,fat))
+          minifat=list(struct.unpack("<%dI"%(len(mfb)//4),mfb)) if mfb else []
+          ministream=b"".join(sec(x) for x in chain(rootent["start"],fat))[:rootent["size"]]
+          def read(e):
+              if e["size"]<cutoff and e["typ"]==2:
+                  return b"".join(ministream[x*mini:(x+1)*mini] for x in chain(e["start"],minifat))[:e["size"]]
+              return b"".join(sec(x) for x in chain(e["start"],fat))[:e["size"]]
+          def rb(i):
+              out=[];seen=set()
+              def rec(x):
+                  if x==NO or x>=len(E) or x in seen:return
+                  seen.add(x);rec(E[x]["left"]);out.append(x);rec(E[x]["right"])
+              rec(i);return out
+          def kids(i):return rb(E[i]["child"]) if E[i]["child"]!=NO else []
+          sid=next(i for i in kids(0) if E[i]["name"]=="SysTree")
+          cid=next(i for i in kids(sid) if E[i]["name"]=="ItemCount")
+          count=struct.unpack("<I",read(E[cid]))[0]
+          sha=hashlib.sha256(d).hexdigest().upper()
+          txt=f"VAV_EXISTS=True\nSYSTREE_ITEM_COUNT={count}\nVAV_SIZE={len(d)}\nVAV_SHA256={sha}\nPERSISTED_COMPUTER_NODE={'True' if count>=2 else 'False'}\n"
+          (root/"native-cfb.txt").write_text(txt,encoding="utf-8")
+          print(txt)
+          if count<2: raise SystemExit("SysTree ItemCount < 2")
+
+      - name: Upload producer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-dirty-producer
+          path: stage5-dirty/**
+          if-no-files-found: error
+          retention-days: 90
+
+  fresh-reopen:
+    needs: producer
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\stage5-fresh" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.11/";$dest="C:\MasterSCADA_7341268\installer"
+          foreach($n in @("Data1.cab","data.msi","setup.bmp","setup.exe")){
+            & curl.exe -k -L --fail --silent --show-error ($base+$n) -o (Join-Path $dest $n)
+            if($LASTEXITCODE -ne 0){throw $n}
+          }
+          $p=Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          if($p.ExitCode -notin @(0,3010,1641)){throw "MSI $($p.ExitCode)"}
+      - uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-dirty-producer
+          path: producer
+      - name: Fresh reopen through x86 COM and verify ComputerCount
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $srcVav=Get-ChildItem "$env:GITHUB_WORKSPACE\producer" -Recurse -Filter "7341268_Variant7.vav" -File|Select-Object -First 1
+          if($null -eq $srcVav){throw "VAV missing"}
+          $dst="C:\MasterSCADA Projects\Projects\7341268_Variant7"
+          if(Test-Path $dst){Remove-Item $dst -Recurse -Force}
+          Copy-Item $srcVav.Directory.FullName $dst -Recurse -Force
+          $scriptPath="$env:GITHUB_WORKSPACE\stage5-fresh\verify32.ps1"
+          $script=@'
+          param([string]$Workspace)
+          $ErrorActionPreference="Stop"
+          $out=Join-Path $Workspace "stage5-fresh\fresh-reopen.txt"
+          $vav="C:\MasterSCADA Projects\Projects\7341268_Variant7\7341268_Variant7.vav"
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $expected="{33A04CE5-4692-11D4-B153-87EB14408E58}"
+          $watcher=Start-Job -ScriptBlock {
+            $ws=New-Object -ComObject WScript.Shell
+            for($i=0;$i -lt 180;$i++){
+              Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Where-Object{$_.MainWindowTitle}|ForEach-Object{
+                if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 200;$ws.SendKeys("{ENTER}")}
+              }
+              Start-Sleep -Milliseconds 500
+            }
+          }
+          $proc=$null;$app=$null
+          try{
+            Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
+            $proc=Start-Process $exe -ArgumentList @($vav) -PassThru
+            Start-Sleep -Seconds 14
+            "PROCESS_ALIVE=$(($null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)))"|Set-Content -Encoding utf8 $out
+            $app=New-Object -ComObject MasterSCADA.Application
+            $p=$app.CurrentProject
+            "CURRENT_PROJECT_PRESENT=$($null -ne $p)"|Add-Content -Encoding utf8 $out
+            if($null -eq $p){throw "CurrentProject null"}
+            $count=[int]$p.ComputerCount
+            "COMPUTER_COUNT=$count"|Add-Content -Encoding utf8 $out
+            if($count -lt 1){throw "ComputerCount < 1"}
+            $found=$false
+            for($i=0;$i -lt $count;$i++){
+              $c=$p.Computer($i);$cc="";try{$cc=[string]$c.ClassInfoObject.clsid}catch{}
+              "COMPUTER[$i].Name=$($c.Name)"|Add-Content -Encoding utf8 $out
+              "COMPUTER[$i].ItemType=$($c.ItemType)"|Add-Content -Encoding utf8 $out
+              "COMPUTER[$i].ObjectType=$($c.ObjectType)"|Add-Content -Encoding utf8 $out
+              "COMPUTER[$i].CLSID=$cc"|Add-Content -Encoding utf8 $out
+              "COMPUTER[$i].FullName=$($c.FullName)"|Add-Content -Encoding utf8 $out
+              if($cc -ieq $expected){$found=$true}
+            }
+            "EXPECTED_CLSID_FOUND=$found"|Add-Content -Encoding utf8 $out
+            if(!$found){throw "CLSID missing"}
+            "FRESH_REOPEN_VALIDATION=PASS"|Add-Content -Encoding utf8 $out
+          } finally {
+            try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
+            if($app){try{$app.ExitScada()}catch{};try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}}
+            if($proc){try{Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue}catch{}}
+          }
+          Get-Content $out
+          '@
+          Set-Content $scriptPath $script -Encoding UTF8
+          $ps32="$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+          & $ps32 -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath -Workspace "$env:GITHUB_WORKSPACE"
+          if($LASTEXITCODE -ne 0){throw "fresh verify failed $LASTEXITCODE"}
+          $out="$env:GITHUB_WORKSPACE\stage5-fresh\fresh-reopen.txt"
+          Get-Content $out
+          if(!(Select-String -Path $out -Pattern '^FRESH_REOPEN_VALIDATION=PASS$' -Quiet)){throw "fresh validation marker missing"}
+      - name: Upload fresh evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-dirty-fresh
+          path: stage5-fresh/**
+          if-no-files-found: error
+          retention-days: 90
