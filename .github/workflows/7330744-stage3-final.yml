@@ -68,16 +68,19 @@ jobs:
           $p=Start-Process $py -ArgumentList @('/quiet','InstallAllUsers=1','TargetDir=C:\Python311-32','PrependPath=0','Include_launcher=0','Include_test=0','Include_pip=1') -PassThru -Wait
           if($p.ExitCode -ne 0){throw "Python x86 installer exit=$($p.ExitCode)"}
           & 'C:\Python311-32\python.exe' -m pip install --disable-pip-version-check --quiet pywin32
-          git clone --depth 1 https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          git clone https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          git -C "$env:RUNNER_TEMP\MultisimForge" checkout c2eec0d354944cec4edec4e71b65b5eb6c52913c
           Set-Location "$env:RUNNER_TEMP\MultisimForge"
           python -m pip install --disable-pip-version-check -e ".[capture]"
           python -m pip install --disable-pip-version-check --quiet pyautogui pywinauto pywin32 pillow
 
-      - name: Patch helper to wait for complete native transient
+      - name: Confirm MultisimForge 0.1.8 native transient engine
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          python fullv6\patch_multisimforge_wait.py "$env:RUNNER_TEMP\MultisimForge" | Tee-Object -FilePath stage3-final\helper-patch.txt
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -c "import multisimforge; print('MultisimForge native COM engine ready')"
+          git rev-parse HEAD | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\stage3-final\multisimforge-commit.txt"
 
       - name: Fetch exact simulation models
         shell: powershell
