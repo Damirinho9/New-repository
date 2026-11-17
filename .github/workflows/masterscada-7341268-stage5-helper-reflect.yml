@@ -1,0 +1,82 @@
+name: MasterSCADA 7341268 Stage 5 Helper Reflection
+
+on:
+  push:
+    branches: [masterscada-7341268-windows]
+    paths:
+      - ".github/workflows/masterscada-7341268-stage5-helper-reflect.yml"
+  workflow_dispatch:
+
+jobs:
+  reflect:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-stage4-reference-validation
+          path: input
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44106772811
+
+      - name: Reflect helper and factory APIs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\helper-reflect"|Out-Null
+          $dll=Get-ChildItem "$env:GITHUB_WORKSPACE\input" -Recurse -Filter "MasterSCADA.Interop.dll" -File|Select-Object -First 1 -ExpandProperty FullName
+          if(!$dll){throw "interop dll missing"}
+          Copy-Item $dll "$env:GITHUB_WORKSPACE\helper-reflect\MasterSCADA.Interop.dll" -Force
+          $src=@'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Reflection;
+          using System.Text;
+          class P {
+            static bool Keep(Type t){
+              string n=t.FullName??"";
+              string l=n.ToLowerInvariant();
+              return l.Contains("application")||l.Contains("hlp")||l.Contains("helper")||
+                     l.Contains("factory")||l.Contains("palette")||l.Contains("classinfo")||
+                     l.Contains("objectfactory")||l.Contains("objectservice");
+            }
+            static bool KeepMethod(MethodInfo m){
+              string n=m.Name.ToLowerInvariant();
+              return n.Contains("create")||n.Contains("new")||n.Contains("insert")||
+                     n.Contains("object")||n.Contains("class")||n.Contains("item")||
+                     n.Contains("project")||n.Contains("palette")||n.Contains("factory")||
+                     n.Contains("service");
+            }
+            static void Main(){
+              string root=Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE"),"helper-reflect");
+              var a=Assembly.LoadFrom(Path.Combine(root,"MasterSCADA.Interop.dll"));
+              var sb=new StringBuilder();
+              foreach(var t in a.GetTypes().Where(Keep).OrderBy(x=>x.FullName)){
+                sb.AppendLine("=== "+t.FullName+" "+(t.IsInterface?"interface":t.IsClass?"class":t.IsEnum?"enum":"other")+" ===");
+                foreach(var p in t.GetProperties(BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static))
+                  sb.AppendLine("PROP "+p.PropertyType.FullName+" "+p.Name+" CANWRITE="+p.CanWrite);
+                foreach(var m in t.GetMethods(BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static).Where(x=>!x.IsSpecialName&&KeepMethod(x)).OrderBy(x=>x.Name)){
+                  sb.Append("METHOD "+m.ReturnType.FullName+" "+m.Name+"(");
+                  sb.Append(String.Join(", ",m.GetParameters().Select(p=>p.ParameterType.FullName+" "+p.Name+(p.IsOptional?" [optional]":""))));
+                  sb.AppendLine(")");
+                }
+                sb.AppendLine();
+              }
+              File.WriteAllText(Path.Combine(root,"helpers.txt"),sb.ToString(),Encoding.UTF8);
+              Console.Write(sb.ToString());
+            }
+          }'@
+          Set-Content "$env:GITHUB_WORKSPACE\helper-reflect\r.cs" $src -Encoding UTF8
+          $csc=Get-ChildItem "C:\Windows\Microsoft.NET\Framework64" -Recurse -Filter csc.exe -File|Sort-Object FullName -Descending|Select-Object -First 1 -ExpandProperty FullName
+          & $csc /nologo /out:"$env:GITHUB_WORKSPACE\helper-reflect\r.exe" "$env:GITHUB_WORKSPACE\helper-reflect\r.cs"
+          if($LASTEXITCODE -ne 0){throw "compile failed"}
+          & "$env:GITHUB_WORKSPACE\helper-reflect\r.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-helper-reflection
+          path: helper-reflect/**
+          if-no-files-found: error
