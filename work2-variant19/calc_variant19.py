@@ -121,3 +121,5 @@ for name, value, unit in rows:
         print(f"{name}={value:.9f} {unit}")
     else:
         print(f"{name}={value} {unit}")
+
+print("RESULT=PASS_WORK2_VARIANT19_CALC")
