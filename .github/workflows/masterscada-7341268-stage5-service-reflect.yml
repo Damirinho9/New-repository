@@ -1,0 +1,65 @@
+name: MasterSCADA 7341268 Stage 5 Service Reflection
+
+on:
+  push:
+    branches: [masterscada-7341268-windows]
+    paths:
+      - ".github/workflows/masterscada-7341268-stage5-service-reflect.yml"
+  workflow_dispatch:
+jobs:
+  reflect:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-stage4-reference-validation
+          path: input
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44106772811
+      - name: Reflect service APIs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\srvref"|Out-Null
+          $dll=Get-ChildItem "$env:GITHUB_WORKSPACE\input" -Recurse -Filter MasterSCADA.Interop.dll -File|Select-Object -First 1 -ExpandProperty FullName
+          Copy-Item $dll "$env:GITHUB_WORKSPACE\srvref\i.dll"
+          $src=@'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Reflection;
+          using System.Text;
+          class P{
+            static void Main(){
+              var a=Assembly.LoadFrom(Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE"),"srvref","i.dll"));
+              var sb=new StringBuilder();
+              foreach(var t in a.GetTypes().Where(t=>{
+                var n=t.Name.ToLowerInvariant();
+                return n.Contains("service")||n.Contains("holder")||n.Contains("module")||n.Contains("factory");
+              }).OrderBy(t=>t.FullName)){
+                sb.AppendLine("=== "+t.FullName+" ===");
+                foreach(var p in t.GetProperties())sb.AppendLine("PROP "+p.PropertyType.FullName+" "+p.Name+" WRITE="+p.CanWrite);
+                foreach(var m in t.GetMethods().Where(m=>!m.IsSpecialName)){
+                  sb.Append("METHOD "+m.ReturnType.FullName+" "+m.Name+"(");
+                  sb.Append(String.Join(", ",m.GetParameters().Select(p=>p.ParameterType.FullName+" "+p.Name+(p.ParameterType.IsByRef?" [BYREF]":""))));
+                  sb.AppendLine(")");
+                }
+              }
+              File.WriteAllText(Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE"),"srvref","services.txt"),sb.ToString(),Encoding.UTF8);
+              Console.Write(sb.ToString());
+            }
+          }
+          '@
+          Set-Content "$env:GITHUB_WORKSPACE\srvref\r.cs" $src -Encoding UTF8
+          $csc=Get-ChildItem "C:\Windows\Microsoft.NET\Framework64" -Recurse -Filter csc.exe -File|Sort-Object FullName -Descending|Select-Object -First 1 -ExpandProperty FullName
+          & $csc /nologo /out:"$env:GITHUB_WORKSPACE\srvref\r.exe" "$env:GITHUB_WORKSPACE\srvref\r.cs"
+          if($LASTEXITCODE -ne 0){throw "compile"}
+          & "$env:GITHUB_WORKSPACE\srvref\r.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage5-service-reflection
+          path: srvref/**
+          if-no-files-found: error
