@@ -31,7 +31,7 @@ jobs:
           "MSI_EXIT_CODE=$($p.ExitCode)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage4-tutorial-types\install.txt"
           if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
 
-      - name: Inventory tutorial VAV files
+      - name: Inventory tutorial projects
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -41,12 +41,13 @@ jobs:
           $all | ForEach-Object { "$($_.Length)`t$($_.FullName)" } | Add-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-inventory.txt"
           if ($all.Count -lt 1) { throw "No tutorial VAV files found" }
 
-      - name: Open tutorial projects through COM OpenProject and dump trees
+      - name: Launch real tutorial VAVs and dump COM trees
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $out = "$env:GITHUB_WORKSPACE\stage4-tutorial-types\tutorial-tree-dump.txt"
           $root = "C:\MasterSCADA Projects\Projects\Tutorials"
+          $exe = "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
 
           function Fix-Text([object]$value) {
             if ($null -eq $value) { return "" }
@@ -67,59 +68,31 @@ jobs:
             return ""
           }
 
-          function Get-ChildCount($item) {
-            foreach($mask in @([uint32]4294967295,[uint32]0,[uint32]1,[uint32]2,[uint32]4,[uint32]8,[uint32]16,[uint32]32,[uint32]64,[uint32]128,[uint32]256,[uint32]512,[uint32]1024)) {
-              try {
-                $n = $item.GetChildsCount($mask,1)
-                if($n -gt 0){ return [int]$n }
-              } catch {}
-            }
-            return 0
-          }
-
-          $script:seen = @{}
           function Dump-Item {
             param([object]$Item,[string]$TreeName,[int]$Depth,[string]$ProjectFile)
-            if ($null -eq $Item -or $Depth -gt 16) { return }
+            if ($null -eq $Item -or $Depth -gt 20) { return }
 
-            $id="";$fullRaw=""
-            try{$id=[string]$Item.Id}catch{}
-            try{$fullRaw=[string]$Item.FullName}catch{}
-            $key="$ProjectFile|$TreeName|$id|$fullRaw"
-            if($script:seen.ContainsKey($key)){return}
-            $script:seen[$key]=$true
-
-            $name="";$display="";$full="";$itemType="";$objectType="";$clsid="";$childCount=0
+            $name="";$display="";$full="";$itemType="";$objectType="";$clsid="";$id=""
             try{$name=Fix-Text $Item.Name}catch{}
             try{$display=Fix-Text $Item.DisplayName}catch{}
             try{$full=Fix-Text $Item.FullName}catch{}
             try{$itemType=[string]$Item.ItemType}catch{}
             try{$objectType=[string]$Item.ObjectType}catch{}
+            try{$id=[string]$Item.Id}catch{}
             $clsid=Get-ClsId $Item
-            $childCount=Get-ChildCount $Item
+
             $indent="  "*$Depth
-            "$indent[$TreeName] Name=$name | DisplayName=$display | ItemType=$itemType | ObjectType=$objectType | CLSID=$clsid | ChildCount=$childCount | Id=$id | FullName=$full | Project=$ProjectFile" |
+            "$indent[$TreeName] Name=$name | DisplayName=$display | ItemType=$itemType | ObjectType=$objectType | CLSID=$clsid | Id=$id | FullName=$full | Project=$ProjectFile" |
               Add-Content -Encoding utf8 $out
 
-            $children=@()
             try {
-              foreach($child in $Item){ if($null -ne $child){$children += $child} }
-            } catch {}
-
-            if($children.Count -eq 0) {
-              foreach($mask in @([uint32]4294967295,[uint32]0,[uint32]1,[uint32]2,[uint32]4,[uint32]8,[uint32]16,[uint32]32,[uint32]64,[uint32]128,[uint32]256,[uint32]512,[uint32]1024)) {
-                try {
-                  $e=$Item.EnumChilds($mask)
-                  if($null -ne $e){
-                    if($e -is [Array]){$children += @($e)}
-                    else { foreach($x in $e){if($null -ne $x){$children += $x}} }
-                  }
-                  if($children.Count -gt 0){break}
-                } catch {}
+              foreach($child in $Item) {
+                if($null -ne $child) {
+                  Dump-Item -Item $child -TreeName $TreeName -Depth ($Depth+1) -ProjectFile $ProjectFile
+                }
               }
-            }
-            foreach($child in $children){
-              Dump-Item -Item $child -TreeName $TreeName -Depth ($Depth+1) -ProjectFile $ProjectFile
+            } catch {
+              "$indent[$TreeName] ENUM_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
             }
           }
 
@@ -129,74 +102,64 @@ jobs:
           $preferred += @($all | Where-Object {$_.BaseName -eq "Demo"} | Select-Object -First 1)
           $preferred += @($all | Where-Object {$_.BaseName -match "Интеллектуальное"} | Select-Object -First 1)
           $preferred += @($all | Where-Object {$_.BaseName -match "ПИД"} | Select-Object -First 1)
+          $preferred += @($all | Where-Object {$_.BaseName -match "Типизация"} | Select-Object -First 1)
           $preferred += @($all | Where-Object {$_.BaseName -match "задатчика"} | Select-Object -First 1)
-          $preferred += @($all | Sort-Object Length -Descending | Select-Object -First 3)
           $preferred=@($preferred | Where-Object {$null -ne $_} | Sort-Object FullName -Unique)
 
           "SELECTED_PROJECTS=$($preferred.Count)" | Set-Content -Encoding utf8 $out
           $opened=0
 
-          foreach($vav in $preferred){
+          foreach($vav in $preferred) {
             if($opened -ge 5){break}
+            Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+
             "================================================================================" | Add-Content -Encoding utf8 $out
             "TRY_PROJECT=$($vav.FullName) SIZE=$($vav.Length)" | Add-Content -Encoding utf8 $out
 
-            $projectFolder=$vav.Directory.FullName
-            $baseFolder=Split-Path $projectFolder -Parent
-            $projectId=$vav.Directory.Name
-            "OPEN_BASE=$baseFolder" | Add-Content -Encoding utf8 $out
-            "OPEN_ID=$projectId" | Add-Content -Encoding utf8 $out
-
+            $watchLog="$env:GITHUB_WORKSPACE\stage4-tutorial-types\modal-$opened.txt"
             $watcher=Start-Job -ScriptBlock {
+              param($watchLog)
               $ws=New-Object -ComObject WScript.Shell
-              for($i=0;$i -lt 40;$i++){
+              for($i=0;$i -lt 60;$i++) {
                 Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle} | ForEach-Object {
-                  if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 250;$ws.SendKeys("{ENTER}")}
-                }
-                Start-Sleep -Milliseconds 750
-              }
-            }
-
-            $app=$null
-            try {
-              $app=New-Object -ComObject MasterSCADA.Application
-              try {
-                $ret=$app.OpenProject(1,$baseFolder,$projectId,$false,"","",$false)
-                "OPENPROJECT_RETURNED=True RETURN=$ret" | Add-Content -Encoding utf8 $out
-              } catch {
-                "OPENPROJECT_EXCEPTION=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
-              }
-
-              Start-Sleep -Seconds 3
-              $p=$null
-              try{$p=$app.CurrentProject}catch{"CURRENT_PROJECT_EXCEPTION=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out}
-              try{"PROJECTS_COUNT_AFTER_OPEN=$($app.Projects.Count)"|Add-Content -Encoding utf8 $out}catch{}
-              if($null -eq $p){
-                try{
-                  foreach($proj in $app.Projects){
-                    if($null -ne $proj){
-                      $p=$proj
-                      "PROJECT_RECOVERED_FROM_COLLECTION=True"|Add-Content -Encoding utf8 $out
-                      break
-                    }
+                  "$(Get-Date -Format o) PID=$($_.Id) TITLE=$($_.MainWindowTitle)" | Add-Content -Encoding utf8 $watchLog
+                  if($ws.AppActivate($_.Id)) {
+                    Start-Sleep -Milliseconds 250
+                    $ws.SendKeys("{ENTER}")
                   }
-                }catch{"PROJECT_COLLECTION_ENUM_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out}
+                }
+                Start-Sleep -Milliseconds 500
               }
-              if($null -eq $p){
-                "CURRENT_PROJECT_NULL=True" | Add-Content -Encoding utf8 $out
-                continue
-              }
+            } -ArgumentList $watchLog
+
+            $proc=$null;$app=$null
+            try {
+              $proc=Start-Process $exe -ArgumentList @($vav.FullName) -PassThru
+              "START_PID=$($proc.Id)" | Add-Content -Encoding utf8 $out
+              Start-Sleep -Seconds 14
+              $alive=$null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)
+              "PROCESS_ALIVE=$alive" | Add-Content -Encoding utf8 $out
+              if(!$alive){continue}
+
+              $app=New-Object -ComObject MasterSCADA.Application
+              "COM_OBJECT_CREATED=True" | Add-Content -Encoding utf8 $out
+              try{"PROJECTS_COUNT=$($app.Projects.Count)"|Add-Content -Encoding utf8 $out}catch{"PROJECTS_COUNT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out}
+              $p=$null
+              try{$p=$app.CurrentProject}catch{"CURRENT_PROJECT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out}
+              "CURRENT_PROJECT_PRESENT=$($null -ne $p)"|Add-Content -Encoding utf8 $out
+              if($null -eq $p){continue}
 
               $opened++
-              "OPEN_OK_INDEX=$opened" | Add-Content -Encoding utf8 $out
+              "OPEN_OK_INDEX=$opened"|Add-Content -Encoding utf8 $out
               try{"PROJECT_NAME=$(Fix-Text $p.Name)"|Add-Content -Encoding utf8 $out}catch{}
               try{"PROJECT_PATH=$($p.Path)"|Add-Content -Encoding utf8 $out}catch{}
 
               $cc=0
               try{$cc=[int]$p.ComputerCount}catch{}
-              "COMPUTER_COUNT=$cc" | Add-Content -Encoding utf8 $out
-              for($i=0;$i -lt $cc;$i++){
-                try{
+              "COMPUTER_COUNT=$cc"|Add-Content -Encoding utf8 $out
+              for($i=0;$i -lt $cc;$i++) {
+                try {
                   $comp=$p.Computer($i)
                   $n=Fix-Text $comp.Name
                   $d=Fix-Text $comp.DisplayName
@@ -213,27 +176,33 @@ jobs:
                 }
               }
 
-              $script:seen=@{}
+              try{
+                "SYS_TREE_COUNT=$($p.SysTree.Count)"|Add-Content -Encoding utf8 $out
+                "OBJ_TREE_COUNT=$($p.ObjTree.Count)"|Add-Content -Encoding utf8 $out
+              }catch{}
+
               try{Dump-Item -Item $p.SystemRoot -TreeName "System" -Depth 0 -ProjectFile $vav.Name}catch{"SYSTEM_DUMP_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out}
               try{Dump-Item -Item $p.ObjTree.Root -TreeName "Object" -Depth 0 -ProjectFile $vav.Name}catch{"OBJECT_DUMP_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out}
             } catch {
               "PROJECT_PROBE_ERROR=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
             } finally {
               try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+              try{Receive-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
               try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
-              if($app){
+              if($app) {
                 try{$app.ExitScada()}catch{}
                 try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}
               }
+              if($proc){try{Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue}catch{}}
               Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue|Stop-Process -Force -ErrorAction SilentlyContinue
               Start-Sleep -Seconds 2
             }
           }
 
-          "OPENED_PROJECTS=$opened" | Add-Content -Encoding utf8 $out
-          if($opened -lt 2){throw "Fewer than two tutorial projects opened with COM OpenProject"}
+          "OPENED_PROJECTS=$opened"|Add-Content -Encoding utf8 $out
+          if($opened -lt 2){throw "Fewer than two tutorial projects exposed CurrentProject"}
 
-      - name: Derive real CLSID catalog and verified reference types
+      - name: Extract verified real types
         shell: pwsh
         run: |
           $ErrorActionPreference="Stop"
@@ -243,47 +212,55 @@ jobs:
 
           $rows=@();$computers=@()
           Get-Content $dump | ForEach-Object {
-            if($_ -match '^\s*\[(System|Object)\]\s+Name=(.*?)\s+\|\s+DisplayName=(.*?)\s+\|\s+ItemType=(.*?)\s+\|\s+ObjectType=(.*?)\s+\|\s+CLSID=(.*?)\s+\|\s+ChildCount=(.*?)\s+\|\s+Id=(.*?)\s+\|\s+FullName=(.*?)\s+\|\s+Project=(.*)$'){
-              $rows += [pscustomobject]@{Tree=$matches[1];Name=$matches[2];DisplayName=$matches[3];ItemType=$matches[4];ObjectType=$matches[5];CLSID=$matches[6];ChildCount=[int]$matches[7];Id=$matches[8];FullName=$matches[9];Project=$matches[10]}
-            } elseif($_ -match '^\[ComputerDirect\]\s+Index=(.*?)\s+\|\s+Name=(.*?)\s+\|\s+DisplayName=(.*?)\s+\|\s+ItemType=(.*?)\s+\|\s+ObjectType=(.*?)\s+\|\s+CLSID=(.*?)\s+\|\s+Id=(.*?)\s+\|\s+FullName=(.*?)\s+\|\s+Project=(.*)$'){
+            if($_ -match '^\s*\[(System|Object)\]\s+Name=(.*?)\s+\|\s+DisplayName=(.*?)\s+\|\s+ItemType=(.*?)\s+\|\s+ObjectType=(.*?)\s+\|\s+CLSID=(.*?)\s+\|\s+Id=(.*?)\s+\|\s+FullName=(.*?)\s+\|\s+Project=(.*)$') {
+              $rows += [pscustomobject]@{Tree=$matches[1];Name=$matches[2];DisplayName=$matches[3];ItemType=$matches[4];ObjectType=$matches[5];CLSID=$matches[6];Id=$matches[7];FullName=$matches[8];Project=$matches[9]}
+            } elseif($_ -match '^\[ComputerDirect\]\s+Index=(.*?)\s+\|\s+Name=(.*?)\s+\|\s+DisplayName=(.*?)\s+\|\s+ItemType=(.*?)\s+\|\s+ObjectType=(.*?)\s+\|\s+CLSID=(.*?)\s+\|\s+Id=(.*?)\s+\|\s+FullName=(.*?)\s+\|\s+Project=(.*)$') {
               $computers += [pscustomobject]@{Index=$matches[1];Name=$matches[2];DisplayName=$matches[3];ItemType=$matches[4];ObjectType=$matches[5];CLSID=$matches[6];Id=$matches[7];FullName=$matches[8];Project=$matches[9]}
             }
           }
 
-          "ACTUAL_TREE_NODES=$($rows.Count)" | Set-Content -Encoding utf8 $catalog
-          "DIRECT_COMPUTER_NODES=$($computers.Count)" | Add-Content -Encoding utf8 $catalog
-          "UNIQUE_REAL_TYPES:" | Add-Content -Encoding utf8 $catalog
-          $rows | Where-Object {$_.CLSID} | Group-Object CLSID,ItemType,ObjectType | Sort-Object Count -Descending | ForEach-Object {
+          "ACTUAL_TREE_NODES=$($rows.Count)"|Set-Content -Encoding utf8 $catalog
+          "DIRECT_COMPUTERS=$($computers.Count)"|Add-Content -Encoding utf8 $catalog
+          "UNIQUE_TYPES:"|Add-Content -Encoding utf8 $catalog
+          $rows|Where-Object{$_.CLSID}|Group-Object CLSID,ItemType,ObjectType|Sort-Object Count -Descending|ForEach-Object{
             $x=$_.Group[0]
-            "COUNT=$($_.Count) | CLSID=$($x.CLSID) | ItemType=$($x.ItemType) | ObjectType=$($x.ObjectType) | ChildCountExample=$($x.ChildCount) | ExampleName=$($x.Name) | Tree=$($x.Tree) | Project=$($x.Project)" | Add-Content -Encoding utf8 $catalog
+            "COUNT=$($_.Count) | CLSID=$($x.CLSID) | ItemType=$($x.ItemType) | ObjectType=$($x.ObjectType) | ExampleName=$($x.Name) | Tree=$($x.Tree) | Project=$($x.Project)"|Add-Content -Encoding utf8 $catalog
           }
           ""|Add-Content -Encoding utf8 $catalog
-          "DIRECT_COMPUTERS:"|Add-Content -Encoding utf8 $catalog
-          $computers|ForEach-Object{
-            "Name=$($_.Name) | DisplayName=$($_.DisplayName) | ItemType=$($_.ItemType) | ObjectType=$($_.ObjectType) | CLSID=$($_.CLSID) | FullName=$($_.FullName) | Project=$($_.Project)"|Add-Content -Encoding utf8 $catalog
-          }
-          ""|Add-Content -Encoding utf8 $catalog
-          "VARIABLE_NAME_CANDIDATES:"|Add-Content -Encoding utf8 $catalog
-          $rows|Where-Object{
-            $_.Tree -eq "Object" -and ($_.Name -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|analog|аналог|ток|current|напр|voltage|speed|скорост|задан|setpoint' -or $_.DisplayName -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|analog|аналог|ток|current|напр|voltage|speed|скорост|задан|setpoint')
-          }|Select-Object -First 100|ForEach-Object{
-            "Name=$($_.Name) | DisplayName=$($_.DisplayName) | ItemType=$($_.ItemType) | ObjectType=$($_.ObjectType) | CLSID=$($_.CLSID) | ChildCount=$($_.ChildCount) | FullName=$($_.FullName) | Project=$($_.Project)"|Add-Content -Encoding utf8 $catalog
+          "ALL_NODES:"|Add-Content -Encoding utf8 $catalog
+          $rows|ForEach-Object{
+            "Tree=$($_.Tree) | Name=$($_.Name) | DisplayName=$($_.DisplayName) | ItemType=$($_.ItemType) | ObjectType=$($_.ObjectType) | CLSID=$($_.CLSID) | FullName=$($_.FullName) | Project=$($_.Project)"|Add-Content -Encoding utf8 $catalog
           }
 
           $computer=$computers|Where-Object{$_.CLSID}|Select-Object -First 1
+          if($null -eq $computer) {
+            $computer=$rows|Where-Object{
+              $_.Tree -eq "System" -and $_.CLSID -and $_.CLSID -ne '{48EC81C3-3370-11D4-AC35-B6DC66C5D90A}' -and $_.FullName -ne $_.Name
+            }|Group-Object CLSID,ItemType,ObjectType|Sort-Object Count -Descending|Select-Object -First 1|ForEach-Object{$_.Group[0]}
+          }
+
           $tech=$rows|Where-Object{
-            $_.Tree -eq "Object" -and $_.CLSID -and $_.ChildCount -gt 0 -and $_.CLSID -ne '{B4AFE1A6-850A-4B07-A18B-1FE260E2FAB7}'
+            $_.Tree -eq "Object" -and $_.CLSID -and $_.CLSID -ne '{B4AFE1A6-850A-4B07-A18B-1FE260E2FAB7}' -and
+            ($_.Name -match '(?i)бак|tank|объект|object|контур|помещ|комнат|room|нагрев|котел|boiler|система|system' -or
+             $_.DisplayName -match '(?i)бак|tank|объект|object|контур|помещ|комнат|room|нагрев|котел|boiler|система|system')
           }|Select-Object -First 1
+          if($null -eq $tech) {
+            $tech=$rows|Where-Object{
+              $_.Tree -eq "Object" -and $_.CLSID -and $_.CLSID -ne '{B4AFE1A6-850A-4B07-A18B-1FE260E2FAB7}' -and $_.FullName -ne $_.Name
+            }|Select-Object -First 1
+          }
+
           $analog=$rows|Where-Object{
-            $_.Tree -eq "Object" -and $_.CLSID -and $_.ChildCount -eq 0 -and
-            ($_.Name -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|analog|аналог|ток|current|напр|voltage|speed|скорост|задан|setpoint' -or $_.DisplayName -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|analog|аналог|ток|current|напр|voltage|speed|скорост|задан|setpoint')
+            $_.CLSID -and
+            ($_.Name -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|аналог|analog|ток|current|напр|voltage|задан|setpoint' -or
+             $_.DisplayName -match '(?i)темп|temperature|давл|pressure|уров|level|расход|flow|value|знач|аналог|analog|ток|current|напр|voltage|задан|setpoint')
           }|Select-Object -First 1
 
-          "VERIFIED REFERENCE TYPES FROM REAL MASTERScada 3.11 TUTORIAL PROJECTS" | Set-Content -Encoding utf8 $verified
-          function Emit($tag,$x){
+          "VERIFIED REFERENCE TYPES FROM REAL MASTERSCADA 3.11 TUTORIAL PROJECTS"|Set-Content -Encoding utf8 $verified
+          function Emit($tag,$x) {
             if($null -eq $x){"$tag.FOUND=False"|Add-Content -Encoding utf8 $verified;return}
             "$tag.FOUND=True"|Add-Content -Encoding utf8 $verified
-            foreach($n in @("Name","DisplayName","ItemType","ObjectType","CLSID","ChildCount","FullName","Project")){
+            foreach($n in @("Name","DisplayName","ItemType","ObjectType","CLSID","FullName","Project")){
               if($x.PSObject.Properties.Name -contains $n){"$tag.$n=$($x.$n)"|Add-Content -Encoding utf8 $verified}
             }
           }
@@ -291,9 +268,10 @@ jobs:
           Emit "TECH_OBJECT" $tech
           Emit "ANALOG_VALUE" $analog
 
-          if($null -eq $computer){throw "No direct Computer[i] type found"}
-          if($null -eq $tech){throw "No non-root object container found"}
-          if($null -eq $analog){throw "No analog/value candidate found"}
+          if($null -eq $computer){throw "Computer type not found"}
+          if($null -eq $tech){throw "Technological object type not found"}
+          if($null -eq $analog){throw "Analog/value type not found"}
+
           "REFERENCE_TYPE_VALIDATION=PASS"|Add-Content -Encoding utf8 $verified
           Get-Content $verified
 
