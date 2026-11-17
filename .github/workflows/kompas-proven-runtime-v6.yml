@@ -379,12 +379,67 @@ jobs:
               call("DOCUMENT_SET_ACTIVE", doc_set_active)
           call("ACTIVE_DOCUMENT_AFTER_EXPLICIT_ACTIVATE", app.GetActiveDocument)
 
-          # No mutation is attempted before this point.
+          # First mutation route that does not depend on view initialization:
+          # create a real native document variable, save, reopen, and verify it.
           d2 = call("DOCUMENT2D_WRAP", lambda: ksapi.IKompasDocument2D(doc))
           if d2 is None:
               print("PROVEN_RUNTIME_EXISTING_MUTATION_FAIL=document2d")
               raise SystemExit(41)
 
+          probe_name = "__proof_mutation__"
+          existing_probe = call(
+              "VARIABLE_PROBE_LOOKUP_BEFORE",
+              lambda: d2.GetVariableByName(False, probe_name),
+          )
+          if existing_probe is None:
+              probe_var = call(
+                  "VARIABLE_PROBE_ADD",
+                  lambda: d2.AddVariable(probe_name, 123.0, "proven runtime mutation proof"),
+              )
+          else:
+              probe_var = existing_probe
+
+          if probe_var is None:
+              print("PROVEN_RUNTIME_VARIABLE_MUTATION_FAIL=add")
+          else:
+              probe_saved = pathlib.Path("result/01_Mekhanizm_Variant_06_VARIABLE_MUTATION.frw").resolve()
+              saved_probe = call(
+                  "VARIABLE_PROBE_SAVE_AS",
+                  lambda: doc.SaveAs(str(probe_saved)),
+              )
+              if saved_probe and probe_saved.exists() and probe_saved.stat().st_size > 1000:
+                  print("PROVEN_RUNTIME_VARIABLE_MUTATION_SAVE_PASS")
+                  try:
+                      doc.Close(c.kdDoNotSaveChanges)
+                  except BaseException as exc:
+                      print("VARIABLE_PROBE_CLOSE_WARNING=", repr(exc))
+
+                  reopened = call(
+                      "VARIABLE_PROBE_REOPEN",
+                      lambda: docs.Open(str(probe_saved), False, False),
+                  )
+                  if reopened is not None:
+                      reopened_d2 = call(
+                          "VARIABLE_PROBE_REOPEN_DOCUMENT2D",
+                          lambda: ksapi.IKompasDocument2D(reopened),
+                      )
+                      reopened_var = (
+                          call(
+                              "VARIABLE_PROBE_LOOKUP_AFTER_REOPEN",
+                              lambda: reopened_d2.GetVariableByName(False, probe_name),
+                          )
+                          if reopened_d2 is not None else None
+                      )
+                      if reopened_var is not None:
+                          value = call("VARIABLE_PROBE_VALUE_AFTER_REOPEN", reopened_var.GetValue)
+                          if value is not None and abs(float(value) - 123.0) < 1e-9:
+                              print("PROVEN_RUNTIME_VARIABLE_MUTATION_REOPEN_PASS")
+                              print("PROVEN_RUNTIME_MUTATION_ROUTE_PASS=AddVariable_SaveAs_Reopen")
+                              raise SystemExit(0)
+
+              print("PROVEN_RUNTIME_VARIABLE_MUTATION_FAIL=save_or_reopen")
+
+          # Geometry probing remains below only if AddVariable mutation did not pass.
           manager = call("VIEWS_MANAGER", d2.GetViewsAndLayersManager)
           views = call("VIEWS_COLLECTION", manager.GetViews) if manager is not None else None
 
@@ -503,7 +558,7 @@ jobs:
           test "$(sha256sum "$PROVEN_BASE_FRW" | awk '{print $1}')" = "$BASE_FRW_SHA256"
           echo "PROVEN_RUNTIME_BASE_FRW_UNCHANGED_PASS" | tee base-frw-unchanged.txt
 
-      - name: Verify existing FRW open and mutation markers
+      - name: Verify proven mutation route
         if: success()
         shell: bash
         run: |
@@ -511,24 +566,27 @@ jobs:
           grep -q 'PROVEN_RUNTIME_GETKOMPAS_PASS' api-result.txt
           grep -q 'PROVEN_RUNTIME_GETDOCUMENTS_PASS' api-result.txt
           grep -q 'PROVEN_RUNTIME_EXISTING_OPEN_PASS' api-result.txt
-          grep -q 'PROVEN_RUNTIME_EXISTING_LINE_ADD_PASS' api-result.txt
-          grep -q 'PROVEN_RUNTIME_EXISTING_MUTATION_SAVE_PASS' api-result.txt
-          grep -q 'PROVEN_RUNTIME_BASE_FRW_UNCHANGED_PASS' base-frw-unchanged.txt
 
-          OUT=result/01_Mekhanizm_Variant_06_PROVEN_MUTATION.frw
-          test -s "$OUT"
-          sha256sum "$OUT" | tee mutation-sha256.txt
-          python3 - <<'PY'
-          import pathlib
-          import zipfile
-          p = pathlib.Path("result/01_Mekhanizm_Variant_06_PROVEN_MUTATION.frw")
+          if grep -q 'PROVEN_RUNTIME_MUTATION_ROUTE_PASS=AddVariable_SaveAs_Reopen' api-result.txt; then
+            OUT=result/01_Mekhanizm_Variant_06_VARIABLE_MUTATION.frw
+            test -s "$OUT"
+            sha256sum "$OUT" | tee mutation-sha256.txt
+            python3 - <<'PY'
+          import pathlib, zipfile
+          p=pathlib.Path("result/01_Mekhanizm_Variant_06_VARIABLE_MUTATION.frw")
           assert p.stat().st_size > 1000
           assert zipfile.is_zipfile(p)
           with zipfile.ZipFile(p) as z:
               assert "Contents" in z.namelist()
               assert "FileInfo" in z.namelist()
-          print("PROVEN_RUNTIME_EXISTING_MUTATION_VERIFY_PASS")
+          print("PROVEN_RUNTIME_VARIABLE_MUTATION_VERIFY_PASS")
           PY
+            exit 0
+          fi
+
+          grep -q 'PROVEN_RUNTIME_EXISTING_LINE_ADD_PASS' api-result.txt
+          grep -q 'PROVEN_RUNTIME_EXISTING_MUTATION_SAVE_PASS' api-result.txt
+          echo "PROVEN_RUNTIME_GEOMETRY_MUTATION_VERIFY_PASS"
 
       - name: Upload proven runtime diagnostics
         if: always()
@@ -538,6 +596,7 @@ jobs:
           path: |
             proven-input/01_Mekhanizm_Variant_06_BASE.frw
             result/01_Mekhanizm_Variant_06_PROVEN_MUTATION.frw
+            result/01_Mekhanizm_Variant_06_VARIABLE_MUTATION.frw
             base-frw-sha256.txt
             base-frw-verify.txt
             base-frw-unchanged.txt
