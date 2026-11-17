@@ -91,6 +91,7 @@ jobs:
           & $csc /nologo /platform:x86 /reference:"$env:GITHUB_WORKSPACE\stage2-v3\MasterSCADA.Interop.dll" /out:"$env:GITHUB_WORKSPACE\stage2-v3\probe.exe" "$env:GITHUB_WORKSPACE\stage2-v3\Program.cs"
           if ($LASTEXITCODE -ne 0) { throw "compile failed" }
           Push-Location "$env:GITHUB_WORKSPACE\stage2-v3"; try { & .\probe.exe } finally { Pop-Location }
+          Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-validation.txt" -Pattern "^(APP_CREATED|CREATE_PROJECT|CURRENT|PROJECT|SYSTEM_ROOT|OBJ_TREE|OBJ_ROOT|SAVE_|VAV_|NATIVE_VAV)" | ForEach-Object { $_.Line }
           if (!(Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-validation.txt" -Pattern "^NATIVE_VAV=True$" -Quiet)) { throw "native VAV was not created" }
 
       - name: Upload evidence
