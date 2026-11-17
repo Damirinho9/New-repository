@@ -50,13 +50,18 @@ jobs:
             [DllImport("user32.dll")] public static extern uint GetMenuState(IntPtr hMenu, uint uId, uint flags);
             [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
             [DllImport("user32.dll")] public static extern bool DrawMenuBar(IntPtr hWnd);
+            public const uint WM_INITMENUPOPUP = 0x0117;
           }
           '@
 
           function Get-MenuText([IntPtr]$menu,[int]$pos){
             $sb=New-Object System.Text.StringBuilder 512
             [void][NativeMenu7341268]::GetMenuString($menu,[uint32]$pos,$sb,$sb.Capacity,0x400)
-            return $sb.ToString().Replace("&","").Trim()
+            $raw=$sb.ToString().Replace("&","").Trim()
+            try {
+              $b=[System.Text.Encoding]::GetEncoding(1252).GetBytes($raw)
+              return [System.Text.Encoding]::GetEncoding(1251).GetString($b)
+            } catch { return $raw }
           }
           function Dump-Menu([IntPtr]$menu,[string]$prefix){
             $cnt=[NativeMenu7341268]::GetMenuItemCount($menu)
@@ -82,6 +87,14 @@ jobs:
               if($txt -eq $exact -and $id -ne 0xFFFFFFFF){return [int64]$id}
             }
             return -1
+          }
+          function Refresh-AddMenu([IntPtr]$hwnd,[IntPtr]$mainMenu){
+            $add=[NativeMenu7341268]::GetSubMenu($mainMenu,2)
+            if($add -eq [IntPtr]::Zero){return [IntPtr]::Zero}
+            $lp=[IntPtr]2
+            [void][NativeMenu7341268]::SendMessage($hwnd,[NativeMenu7341268]::WM_INITMENUPOPUP,$add,$lp)
+            Start-Sleep -Milliseconds 400
+            return $add
           }
           function Send-Command([IntPtr]$hwnd,[int64]$id,[string]$name){
             if($id -lt 0){ "$name COMMAND_NOT_FOUND"|Add-Content -Encoding utf8 $log; return $false }
@@ -140,7 +153,10 @@ jobs:
             $p.CurrentItem=$p.SystemRoot
             [void][NativeMenu7341268]::DrawMenuBar($hwnd)
             Start-Sleep -Milliseconds 500
-            $cmdComputer=Find-Command $menu "Компьютер"
+            $addMenu=Refresh-AddMenu $hwnd $menu
+            "=== ADD AFTER SYSTEMROOT ==="|Add-Content -Encoding utf8 $menuLog
+            Dump-Menu $addMenu "  "
+            $cmdComputer=Find-Command $addMenu "Компьютер"
             [void](Send-Command $hwnd $cmdComputer "COMPUTER")
             "COMPUTERS_AFTER=$($p.ComputerCount)"|Add-Content -Encoding utf8 $log
             if($p.ComputerCount -gt 0){
@@ -155,7 +171,10 @@ jobs:
             $p.CurrentItem=$objRoot
             [void][NativeMenu7341268]::DrawMenuBar($hwnd)
             Start-Sleep -Milliseconds 500
-            $cmdObject=Find-Command $menu "Объект"
+            $addMenu=Refresh-AddMenu $hwnd $menu
+            "=== ADD AFTER OBJROOT ==="|Add-Content -Encoding utf8 $menuLog
+            Dump-Menu $addMenu "  "
+            $cmdObject=Find-Command $addMenu "Объект"
             [void](Send-Command $hwnd $cmdObject "OBJECT")
             "OBJROOT_AFTER_COUNT=$($objRoot.Count)"|Add-Content -Encoding utf8 $log
 
@@ -183,7 +202,10 @@ jobs:
               $p.CurrentItem=$obj
               [void][NativeMenu7341268]::DrawMenuBar($hwnd)
               Start-Sleep -Milliseconds 500
-              $cmdValue=Find-Command $menu "Значение"
+              $addMenu=Refresh-AddMenu $hwnd $menu
+              "=== ADD AFTER OBJECT ==="|Add-Content -Encoding utf8 $menuLog
+              Dump-Menu $addMenu "  "
+              $cmdValue=Find-Command $addMenu "Значение"
               [void](Send-Command $hwnd $cmdValue "VALUE")
               "OBJECT_CHILD_COUNT_AFTER_VALUE=$($obj.Count)"|Add-Content -Encoding utf8 $log
               try{
