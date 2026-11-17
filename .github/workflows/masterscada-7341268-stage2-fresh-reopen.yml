@@ -1,0 +1,148 @@
+name: MasterSCADA 7341268 Stage 2 Fresh Reopen Only
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-fresh-reopen.yml"
+  workflow_dispatch:
+
+jobs:
+  fresh-reopen:
+    runs-on: windows-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11 on independent runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\fresh-reopen" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          "MSI_EXIT_CODE=$($p.ExitCode)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\fresh-reopen\install.txt"
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Download exact native project artifact from producer run 44094325226
+        uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-native-project
+          path: downloaded-project
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44094325226
+
+      - name: Validate downloaded artifact before opening
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "$env:GITHUB_WORKSPACE\downloaded-project"
+          $vav = Get-ChildItem $root -Recurse -Filter "7341268_Variant7.vav" -File | Select-Object -First 1
+          if ($null -eq $vav) { throw "artifact lacks 7341268_Variant7.vav" }
+          $projectFolder = $vav.Directory.FullName
+          $hash = (Get-FileHash $vav.FullName -Algorithm SHA256).Hash
+          $size = $vav.Length
+          @(
+            "SOURCE_RUN=44094325226",
+            "SOURCE_ARTIFACT=masterscada-7341268-native-project",
+            "ARTIFACT_DOWNLOADED=True",
+            "VAV_PATH=$($vav.FullName)",
+            "PROJECT_FOLDER=$projectFolder",
+            "VAV_SIZE=$size",
+            "VAV_SHA256=$hash"
+          ) | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\fresh-reopen\downloaded-project.txt"
+          $vav.FullName | Set-Content -Encoding ascii "$env:GITHUB_WORKSPACE\fresh-reopen\vav-path.txt"
+          if ($size -le 0) { throw "downloaded VAV is empty" }
+
+      - name: Open exact downloaded VAV in MasterSCADA and attach COM
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\fresh-reopen\stage2-fresh-reopen.txt"
+          $vav = (Get-Content "$env:GITHUB_WORKSPACE\fresh-reopen\vav-path.txt" -Raw).Trim()
+          $exe = "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          if (!(Test-Path $exe)) { throw "MasterSCADA.exe missing" }
+          if (!(Test-Path $vav)) { throw "downloaded VAV missing before launch" }
+
+          $beforeHash = (Get-FileHash $vav -Algorithm SHA256).Hash
+          $beforeSize = (Get-Item $vav).Length
+          "VAV_SHA256_BEFORE=$beforeHash" | Set-Content -Encoding utf8 $out
+          "VAV_SIZE_BEFORE=$beforeSize" | Add-Content -Encoding utf8 $out
+
+          $proc = Start-Process $exe -ArgumentList @($vav) -PassThru
+          "START_PID=$($proc.Id)" | Add-Content -Encoding utf8 $out
+          Start-Sleep -Seconds 12
+
+          $alive = $null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)
+          "MASTERSCADA_PROCESS_ALIVE=$alive" | Add-Content -Encoding utf8 $out
+          if (!$alive) { throw "MasterSCADA process exited while opening downloaded VAV" }
+
+          $app = $null
+          try {
+            $app = New-Object -ComObject MasterSCADA.Application
+            "COM_ATTACHED=True" | Add-Content -Encoding utf8 $out
+            try { "PROJECTS_COUNT=$($app.Projects.Count)" | Add-Content -Encoding utf8 $out } catch {
+              "PROJECTS_COUNT_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
+
+            $p = $app.CurrentProject
+            "CURRENT_PROJECT=$($null -ne $p)" | Add-Content -Encoding utf8 $out
+            if ($null -eq $p) { throw "CurrentProject is null after launching exact downloaded VAV" }
+
+            try { "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $out } catch {
+              "PROJECT_NAME_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
+            try { "PROJECT_PATH=$($p.Path)" | Add-Content -Encoding utf8 $out } catch {
+              "PROJECT_PATH_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
+            try { "PROJECT_GUID=$($p.ProjectGUID)" | Add-Content -Encoding utf8 $out } catch {}
+            try { "COMPUTER_COUNT=$($p.ComputerCount)" | Add-Content -Encoding utf8 $out } catch {}
+            try { "SYSTEM_ROOT_PRESENT=$($null -ne $p.SystemRoot)" | Add-Content -Encoding utf8 $out } catch {
+              "SYSTEM_ROOT_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
+            try { "OBJ_TREE_PRESENT=$($null -ne $p.ObjTree)" | Add-Content -Encoding utf8 $out } catch {
+              "OBJ_TREE_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
+
+            "PROJECT_OPEN=True" | Add-Content -Encoding utf8 $out
+          } finally {
+            if ($app) {
+              try { $app.ExitScada() } catch {}
+              try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
+            }
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+          }
+
+          Start-Sleep -Seconds 2
+          "VAV_STILL_EXISTS=$(Test-Path $vav)" | Add-Content -Encoding utf8 $out
+          if (Test-Path $vav) {
+            $afterHash = (Get-FileHash $vav -Algorithm SHA256).Hash
+            $afterSize = (Get-Item $vav).Length
+            "VAV_SHA256_AFTER=$afterHash" | Add-Content -Encoding utf8 $out
+            "VAV_SIZE_AFTER=$afterSize" | Add-Content -Encoding utf8 $out
+          }
+
+          if (!(Select-String -Path $out -Pattern "^PROJECT_OPEN=True$" -Quiet)) { throw "PROJECT_OPEN not confirmed" }
+          if (!(Select-String -Path $out -Pattern "^CURRENT_PROJECT=True$" -Quiet)) { throw "CurrentProject not confirmed" }
+          if (!(Select-String -Path $out -Pattern "^MASTERSCADA_PROCESS_ALIVE=True$" -Quiet)) { throw "MasterSCADA process not alive" }
+          if (!(Select-String -Path $out -Pattern "^VAV_STILL_EXISTS=True$" -Quiet)) { throw "VAV missing after reopen" }
+
+          "FRESH_REOPEN_VALIDATION=PASS" | Add-Content -Encoding utf8 $out
+          Get-Content $out
+
+      - name: Upload independent fresh reopen evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-independent-fresh-reopen
+          path: fresh-reopen/**
+          if-no-files-found: error
+          retention-days: 90
