@@ -9,15 +9,17 @@ on:
 
 jobs:
   smoke:
-    # Historical run 43746466610 (2026-11-15) used ubuntu-26.04 / resolute.
-    # Do not use floating ubuntu-latest here.
+    # Historical KOMPAS runs used ubuntu-26.04 / resolute.
+    # Commit 43d9332a baseline run 43747526748 used Azure image 20261111.196.1
+    # and already failed at Documents.Add(). Do not use floating ubuntu-latest here.
     runs-on: ubuntu-26.04
     timeout-minutes: 20
 
     env:
-      HISTORICAL_RUN_ID: "43746466610"
+      HISTORICAL_PROBE_RUN_ID: "43746466610"
+      COMMIT43_BASELINE_RUN_ID: "43747526748"
       HISTORICAL_IMAGE_OS: "ubuntu26"
-      HISTORICAL_IMAGE_VERSION: "20261111.196"
+      HISTORICAL_RUNNER_IMAGE_VERSION: "20261111.196.1"
       ASCON_DEB_DIST: "1.8_x86-64"
       ASCON_KOMPAS_VERSION: "25.0.5.2780"
       BIN: "/opt/ascon/kompas3d-v25/Bin"
@@ -32,9 +34,10 @@ jobs:
         run: |
           set -euxo pipefail
           {
-            echo "HISTORICAL_RUN_ID=$HISTORICAL_RUN_ID"
+            echo "HISTORICAL_PROBE_RUN_ID=$HISTORICAL_PROBE_RUN_ID"
+            echo "COMMIT43_BASELINE_RUN_ID=$COMMIT43_BASELINE_RUN_ID"
             echo "EXPECTED_IMAGE_OS=$HISTORICAL_IMAGE_OS"
-            echo "EXPECTED_IMAGE_VERSION=$HISTORICAL_IMAGE_VERSION"
+            echo "COMMIT43_BASELINE_IMAGE_VERSION=$HISTORICAL_RUNNER_IMAGE_VERSION"
             echo "CURRENT_IMAGE_OS=${ImageOS:-unknown}"
             echo "CURRENT_IMAGE_VERSION=${ImageVersion:-unknown}"
             echo "RUNNER_OS=${RUNNER_OS:-unknown}"
@@ -52,17 +55,16 @@ jobs:
           PY
           } | tee runner-baseline.txt
 
-          # The historical success and the 2026-11-17 failed diagnostic both
-          # used this same hosted image release. Log drift explicitly.
+          # Pin the OS label, but do not pretend GitHub-hosted image releases are
+          # selectable by version. Record any release change for forensics.
           if [ "${ImageOS:-}" != "$HISTORICAL_IMAGE_OS" ]; then
             echo "RUNNER_IMAGE_OS_MISMATCH expected=$HISTORICAL_IMAGE_OS actual=${ImageOS:-unknown}" | tee -a runner-baseline.txt
             exit 11
           fi
-          if [ "${ImageVersion:-}" != "$HISTORICAL_IMAGE_VERSION" ]; then
-            echo "RUNNER_IMAGE_VERSION_DRIFT expected=$HISTORICAL_IMAGE_VERSION actual=${ImageVersion:-unknown}" | tee -a runner-baseline.txt
-          else
-            echo "RUNNER_IMAGE_EXACT_MATCH" | tee -a runner-baseline.txt
-          fi
+          echo "RUNNER_OS_LABEL_PINNED=ubuntu-26.04" | tee -a runner-baseline.txt
+          echo "CURRENT_HOSTED_IMAGE_VERSION=${ImageVersion:-unknown}" | tee -a runner-baseline.txt
+          echo "COMMIT43_HOSTED_IMAGE_VERSION=$HISTORICAL_RUNNER_IMAGE_VERSION" | tee -a runner-baseline.txt
+          echo "RUNNER_DRIFT_NOT_ROOT_CAUSE_REFERENCE=run_$COMMIT43_BASELINE_RUN_ID_failed_at_Documents.Add_on_old_image" | tee -a runner-baseline.txt
 
       - name: Install exact historical Debian KOMPAS runtime
         shell: bash
