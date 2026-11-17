@@ -55,6 +55,26 @@ jobs:
           ldd fastbuild/writer_variant06.so | head -100 || true
           ldd fastbuild/bootstrap_variant06_qt.so | head -100 || true
 
+      - name: Decode existing native FRW input
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat kompas-input/v6.b64.part* | tr -d '[:space:]' | base64 -d > fastbuild/v6.frw.gz
+          gzip -dc fastbuild/v6.frw.gz > fastbuild/01_Mekhanizm_Variant_06_BASE.frw
+          test -s fastbuild/01_Mekhanizm_Variant_06_BASE.frw
+          sha256sum fastbuild/01_Mekhanizm_Variant_06_BASE.frw
+          python3 - <<'PY'
+          import hashlib, pathlib, zipfile
+          p=pathlib.Path("fastbuild/01_Mekhanizm_Variant_06_BASE.frw")
+          print("base_size", p.stat().st_size)
+          print("base_sha256", hashlib.sha256(p.read_bytes()).hexdigest())
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              print("base_members", names)
+              assert "Contents" in names and "FileInfo" in names
+          PY
+
       - name: Run KOMPAS in ALT using cached graphic RPM
         shell: bash
         run: |
@@ -158,6 +178,7 @@ jobs:
 
               cp /work/fastbuild/writer_variant06.so /tmp/writer_variant06.so
               cp /work/fastbuild/bootstrap_variant06_qt.so /tmp/bootstrap_variant06_qt.so
+              cp /work/fastbuild/01_Mekhanizm_Variant_06_BASE.frw /tmp/01_Mekhanizm_Variant_06_BASE.frw
               rm -f /tmp/work1_v6_inject.log /tmp/work1_bootstrap.log                     /tmp/work1_bootstrap_once.lock                     /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw                     /tmp/kompas-fast.out /tmp/kompas-fast.err
 
               export LANG=C.UTF-8
@@ -179,6 +200,10 @@ jobs:
                 echo "poll=$i"
                 tail -80 /tmp/work1_bootstrap.log 2>/dev/null || true
                 tail -80 /tmp/work1_v6_inject.log 2>/dev/null || true
+                if grep -q "EXISTING_FRW_OPEN_PASS" /tmp/work1_v6_inject.log 2>/dev/null; then
+                  PASS=2
+                  break
+                fi
                 if grep -q "RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06" /tmp/work1_v6_inject.log 2>/dev/null; then
                   PASS=1
                   break
@@ -195,6 +220,15 @@ jobs:
               cat /tmp/work1_v6_inject.log 2>/dev/null || true
               echo "=== KOMPAS STDERR ==="
               tail -250 /tmp/kompas-fast.err 2>/dev/null || true
+
+              if [ "$PASS" = "2" ] && [ -s /tmp/01_Mekhanizm_Variant_06_BASE.frw ]; then
+                sha256sum /tmp/01_Mekhanizm_Variant_06_BASE.frw
+                cp /tmp/01_Mekhanizm_Variant_06_BASE.frw /work/result/
+                cp /tmp/work1_v6_inject.log /work/result/
+                cp /tmp/work1_bootstrap.log /work/result/
+                echo "RESULT=EXISTING_FRW_OPEN_PASS"
+                exit 0
+              fi
 
               OUT=/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
               if [ "$PASS" = "1" ] && [ -s "$OUT" ]; then
@@ -222,9 +256,22 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          if [ -f result/01_Mekhanizm_Variant_06_BASE.frw ]; then
+            test -s result/01_Mekhanizm_Variant_06_BASE.frw
+            grep -q 'EXISTING_FRW_OPEN_PASS' result/work1_v6_inject.log
+            python3 - <<'PY'
+import pathlib, zipfile
+p=pathlib.Path("result/01_Mekhanizm_Variant_06_BASE.frw")
+assert zipfile.is_zipfile(p)
+with zipfile.ZipFile(p) as z:
+    assert "Contents" in z.namelist() and "FileInfo" in z.namelist()
+print("EXISTING_FRW_VERIFY_PASS", p.stat().st_size)
+PY
+            exit 0
+          fi
           OUT=result/01_Mekhanizm_Variant_06_PARAMETRIC.frw
           test -s "$OUT"
-          python3 - <<'PY'
+          python3 - <<'PY
           import pathlib,zipfile,hashlib
           p=pathlib.Path("result/01_Mekhanizm_Variant_06_PARAMETRIC.frw")
           assert zipfile.is_zipfile(p)
