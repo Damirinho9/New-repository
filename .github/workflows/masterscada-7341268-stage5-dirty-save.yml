@@ -85,13 +85,34 @@ jobs:
 
           $proc=$null;$app=$null;$raw=$null
           try{
-            $proc=Start-Process $exe -ArgumentList @($vav) -PassThru
-            Start-Sleep -Seconds 12
-            "PROCESS_ALIVE=$(($null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)))" | Set-Content -Encoding utf8 $out
             $app=New-Object -ComObject MasterSCADA.Application
-            $p=$app.CurrentProject
+            "APP_COM_CREATED=True" | Set-Content -Encoding utf8 $out
+            $base="C:\MasterSCADA Projects\Projects"
+            $id="7341268_Variant7"
+            try{
+              $ret=$app.OpenProject(1,$base,$id,$false,"","",$false)
+              "OPENPROJECT_RETURNED=True RETURN=$ret" | Add-Content -Encoding utf8 $out
+            }catch{
+              "OPENPROJECT_EXCEPTION=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
+            Start-Sleep -Seconds 4
+            $p=$null
+            try{$p=$app.CurrentProject}catch{
+              "CURRENT_PROJECT_EXCEPTION=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
             "CURRENT_PROJECT_PRESENT=$($null -ne $p)" | Add-Content -Encoding utf8 $out
-            if($null -eq $p){throw "CurrentProject null"}
+            if($null -eq $p){
+              try{
+                $ret2=$app.OpenProjectTemp(1,$base,$id,$false,"","",$false)
+                "OPENPROJECTTEMP_RETURNED=True RETURN_TYPE=$(if($null -eq $ret2){'<null>'}else{$ret2.GetType().FullName})" | Add-Content -Encoding utf8 $out
+              }catch{
+                "OPENPROJECTTEMP_EXCEPTION=$($_.Exception.GetType().FullName): $($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+              }
+              Start-Sleep -Seconds 3
+              try{$p=$app.CurrentProject}catch{}
+              "CURRENT_PROJECT_AFTER_TEMP=$($null -ne $p)" | Add-Content -Encoding utf8 $out
+            }
+            if($null -eq $p){throw "CurrentProject null after COM OpenProject/OpenProjectTemp"}
             "PROJECT_NAME=$($p.Name)" | Add-Content -Encoding utf8 $out
             "PROJECT_PATH=$($p.Path)" | Add-Content -Encoding utf8 $out
             "COMPUTER_COUNT_BEFORE=$($p.ComputerCount)" | Add-Content -Encoding utf8 $out
