@@ -1,0 +1,102 @@
+name: MasterSCADA 7341268 Stage 2 Typed Native Probe v3
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage2-typed3.yml"
+  workflow_dispatch:
+
+jobs:
+  native-probe:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\stage2-v3" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          "MSI_EXIT_CODE=$($p.ExitCode)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage2-v3\install.txt"
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Generate typed interop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tlbimp = Get-ChildItem "C:\Program Files (x86)\Microsoft SDKs" -Recurse -Filter tlbimp.exe -File -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (!$tlbimp) { throw "tlbimp.exe not found" }
+          $dll = "$env:GITHUB_WORKSPACE\stage2-v3\MasterSCADA.Interop.dll"
+          & $tlbimp "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe" "/out:$dll" "/namespace:MasterSCADAInterop" "/silent"
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path $dll)) { throw "tlbimp failed" }
+
+      - name: Compile and run native probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = @'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Reflection;
+          using System.Runtime.InteropServices;
+          using MasterSCADAInterop;
+          class Program {
+            static string dir = Environment.GetEnvironmentVariable("GITHUB_WORKSPACE") + "\\stage2-v3";
+            static string log = Path.Combine(dir, "stage2-validation.txt");
+            static void L(string s) { File.AppendAllText(log, s + Environment.NewLine); }
+            static void Dump(Type t) {
+              L("TYPE " + t.FullName);
+              foreach (var m in t.GetMethods().OrderBy(x => x.Name))
+                L("METHOD " + m + " PARAMS=" + string.Join(";", m.GetParameters().Select(p => p.ParameterType.FullName + " " + p.Name)));
+            }
+            static void Item(object x, string tag) {
+              if (x == null) { L(tag + "=<null>"); return; }
+              L(tag + "_TYPE=" + x.GetType().FullName);
+              foreach (var n in new[]{"Name","DisplayName","ItemType","ObjectType","FullName","Id"}) try {
+                var p=x.GetType().GetProperty(n); if(p!=null) L(tag+"_"+n+"="+(p.GetValue(x,null)??""));
+              } catch(Exception e) { L(tag+"_"+n+"_ERR="+e.Message); }
+              try { var p=x.GetType().GetProperty("ClassInfoObject"); var ci=p==null?null:p.GetValue(x,null); if(ci!=null) L(tag+"_CLSID="+ci.GetType().GetProperty("clsid").GetValue(ci,null)); } catch(Exception e){L(tag+"_CLSID_ERR="+e.Message);}
+            }
+            static void Main() {
+              Directory.CreateDirectory(dir); File.WriteAllText(log, "START" + Environment.NewLine);
+              foreach(var t in typeof(ApplicationClass).Assembly.GetTypes().Where(t=>new[]{"Project","TreeItem","ObjTree","SysTree","Variable","Parameter","Formula"}.Any(k=>t.Name.IndexOf(k,StringComparison.OrdinalIgnoreCase)>=0))) Dump(t);
+              string baseFolder=@"C:\MasterSCADA Projects\Projects", id="7341268_Variant7", folder=Path.Combine(baseFolder,id), target=Path.Combine(folder,id+".vav");
+              Directory.CreateDirectory(folder); ApplicationClass app=null;
+              try {
+                app=new ApplicationClass(); L("APP_CREATED=true");
+                try { app.CreateProject(EProjectLocation.plFileLocation,baseFolder,id,"Система водяного отопления - вариант 7",""); L("CREATE_PROJECT_RETURNED=true"); } catch(Exception e){L("CREATE_PROJECT_EXCEPTION="+e);}
+                object cur=null; try{cur=app.CurrentProject;L("CURRENT_NULL="+(cur==null));}catch(Exception e){L("CURRENT_PROJECT_EXCEPTION="+e);}
+                Item(cur,"PROJECT");
+                var p=cur as Project;
+                if(p!=null){Item(p.SystemRoot,"SYSTEM_ROOT");Item(p.ObjTree,"OBJ_TREE");try{Item(p.ObjTree.Root,"OBJ_ROOT");}catch(Exception e){L("OBJ_ROOT_EXCEPTION="+e);}try{p.Save();L("SAVE_SUCCESS=true");}catch(Exception e){L("SAVE_EXCEPTION="+e);}}
+              } finally {if(app!=null){try{app.ExitScada();}catch{}try{Marshal.FinalReleaseComObject(app);}catch{}}}
+              System.Threading.Thread.Sleep(1500); L("VAV_EXISTS="+File.Exists(target)); if(File.Exists(target)){L("VAV_SIZE="+new FileInfo(target).Length);using(var fs=File.OpenRead(target))using(var sha=System.Security.Cryptography.SHA256.Create())L("VAV_SHA256="+BitConverter.ToString(sha.ComputeHash(fs)).Replace("-",""));} L("NATIVE_VAV="+(File.Exists(target)&&new FileInfo(target).Length>0));
+            }
+          }
+          '@
+          Set-Content "$env:GITHUB_WORKSPACE\stage2-v3\Program.cs" $src -Encoding UTF8
+          $csc = Get-ChildItem "C:\Windows\Microsoft.NET\Framework64" -Recurse -Filter csc.exe -File | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          & $csc /nologo /platform:x86 /reference:"$env:GITHUB_WORKSPACE\stage2-v3\MasterSCADA.Interop.dll" /out:"$env:GITHUB_WORKSPACE\stage2-v3\probe.exe" "$env:GITHUB_WORKSPACE\stage2-v3\Program.cs"
+          if ($LASTEXITCODE -ne 0) { throw "compile failed" }
+          Push-Location "$env:GITHUB_WORKSPACE\stage2-v3"; try { & .\probe.exe } finally { Pop-Location }
+          if (!(Select-String -Path "$env:GITHUB_WORKSPACE\stage2-v3\stage2-validation.txt" -Pattern "^NATIVE_VAV=True$" -Quiet)) { throw "native VAV was not created" }
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage2-v3
+          path: stage2-v3/**
+          if-no-files-found: warn
