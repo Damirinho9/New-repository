@@ -1,0 +1,188 @@
+name: MasterSCADA 7341268 Stage 4 Reference Type Validation
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage4-reference-validation.yml"
+  workflow_dispatch:
+
+jobs:
+  validate-types:
+    runs-on: windows-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\stage4-reference" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          "MSI_EXIT_CODE=$($p.ExitCode)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage4-reference\install.txt"
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Download validated native project
+        uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-native-project
+          path: downloaded-project
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44094325226
+
+      - name: Generate typed interop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tlbimp = Get-ChildItem "C:\Program Files (x86)\Microsoft SDKs" -Recurse -Filter tlbimp.exe -File -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (!$tlbimp) { throw "tlbimp.exe not found" }
+          $dll = "$env:GITHUB_WORKSPACE\stage4-reference\MasterSCADA.Interop.dll"
+          & $tlbimp "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe" "/out:$dll" "/namespace:MasterSCADAInterop" "/silent"
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path $dll)) { throw "tlbimp failed" }
+
+      - name: Dump enum values
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = @'
+          using System;
+          using System.IO;
+          using MasterSCADAInterop;
+          class P {
+            static void Main() {
+              string p=Path.Combine(Environment.GetEnvironmentVariable("GITHUB_WORKSPACE"),"stage4-reference","enum-values.txt");
+              using(var w=new StreamWriter(p,false,System.Text.Encoding.UTF8)) {
+                w.WriteLine("EObjectType");
+                foreach(var v in Enum.GetValues(typeof(EObjectType))) w.WriteLine(Enum.GetName(typeof(EObjectType),v)+"="+Convert.ToInt32(v));
+                w.WriteLine("ETreeItemType");
+                foreach(var v in Enum.GetValues(typeof(ETreeItemType))) w.WriteLine(Enum.GetName(typeof(ETreeItemType),v)+"="+Convert.ToInt32(v));
+              }
+            }
+          }
+          '@
+          Set-Content "$env:GITHUB_WORKSPACE\stage4-reference\EnumDump.cs" $src -Encoding UTF8
+          $csc = Get-ChildItem "C:\Windows\Microsoft.NET\Framework" -Recurse -Filter csc.exe -File | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          & $csc /nologo /platform:x86 /reference:"$env:GITHUB_WORKSPACE\stage4-reference\MasterSCADA.Interop.dll" /out:"$env:GITHUB_WORKSPACE\stage4-reference\enumdump.exe" "$env:GITHUB_WORKSPACE\stage4-reference\EnumDump.cs"
+          if($LASTEXITCODE -ne 0){throw "enum dump compile failed"}
+          Push-Location "$env:GITHUB_WORKSPACE\stage4-reference"; try { & .\enumdump.exe } finally { Pop-Location }
+          Get-Content "$env:GITHUB_WORKSPACE\stage4-reference\enum-values.txt"
+
+      - name: Open project copy and validate tutorial-sourced CLSIDs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out="$env:GITHUB_WORKSPACE\stage4-reference\reference-type-validation.txt"
+          $srcVav=Get-ChildItem "$env:GITHUB_WORKSPACE\downloaded-project" -Recurse -Filter "7341268_Variant7.vav" -File | Select-Object -First 1
+          if($null -eq $srcVav){throw "source VAV missing"}
+
+          $workRoot="$env:GITHUB_WORKSPACE\stage4-reference\probe-project"
+          New-Item -ItemType Directory -Force $workRoot | Out-Null
+          Copy-Item $srcVav.Directory.FullName (Join-Path $workRoot "7341268_Variant7") -Recurse -Force
+          $vav=Join-Path $workRoot "7341268_Variant7\7341268_Variant7.vav"
+          if(!(Test-Path $vav)){throw "copied VAV missing"}
+
+          $exe="C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $watcher=Start-Job -ScriptBlock {
+            $ws=New-Object -ComObject WScript.Shell
+            for($i=0;$i -lt 120;$i++){
+              Get-Process -Name MasterSCADA -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle} | ForEach-Object {
+                if($ws.AppActivate($_.Id)){Start-Sleep -Milliseconds 200;$ws.SendKeys("{ENTER}")}
+              }
+              Start-Sleep -Milliseconds 500
+            }
+          }
+
+          $proc=$null;$app=$null
+          try {
+            $proc=Start-Process $exe -ArgumentList @($vav) -PassThru
+            Start-Sleep -Seconds 12
+            "PROCESS_ALIVE=$(($null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)))"|Set-Content -Encoding utf8 $out
+            $app=New-Object -ComObject MasterSCADA.Application
+            $p=$app.CurrentProject
+            "CURRENT_PROJECT=$($null -ne $p)"|Add-Content -Encoding utf8 $out
+            if($null -eq $p){throw "CurrentProject null"}
+
+            function DumpNode($tag,$node){
+              if($null -eq $node){"$tag.NULL=True"|Add-Content -Encoding utf8 $out;return}
+              "$tag.NULL=False"|Add-Content -Encoding utf8 $out
+              try{"$tag.Name=$($node.Name)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"$tag.DisplayName=$($node.DisplayName)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"$tag.ItemType=$($node.ItemType)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"$tag.ObjectType=$($node.ObjectType)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"$tag.FullName=$($node.FullName)"|Add-Content -Encoding utf8 $out}catch{}
+              try{"$tag.CLSID=$($node.ClassInfoObject.clsid)"|Add-Content -Encoding utf8 $out}catch{}
+            }
+
+            $computerClsid="{33A04CE5-4692-11D4-B153-87EB14408E58}"
+            $objectClsid="{C974EA66-E284-11D2-95EC-000000000000}"
+            $valueClsid="{3FFAD3B4-D207-4912-B170-DFEE3C068ADF}"
+            $repeaterClsid="{BAF1E982-BDA4-11D5-8568-008048837C1A}"
+
+            "SOURCE_COMPUTER_CLSID=$computerClsid"|Add-Content -Encoding utf8 $out
+            "SOURCE_OBJECT_CLSID=$objectClsid"|Add-Content -Encoding utf8 $out
+            "SOURCE_VALUE_CLSID=$valueClsid"|Add-Content -Encoding utf8 $out
+            "SOURCE_ANALOG_NODE_CLSID=$repeaterClsid"|Add-Content -Encoding utf8 $out
+
+            $comp=$null
+            try {
+              $comp=$p.SystemRoot.InsertNewChild($computerClsid,$null)
+              "COMPUTER_INSERT_RETURNED=$($null -ne $comp)"|Add-Content -Encoding utf8 $out
+              DumpNode "COMPUTER" $comp
+            } catch {
+              "COMPUTER_INSERT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+            }
+
+            $obj=$null
+            try {
+              $obj=$p.ObjTree.Root.InsertNewChild($objectClsid,$null)
+              "OBJECT_INSERT_RETURNED=$($null -ne $obj)"|Add-Content -Encoding utf8 $out
+              DumpNode "TECH_OBJECT" $obj
+            } catch {
+              "OBJECT_INSERT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+            }
+
+            if($null -ne $obj){
+              try {
+                $val=$obj.InsertNewChild($valueClsid,$null)
+                "VALUE_INSERT_RETURNED=$($null -ne $val)"|Add-Content -Encoding utf8 $out
+                DumpNode "VALUE_CLASS" $val
+              } catch {
+                "VALUE_INSERT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+              }
+              try {
+                $rep=$obj.InsertNewChild($repeaterClsid,$null)
+                "ANALOG_NODE_INSERT_RETURNED=$($null -ne $rep)"|Add-Content -Encoding utf8 $out
+                DumpNode "ANALOG_NODE" $rep
+              } catch {
+                "ANALOG_NODE_INSERT_ERROR=$($_.Exception.Message)"|Add-Content -Encoding utf8 $out
+              }
+            }
+
+            "TYPE_VALIDATION_COMPLETED=True"|Add-Content -Encoding utf8 $out
+          } finally {
+            try{Stop-Job $watcher -ErrorAction SilentlyContinue|Out-Null}catch{}
+            try{Remove-Job $watcher -Force -ErrorAction SilentlyContinue}catch{}
+            if($app){try{$app.ExitScada()}catch{};try{[Runtime.InteropServices.Marshal]::FinalReleaseComObject($app)|Out-Null}catch{}}
+            if($proc){try{Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue}catch{}}
+          }
+          Get-Content $out
+          if(!(Select-String -Path $out -Pattern "^TYPE_VALIDATION_COMPLETED=True$" -Quiet)){throw "type validation did not complete"}
+
+      - name: Upload reference validation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage4-reference-validation
+          path: stage4-reference/**
+          if-no-files-found: error
+          retention-days: 90
