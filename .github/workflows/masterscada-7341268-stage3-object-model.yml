@@ -1,0 +1,299 @@
+name: MasterSCADA 7341268 Stage 3 COM Object Model
+
+on:
+  push:
+    branches:
+      - masterscada-7341268-windows
+    paths:
+      - ".github/workflows/masterscada-7341268-stage3-object-model.yml"
+  workflow_dispatch:
+
+jobs:
+  object-model:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MasterSCADA 3.11
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\stage3-object-model" | Out-Null
+          New-Item -ItemType Directory -Force "C:\MasterSCADA_7341268\installer" | Out-Null
+          $base = "https://download.mps-soft.ru/demo/Old%20Demo/3.11/"
+          $dest = "C:\MasterSCADA_7341268\installer"
+          foreach ($name in @("Data1.cab","data.msi","setup.bmp","setup.exe")) {
+            & curl.exe -k -L --fail --silent --show-error ($base + $name) -o (Join-Path $dest $name)
+            if ($LASTEXITCODE -ne 0) { throw "download failed: $name" }
+          }
+          $p = Start-Process msiexec.exe -ArgumentList @("/i",(Join-Path $dest "data.msi"),"/qn","/norestart") -Wait -PassThru
+          "MSI_EXIT_CODE=$($p.ExitCode)" | Set-Content -Encoding utf8 "$env:GITHUB_WORKSPACE\stage3-object-model\install.txt"
+          if ($p.ExitCode -notin @(0,3010,1641)) { throw "MSI failed: $($p.ExitCode)" }
+
+      - name: Download validated native project artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: masterscada-7341268-native-project
+          path: downloaded-project
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Damirinho9/New-repository
+          run-id: 44094325226
+
+      - name: Generate typed interop assembly
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tlbimp = Get-ChildItem "C:\Program Files (x86)\Microsoft SDKs" -Recurse -Filter tlbimp.exe -File -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (!$tlbimp) { throw "tlbimp.exe not found" }
+          $dll = "$env:GITHUB_WORKSPACE\stage3-object-model\MasterSCADA.Interop.dll"
+          & $tlbimp "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe" "/out:$dll" "/namespace:MasterSCADAInterop" "/silent"
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path $dll)) { throw "tlbimp failed" }
+
+      - name: Open validated VAV and dump dynamic COM object model
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "$env:GITHUB_WORKSPACE\stage3-object-model\dynamic-com-model.txt"
+          $root = "$env:GITHUB_WORKSPACE\downloaded-project"
+          $vav = Get-ChildItem $root -Recurse -Filter "7341268_Variant7.vav" -File | Select-Object -First 1
+          if ($null -eq $vav) { throw "validated VAV missing" }
+          $exe = "C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          $proc = Start-Process $exe -ArgumentList @($vav.FullName) -PassThru
+          Start-Sleep -Seconds 12
+          $alive = $null -ne (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)
+          "PROCESS_ALIVE=$alive" | Set-Content -Encoding utf8 $out
+          "VAV_PATH=$($vav.FullName)" | Add-Content -Encoding utf8 $out
+          "VAV_SIZE=$($vav.Length)" | Add-Content -Encoding utf8 $out
+          "VAV_SHA256=$((Get-FileHash $vav.FullName -Algorithm SHA256).Hash)" | Add-Content -Encoding utf8 $out
+          if (!$alive) { throw "MasterSCADA exited while opening VAV" }
+
+          function Dump-ComObject {
+            param([string]$Tag, $Obj)
+            "=== $Tag ===" | Add-Content -Encoding utf8 $out
+            if ($null -eq $Obj) {
+              "$Tag.NULL=True" | Add-Content -Encoding utf8 $out
+              return
+            }
+            "$Tag.NULL=False" | Add-Content -Encoding utf8 $out
+            try { "$Tag.PS_TYPE=$($Obj.GetType().FullName)" | Add-Content -Encoding utf8 $out } catch {}
+            try { "$Tag.NAME=$($Obj.Name)" | Add-Content -Encoding utf8 $out } catch { "$Tag.NAME_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+            try { "$Tag.DISPLAY_NAME=$($Obj.DisplayName)" | Add-Content -Encoding utf8 $out } catch {}
+            try { "$Tag.FULL_NAME=$($Obj.FullName)" | Add-Content -Encoding utf8 $out } catch {}
+            try { "$Tag.ITEM_TYPE=$($Obj.ItemType)" | Add-Content -Encoding utf8 $out } catch {}
+            try { "$Tag.OBJECT_TYPE=$($Obj.ObjectType)" | Add-Content -Encoding utf8 $out } catch {}
+            try {
+              $ci=$Obj.ClassInfoObject
+              if($null -ne $ci){
+                try{"$Tag.CLSID=$($ci.clsid)"|Add-Content -Encoding utf8 $out}catch{}
+              }
+            } catch {}
+            "=== $Tag GET-MEMBER ===" | Add-Content -Encoding utf8 $out
+            try { $Obj | Get-Member -Force | Out-String -Width 400 | Add-Content -Encoding utf8 $out } catch {
+              "$Tag.GET_MEMBER_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out
+            }
+          }
+
+          $app = $null
+          try {
+            $app = New-Object -ComObject MasterSCADA.Application
+            "COM_ATTACHED=True" | Add-Content -Encoding utf8 $out
+            try { "PROJECTS_COUNT=$($app.Projects.Count)" | Add-Content -Encoding utf8 $out } catch {}
+
+            $p = $app.CurrentProject
+            "CURRENT_PROJECT_PRESENT=$($null -ne $p)" | Add-Content -Encoding utf8 $out
+            if ($null -eq $p) { throw "CurrentProject is null" }
+            Dump-ComObject "CurrentProject" $p
+
+            try { "COMPUTER_COUNT=$($p.ComputerCount)" | Add-Content -Encoding utf8 $out } catch { "COMPUTER_COUNT_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+
+            $systemRoot = $null
+            try { $systemRoot = $p.SystemRoot } catch { "SYSTEM_ROOT_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+            Dump-ComObject "SystemRoot" $systemRoot
+
+            $sysTree = $null
+            try { $sysTree = $p.SysTree } catch { "SYS_TREE_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+            Dump-ComObject "SysTree" $sysTree
+
+            $objTree = $null
+            try { $objTree = $p.ObjTree } catch { "OBJ_TREE_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+            Dump-ComObject "ObjTree" $objTree
+
+            $objRoot = $null
+            if($null -ne $objTree){
+              try { $objRoot = $objTree.Root } catch { "OBJ_ROOT_ERROR=$($_.Exception.Message)" | Add-Content -Encoding utf8 $out }
+            }
+            Dump-ComObject "ObjTree.Root" $objRoot
+
+            "DYNAMIC_COM_MODEL=PASS" | Add-Content -Encoding utf8 $out
+          } finally {
+            if ($app) {
+              try { $app.ExitScada() } catch {}
+              try { [Runtime.InteropServices.Marshal]::FinalReleaseComObject($app) | Out-Null } catch {}
+            }
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+          }
+
+          if (!(Select-String -Path $out -Pattern "^CURRENT_PROJECT_PRESENT=True$" -Quiet)) { throw "CurrentProject not captured" }
+          if (!(Select-String -Path $out -Pattern "^DYNAMIC_COM_MODEL=PASS$" -Quiet)) { throw "dynamic COM model dump failed" }
+
+      - name: Compile typed reflection dumper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = @'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Reflection;
+          using MasterSCADAInterop;
+
+          class Program {
+            static string outDir = Environment.GetEnvironmentVariable("GITHUB_WORKSPACE") + "\\stage3-object-model";
+            static string log = Path.Combine(outDir, "typed-interop-signatures.txt");
+
+            static void L(string s) { File.AppendAllText(log, s + Environment.NewLine); }
+
+            static string F(Type t) {
+              if (t == null) return "<null>";
+              if (t.IsGenericType) return t.FullName;
+              return t.FullName ?? t.Name;
+            }
+
+            static void DumpType(Type t) {
+              L("");
+              L("================================================================================");
+              L("TYPE=" + t.FullName);
+              L("GUID=" + t.GUID);
+              L("IsInterface=" + t.IsInterface);
+              L("IsClass=" + t.IsClass);
+              L("BaseType=" + (t.BaseType == null ? "" : t.BaseType.FullName));
+              L("Interfaces=" + string.Join(";", t.GetInterfaces().Select(x => x.FullName)));
+
+              L("--- CONSTRUCTORS ---");
+              foreach (var c in t.GetConstructors(BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance|BindingFlags.Static).OrderBy(x=>x.ToString()))
+                L("CTOR " + c);
+
+              L("--- PROPERTIES ---");
+              foreach (var p in t.GetProperties(BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static).OrderBy(x=>x.Name)) {
+                string idx = string.Join(",", p.GetIndexParameters().Select(q => F(q.ParameterType)+" "+q.Name));
+                L("PROPERTY " + F(p.PropertyType) + " " + p.Name + (idx.Length>0 ? "["+idx+"]" : "") +
+                  " GET=" + (p.GetGetMethod()!=null) + " SET=" + (p.GetSetMethod()!=null));
+              }
+
+              L("--- METHODS ---");
+              foreach (var m in t.GetMethods(BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static)
+                                 .Where(m=>!m.IsSpecialName)
+                                 .OrderBy(x=>x.Name).ThenBy(x=>x.ToString())) {
+                string ps = string.Join(", ", m.GetParameters().Select(p =>
+                  (p.IsOut ? "out " : (p.ParameterType.IsByRef ? "ref " : "")) +
+                  F(p.ParameterType) + " " + p.Name +
+                  (p.IsOptional ? " [optional]" : "") +
+                  (p.DefaultValue != DBNull.Value && p.DefaultValue != null ? " default="+p.DefaultValue : "")
+                ));
+                L("METHOD " + F(m.ReturnType) + " " + m.Name + "(" + ps + ")");
+              }
+            }
+
+            static bool Related(Type t) {
+              string n=t.Name.ToLowerInvariant();
+              string[] keys={
+                "project","treeitem","tree","object","obj","system","sys",
+                "computer","variable","value","parameter","formula","classinfo",
+                "application","palette","link","scale","tag"
+              };
+              return keys.Any(k=>n.Contains(k));
+            }
+
+            static void Main() {
+              Directory.CreateDirectory(outDir);
+              File.WriteAllText(log, "MasterSCADA 3.11 typed interop exact signatures" + Environment.NewLine);
+              Assembly a = typeof(ApplicationClass).Assembly;
+              L("ASSEMBLY="+a.FullName);
+
+              Type[] all=a.GetTypes().OrderBy(t=>t.FullName).ToArray();
+              L("TYPE_COUNT="+all.Length);
+
+              string[] exact={
+                "ApplicationClass","Application","IApplication",
+                "Project","IProject",
+                "TreeItem","ITreeItem",
+                "ObjTree","IObjTree",
+                "SysTree","ISysTree"
+              };
+
+              foreach(string name in exact) {
+                var matches=all.Where(t=>string.Equals(t.Name,name,StringComparison.OrdinalIgnoreCase)).ToArray();
+                if(matches.Length==0) L("EXACT_TYPE_MISSING="+name);
+                foreach(var t in matches) DumpType(t);
+              }
+
+              L("");
+              L("################################################################################");
+              L("RELATED TYPE INDEX");
+              foreach(var t in all.Where(Related)) {
+                L("RELATED_TYPE " + t.FullName + " GUID=" + t.GUID + " Interface=" + t.IsInterface + " Class=" + t.IsClass);
+              }
+
+              L("");
+              L("################################################################################");
+              L("INSERT/ADD/CREATE/CHILD METHOD INDEX");
+              foreach(var t in all.Where(Related)) {
+                foreach(var m in t.GetMethods(BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static)
+                                  .Where(m => {
+                                    string n=m.Name.ToLowerInvariant();
+                                    return n.Contains("insert") || n.Contains("add") || n.Contains("create") ||
+                                           n.Contains("child") || n.Contains("new") || n.Contains("item");
+                                  })
+                                  .Where(m=>!m.IsSpecialName)
+                                  .OrderBy(m=>m.Name)) {
+                  string ps=string.Join(", ",m.GetParameters().Select(p=>
+                    (p.IsOut?"out ":(p.ParameterType.IsByRef?"ref ":""))+
+                    F(p.ParameterType)+" "+p.Name+
+                    (p.IsOptional?" [optional]":"")
+                  ));
+                  L("CANDIDATE " + t.FullName + " :: " + F(m.ReturnType) + " " + m.Name + "(" + ps + ")");
+                }
+              }
+
+              L("TYPED_INTEROP_MODEL=PASS");
+            }
+          }
+          '@
+          $srcPath="$env:GITHUB_WORKSPACE\stage3-object-model\TypedDump.cs"
+          Set-Content -Path $srcPath -Value $src -Encoding UTF8
+          $csc = Get-ChildItem "C:\Windows\Microsoft.NET\Framework64" -Recurse -Filter csc.exe -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if(!$csc){throw "csc.exe not found"}
+          & $csc /nologo /platform:x86 /reference:"$env:GITHUB_WORKSPACE\stage3-object-model\MasterSCADA.Interop.dll" /out:"$env:GITHUB_WORKSPACE\stage3-object-model\typed-dump.exe" $srcPath
+          if($LASTEXITCODE -ne 0){throw "typed reflection compile failed"}
+          Push-Location "$env:GITHUB_WORKSPACE\stage3-object-model"
+          try { & .\typed-dump.exe } finally { Pop-Location }
+          if (!(Select-String -Path "$env:GITHUB_WORKSPACE\stage3-object-model\typed-interop-signatures.txt" -Pattern "^TYPED_INTEROP_MODEL=PASS$" -Quiet)) { throw "typed reflection did not complete" }
+
+      - name: Build concise object model summary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dyn="$env:GITHUB_WORKSPACE\stage3-object-model\dynamic-com-model.txt"
+          $typed="$env:GITHUB_WORKSPACE\stage3-object-model\typed-interop-signatures.txt"
+          $sum="$env:GITHUB_WORKSPACE\stage3-object-model\stage3-summary.txt"
+          "=== DYNAMIC COM KEY FACTS ===" | Set-Content -Encoding utf8 $sum
+          Select-String -Path $dyn -Pattern "^(PROCESS_ALIVE|VAV_|COM_ATTACHED|PROJECTS_COUNT|CURRENT_PROJECT_PRESENT|COMPUTER_COUNT|SystemRoot\.|SysTree\.|ObjTree\.|ObjTree\.Root\.|DYNAMIC_COM_MODEL)" |
+            ForEach-Object { $_.Line } | Add-Content -Encoding utf8 $sum
+          "" | Add-Content -Encoding utf8 $sum
+          "=== EXACT INSERT/ADD/CREATE/CHILD CANDIDATES ===" | Add-Content -Encoding utf8 $sum
+          Select-String -Path $typed -Pattern "^CANDIDATE .*?(Insert|Add|Create|Child|New|Item)" |
+            ForEach-Object { $_.Line } | Add-Content -Encoding utf8 $sum
+          "" | Add-Content -Encoding utf8 $sum
+          "=== STATUS ===" | Add-Content -Encoding utf8 $sum
+          "STAGE3_COM_OBJECT_MODEL=PASS" | Add-Content -Encoding utf8 $sum
+          Get-Content $sum
+
+      - name: Upload object model evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341268-stage3-object-model
+          path: stage3-object-model/**
+          if-no-files-found: error
+          retention-days: 90
