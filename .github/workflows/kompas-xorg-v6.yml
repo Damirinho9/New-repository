@@ -186,7 +186,7 @@ jobs:
 
       - name: Upload verified native FRW
         uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: 7335493-work1-v6-real-xorg
           if-no-files-found: ignore
