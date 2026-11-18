@@ -1,0 +1,93 @@
+name: Hexlet 7344445 Direct GUI KOMPAS Native Drawing
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-kompas-direct-gui-api.yml"
+      - "hexlet_7344445/native_recovery/recover_kompas.py"
+  workflow_dispatch:
+
+jobs:
+  direct-gui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS GUI + SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb desktop-file-utils xdotool imagemagick libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          mkdir -p hexlet_7344445/native_recovery/kompas_direct_gui
+
+      - name: Launch GUI and accept EULA using focused native window
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 -ac >hexlet_7344445/native_recovery/kompas_direct_gui/xvfb.log 2>&1 &
+          sleep 2
+          kompas-v25 >hexlet_7344445/native_recovery/kompas_direct_gui/gui.out 2>hexlet_7344445/native_recovery/kompas_direct_gui/gui.err &
+          echo $! >hexlet_7344445/native_recovery/kompas_direct_gui/pid.txt
+
+          WID=""
+          for i in $(seq 1 60); do
+            sleep 1
+            WID=$(xdotool search --onlyvisible --name 'КОМПАС-3D v25' 2>/dev/null | tail -1 || true)
+            [ -n "$WID" ] && break
+          done
+          echo "WID=$WID" | tee hexlet_7344445/native_recovery/kompas_direct_gui/window.txt
+          test -n "$WID"
+          xdotool getwindowgeometry --shell "$WID" | tee -a hexlet_7344445/native_recovery/kompas_direct_gui/window.txt
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_direct_gui/01_eula.png
+
+          # Give the native top-level X window input focus, then act relative to it.
+          xdotool windowfocus --sync "$WID"
+          xdotool mousemove --window "$WID" --sync 407 540
+          xdotool mousedown --window "$WID" 1
+          sleep 1
+          xdotool mouseup --window "$WID" 1
+          sleep 1
+          xdotool key --window "$WID" space || true
+          sleep 1
+          xdotool key --window "$WID" Return || true
+          sleep 8
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_direct_gui/02_home.png
+          xdotool search --onlyvisible --name 'КОМПАС-3D v25' getwindowname %@ 2>/dev/null | tee hexlet_7344445/native_recovery/kompas_direct_gui/window-after.txt || true
+
+      - name: Attach KsAPI to accepted GUI and create/save/reopen real CDW
+        shell: bash
+        env:
+          DISPLAY: :99
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 hexlet_7344445/native_recovery/recover_kompas.py | tee hexlet_7344445/native_recovery/kompas_direct_gui/api.log
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_direct_gui/03_native_drawing.png || true
+
+      - name: Strict checks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q 'RESULT=PASS_NATIVE_KOMPAS3D_DRAWING_REOPEN' hexlet_7344445/native_recovery/kompas_direct_gui/api.log
+          test -s 'hexlet_7344445/native_recovery/kompas/Hexlet_KOMPAS3D_Привет_Хекслет.cdw'
+          test -s 'hexlet_7344445/native_recovery/kompas/Hexlet_KOMPAS3D_Привет_Хекслет_REOPENED.cdw'
+          sha256sum hexlet_7344445/native_recovery/kompas/*.cdw | tee hexlet_7344445/native_recovery/kompas_direct_gui/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-kompas-direct-gui-native-drawing
+          path: |
+            hexlet_7344445/native_recovery/kompas/
+            hexlet_7344445/native_recovery/kompas_direct_gui/
+          if-no-files-found: warn
