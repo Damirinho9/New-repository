@@ -21,15 +21,15 @@ jobs:
           import os, sys, glob, time
           BIN="/opt/ascon/kompas3d-v25/Bin"
           sys.path.insert(0, BIN)
-          import ksapi, constants
+          import ksapi\n          from constants import constants
           print("PYTHON", sys.version.replace("\n"," "))
           app=ksapi.OpenKompasInvisible()
           if not app:
               raise SystemExit("OPEN_KOMPAS_INVISIBLE_FAIL")
           print("KOMPAS_OPEN_PASS")
-          print("VERSION", app.GetSystemVersion())
-          lm=app.ApplicationLicenseManager
-          print("VARIANT", lm.KompasVariant if lm else None)
+          print("VERSION", app.GetSystemVersion(0,0,0,0))
+          lm=app.GetApplicationLicenseManager()
+          print("VARIANT", lm.GetKompasVariant() if lm else None)
           print("ACTIVE3D", lm.IsKompasModuleActive(constants.ksKompasModule3D) if lm else None)
           candidates=glob.glob("/opt/ascon/kompas3d-v25/SDK/**/*.m3d", recursive=True)
           print("M3D_CANDIDATES", len(candidates))
@@ -37,7 +37,7 @@ jobs:
               raise SystemExit("NO_SDK_M3D")
           sample=candidates[0]
           print("SAMPLE", sample, os.path.getsize(sample))
-          docs=app.Documents
+          docs=app.GetDocuments()
           doc=docs.Open(sample, False, False)
           if not doc:
               print("ERROR_CODE", getattr(app,"LastErrorCode",None))
