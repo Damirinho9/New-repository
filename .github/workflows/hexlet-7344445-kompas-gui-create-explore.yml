@@ -1,0 +1,68 @@
+name: Hexlet 7344445 KOMPAS GUI Create Drawing Explore
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-kompas-gui-create-explore.yml"
+  workflow_dispatch:
+
+jobs:
+  gui-create:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS GUI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb desktop-file-utils xdotool imagemagick libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25
+          mkdir -p hexlet_7344445/native_recovery/kompas_gui_create
+
+      - name: Accept first-run EULA and create drawing in real GUI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 -ac >hexlet_7344445/native_recovery/kompas_gui_create/xvfb.log 2>&1 &
+          sleep 2
+          kompas-v25 >hexlet_7344445/native_recovery/kompas_gui_create/gui.out 2>hexlet_7344445/native_recovery/kompas_gui_create/gui.err &
+          echo $! >hexlet_7344445/native_recovery/kompas_gui_create/pid.txt
+          sleep 25
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_gui_create/01_eula.png
+
+          # First-run EULA: "Принимаю" button at the lower-left of the modal.
+          xdotool mousemove 406 540 click 1
+          sleep 7
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_gui_create/02_home_after_eula.png
+
+          # Home screen: click "Чертеж" tile.
+          xdotool mousemove 567 329 click 1
+          sleep 10
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_gui_create/03_drawing_created.png
+
+          # Try built-in command search. KOMPAS shows shortcut Alt+/ in its search field.
+          xdotool key alt+slash
+          sleep 2
+          xdotool type --delay 100 'Текст'
+          sleep 4
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_gui_create/04_search_text.png
+
+          # Save window and titles for the next deterministic step.
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null | tee hexlet_7344445/native_recovery/kompas_gui_create/window_names.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-kompas-gui-create-explore
+          path: hexlet_7344445/native_recovery/kompas_gui_create/
+          if-no-files-found: warn
