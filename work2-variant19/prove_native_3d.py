@@ -83,7 +83,7 @@ def main():
     require(reopened.Open(str(OUT), False), "Reopen proof M3D failed")
     require(reopened.RebuildDocument(), "Rebuild after reopen failed")
     reopened_part = require(reopened.GetPart(const.pTop_Part), "Reopened top part unavailable")
-    require(reopened_part.GetLastFeature(), "Persisted 3D feature not found after reopen")
+    require(reopened.GetLastFeature(), "Persisted 3D feature not found after reopen")
 
     sha = hashlib.sha256(OUT.read_bytes()).hexdigest()
     lines = [
