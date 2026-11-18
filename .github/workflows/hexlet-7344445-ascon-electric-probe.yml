@@ -1,0 +1,35 @@
+name: Hexlet 7344445 Probe ASCON Electric Packages
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-ascon-electric-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add official ASCON repo and inspect packages
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          mkdir -p hexlet_7344445/native_recovery/ascon_probe
+          apt-cache search ascon | tee hexlet_7344445/native_recovery/ascon_probe/all-ascon-packages.txt
+          apt-cache search ascon | grep -Ei 'electric|electrik|элект|kompas' | tee hexlet_7344445/native_recovery/ascon_probe/kompas-electric-candidates.txt || true
+          grep -Ei 'electric|electrik|элект' hexlet_7344445/native_recovery/ascon_probe/all-ascon-packages.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7344445-ascon-package-probe
+          path: hexlet_7344445/native_recovery/ascon_probe/
+          if-no-files-found: error
