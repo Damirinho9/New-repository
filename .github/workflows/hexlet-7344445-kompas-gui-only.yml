@@ -52,9 +52,16 @@ jobs:
           xdotool windowfocus --sync "$WID"
           import -display :99 -window root "$OUT/01_eula.png"
 
-          # Real pointer click reaches the Qt child button under the cursor.
-          xdotool mousemove --sync 407 540
+          # Force focus into the EULA text area, then move by keyboard to the
+          # first action button "Принимаю" and activate it. This avoids Qt child
+          # pointer-routing differences under Xvfb.
+          xdotool mousemove --sync 300 300
           xdotool click 1
+          sleep 1
+          xdotool key Tab
+          sleep 1
+          import -display :99 -window root "$OUT/02a_accept_button_focused.png"
+          xdotool key Return
           sleep 8
           import -display :99 -window root "$OUT/02_after_accept.png"
 
