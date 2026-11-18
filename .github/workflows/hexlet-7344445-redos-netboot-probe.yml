@@ -1,0 +1,30 @@
+name: Hexlet 7344445 Probe RED OS Netboot
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-redos-netboot-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe official RED SOFT mirror
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p hexlet_7344445/native_recovery/redos_netboot
+          BASE='https://repo2.red-soft.ru/redos/8.0/x86_64/os'
+          for p in images/boot.iso images/pxeboot/vmlinuz images/pxeboot/initrd.img repodata/repomd.xml; do
+            echo "=== $BASE/$p ===" | tee -a hexlet_7344445/native_recovery/redos_netboot/probe.txt
+            curl -fsSIL "$BASE/$p" | tee -a hexlet_7344445/native_recovery/redos_netboot/probe.txt || true
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7344445-redos-netboot-probe
+          path: hexlet_7344445/native_recovery/redos_netboot/
