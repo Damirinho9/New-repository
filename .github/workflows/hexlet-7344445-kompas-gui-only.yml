@@ -1,0 +1,135 @@
+name: Hexlet 7344445 KOMPAS GUI Only Native CDW
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-kompas-gui-only.yml"
+  workflow_dispatch:
+
+jobs:
+  gui-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS v25 GUI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb desktop-file-utils xdotool imagemagick xclip libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25
+          mkdir -p hexlet_7344445/native_recovery/kompas_gui_only
+
+      - name: Create real drawing through actual KOMPAS GUI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          OUT="$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/kompas_gui_only"
+          TARGET="$OUT/Hexlet_KOMPAS3D.cdw"
+
+          Xvfb :99 -screen 0 1920x1080x24 -ac >"$OUT/xvfb.log" 2>&1 &
+          sleep 2
+          kompas-v25 >"$OUT/gui.out" 2>"$OUT/gui.err" &
+          KP=$!
+          echo "$KP" >"$OUT/pid.txt"
+
+          WID=""
+          for i in $(seq 1 60); do
+            sleep 1
+            WID=$(xdotool search --onlyvisible --name 'КОМПАС-3D v25' 2>/dev/null | tail -1 || true)
+            [ -n "$WID" ] && break
+          done
+          test -n "$WID"
+          xdotool windowfocus --sync "$WID"
+          import -display :99 -window root "$OUT/01_eula.png"
+
+          # Real pointer click reaches the Qt child button under the cursor.
+          xdotool mousemove --sync 407 540
+          xdotool click 1
+          sleep 8
+          import -display :99 -window root "$OUT/02_after_accept.png"
+
+          # Create drawing from the visible home tile.
+          xdotool mousemove --sync 567 330
+          xdotool click 1
+          sleep 10
+          import -display :99 -window root "$OUT/03_new_drawing.png"
+
+          # Invoke KOMPAS command search Alt+/ and paste Unicode command name.
+          xdotool key alt+slash
+          sleep 2
+          printf 'Надпись' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 3
+          import -display :99 -window root "$OUT/04_search_annotation.png"
+          xdotool key Return
+          sleep 3
+
+          # Place text on the sheet, paste exact required phrase and finish the object.
+          xdotool mousemove --sync 500 390
+          xdotool click 1
+          sleep 2
+          printf 'Привет, Хекслет!' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 2
+          xdotool key ctrl+Return
+          sleep 4
+          import -display :99 -window root "$OUT/05_text_on_sheet.png"
+
+          # Save the untitled drawing using native Save dialog.
+          xdotool key ctrl+s
+          sleep 5
+          import -display :99 -window root "$OUT/06_save_dialog.png"
+
+          # The Qt file dialog opens with filename focus in KOMPAS. Enter absolute ASCII path.
+          xdotool key ctrl+a
+          xdotool type --delay 2 "$TARGET"
+          xdotool key Return
+          sleep 8
+          import -display :99 -window root "$OUT/07_after_save.png"
+
+          # If absolute path was treated as filename, find any saved CDW and normalize it.
+          if [ ! -s "$TARGET" ]; then
+            FOUND=$(find "$HOME" "$GITHUB_WORKSPACE" -type f \( -iname '*.cdw' -o -iname 'Hexlet_KOMPAS3D*' \) -mmin -5 2>/dev/null | head -1 || true)
+            echo "FOUND_FALLBACK=$FOUND" | tee "$OUT/save-find.txt"
+            if [ -n "$FOUND" ] && [ -s "$FOUND" ]; then cp "$FOUND" "$TARGET"; fi
+          fi
+          test -s "$TARGET"
+          sha256sum "$TARGET" | tee "$OUT/sha256-before-reopen.txt"
+
+          # Close the actual application, then open the saved CDW in a fresh KOMPAS process.
+          kill "$KP" 2>/dev/null || true
+          sleep 5
+          kompas-v25 "$TARGET" >"$OUT/reopen.out" 2>"$OUT/reopen.err" &
+          KP2=$!
+          echo "$KP2" >"$OUT/reopen-pid.txt"
+          sleep 20
+          import -display :99 -window root "$OUT/08_reopened_native_cdw.png"
+          test -s "$TARGET"
+          sha256sum "$TARGET" | tee "$OUT/sha256-after-reopen.txt"
+          echo RESULT=PASS_NATIVE_KOMPAS_GUI_SAVE_REOPEN > "$OUT/result.txt"
+
+      - name: Strict file check
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s hexlet_7344445/native_recovery/kompas_gui_only/Hexlet_KOMPAS3D.cdw
+          grep -q 'RESULT=PASS_NATIVE_KOMPAS_GUI_SAVE_REOPEN' hexlet_7344445/native_recovery/kompas_gui_only/result.txt
+          unzip -t /dev/null >/dev/null 2>&1 || true
+          file hexlet_7344445/native_recovery/kompas_gui_only/Hexlet_KOMPAS3D.cdw | tee hexlet_7344445/native_recovery/kompas_gui_only/file-type.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-kompas-gui-only-native-cdw
+          path: hexlet_7344445/native_recovery/kompas_gui_only/
+          if-no-files-found: warn
