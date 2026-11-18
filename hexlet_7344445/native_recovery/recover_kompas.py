@@ -142,3 +142,5 @@ result = {
 }
 (OUT / "validation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 print("RESULT=PASS_NATIVE_KOMPAS3D_DRAWING_REOPEN")
+
+# trigger strict API7 recovery 2026-11-18
