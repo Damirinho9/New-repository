@@ -284,7 +284,11 @@ def standard_acl_lines(number: int, sources: list[tuple[str, str]]) -> list[str]
 
 
 def add_four_port_router(path: Path, name: str, x: int, y: int, interfaces: list[tuple[str, str, str]], extra: list[str]) -> None:
-    pt.add_device(path, "1841", name, x=x, y=y, config=cfg_router(name, interfaces, extra))
+    # The source figures label the central device 1841. The generator's 1841 donor,
+    # however, exposes only one installable eInterfaceCard bay. A 2811 gives the same
+    # two fixed FastEthernet interfaces plus enough WIC bays for two WIC-1ENET cards,
+    # so the required four routed LAN interfaces are preserved natively.
+    pt.add_device(path, "2811", name, x=x, y=y, config=cfg_router(name, interfaces, extra))
     install_dual_ethernet(path, name)
 
 
@@ -766,6 +770,7 @@ def write_readme(results: list[dict], tests: list[dict]) -> None:
         "- ЛР10: 2950-24, VLAN20 Fa0/1, VLAN30 Fa0/2, trunk Fa0/3; финально Router1 10.2.0.254/16 и 10.3.0.254/16 через Fa0/4 access-порты.",
         "- ACL00: стандартный ACL 10 с deny host 12.0.0.13/14, permit any, применен Fa0/0 out.",
         "- ACL05/06/08: адресация взята с рисунков методички.",
+        "- ACL05/06: на рисунках центральный роутер подписан 1841; в native-файлах использован 2811, потому что текущий 1841 donor генератора предоставляет только один installable WIC bay. Четыре routed Ethernet-интерфейса и вся адресация/ACL сохранены.",
         "- ACL07: сама методичка разрешает произвольную адресацию; использованы VLAN10 10.10.0.0/24, VLAN20 10.20.0.0/24, VLAN30 10.30.0.0/24, server VLAN99 10.99.0.0/24.",
         "",
         "FTP в ACL08:",
