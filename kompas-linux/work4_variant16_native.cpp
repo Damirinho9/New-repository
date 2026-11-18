@@ -111,7 +111,9 @@ static ISketchPtr new_sketch(const IPartPtr& top, const std::wstring& name, IFra
   sk->SetName(name);
   auto plane = require_ptr(top->GetDefaultObject(o3d_planeXOY), "default XOY");
   sk->SetPlane(plane);
-  require(sk->Update(), "sketch plane Update");
+  log("SKETCH_PLANE_SET_PASS");
+  // Linux KOMPAS v25: avoid Update on an empty sketch before BeginEdit.
+  // Match the API5 sequence: SetPlane -> BeginEdit -> geometry -> EndEdit -> Update.
   frag = require_ptr(sk->BeginEdit(false), "sketch BeginEdit");
   return sk;
 }
