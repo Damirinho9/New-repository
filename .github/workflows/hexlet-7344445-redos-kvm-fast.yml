@@ -1,0 +1,77 @@
+name: Hexlet 7344445 Native RED OS KVM Fast
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-redos-kvm-fast.yml"
+  workflow_dispatch:
+
+jobs:
+  redos-kvm-fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install VM and download tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils aria2 curl python3-pip imagemagick acl
+          python3 -m pip install --break-system-packages vncdotool pillow
+          mkdir -p hexlet_7344445/native_recovery/redos_kvm_fast
+          sudo setfacl -m "u:$USER:rw" /dev/kvm
+          test -r /dev/kvm -a -w /dev/kvm
+
+      - name: Parallel download and official checksum verify
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://files.red-soft.ru/redos/8.0/x86_64/live/Redos-GNOME-Live-x86_64-8.0.3-20260716.iso'
+          SUMURL="${URL}.MD5SUM"
+          aria2c --check-certificate=false -x16 -s16 -k4M --retry-wait=2 --max-tries=10 -d /tmp -o redos.iso "$URL"
+          curl -fkL --retry 5 -o /tmp/redos.md5 "$SUMURL"
+          ACTUAL=$(md5sum /tmp/redos.iso | awk '{print $1}')
+          EXPECTED=$(grep -Eio '[0-9a-f]{32}' /tmp/redos.md5 | head -1)
+          echo "EXPECTED_MD5=$EXPECTED" | tee hexlet_7344445/native_recovery/redos_kvm_fast/checksum.txt
+          echo "ACTUAL_MD5=$ACTUAL" | tee -a hexlet_7344445/native_recovery/redos_kvm_fast/checksum.txt
+          test "$ACTUAL" = "$EXPECTED"
+          sha256sum /tmp/redos.iso | tee hexlet_7344445/native_recovery/redos_kvm_fast/iso-sha256.txt
+
+      - name: Boot real RED OS with hardware KVM
+        shell: bash
+        run: |
+          set -euxo pipefail
+          qemu-system-x86_64 -enable-kvm -cpu host -smp 2 -m 4096             -cdrom /tmp/redos.iso -boot d -device virtio-vga             -netdev user,id=n1 -device e1000,netdev=n1             -vnc 127.0.0.1:1 -daemonize -pidfile /tmp/redos.pid
+          ps -fp "$(cat /tmp/redos.pid)" | tee hexlet_7344445/native_recovery/redos_kvm_fast/qemu-process.txt
+
+      - name: Native framebuffer and terminal proof
+        shell: bash
+        run: |
+          set -euxo pipefail
+          VNC='127.0.0.1::5901'
+          sleep 12
+          vncdotool -s "$VNC" capture hexlet_7344445/native_recovery/redos_kvm_fast/01_boot_menu.png
+          vncdotool -s "$VNC" key enter
+          for n in 1 2 3 4; do
+            sleep 20
+            vncdotool -s "$VNC" capture "hexlet_7344445/native_recovery/redos_kvm_fast/boot_${n}.png"
+          done
+          vncdotool -s "$VNC" key ctrl-alt-t
+          sleep 6
+          vncdotool -s "$VNC" type "printf '\\n=== RED OS NATIVE KVM VM ===\\n'; cat /etc/os-release; printf '\\n=== KERNEL ===\\n'; uname -a; printf '\\n=== NETWORK ===\\n'; ip -brief addr; printf '\\n=== NMCLI ===\\n'; nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status; printf '\\nEND_NATIVE_PROOF\\n'"
+          vncdotool -s "$VNC" key enter
+          sleep 8
+          vncdotool -s "$VNC" capture hexlet_7344445/native_recovery/redos_kvm_fast/02_terminal_native_proof.png
+          identify hexlet_7344445/native_recovery/redos_kvm_fast/*.png | tee hexlet_7344445/native_recovery/redos_kvm_fast/images.txt
+          echo RESULT=KVM_NATIVE_CAPTURE_READY > hexlet_7344445/native_recovery/redos_kvm_fast/result.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-native-redos-kvm-fast
+          path: hexlet_7344445/native_recovery/redos_kvm_fast/
+          if-no-files-found: warn
