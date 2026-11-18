@@ -1,0 +1,84 @@
+name: Hexlet 7344445 OpenKompas Native Drawing
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - "hexlet_7344445/native_recovery/recover_kompas_open.py"
+      - ".github/workflows/hexlet-7344445-openkompas.yml"
+  workflow_dispatch:
+
+jobs:
+  openkompas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS v25 GUI + SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb desktop-file-utils xdotool imagemagick libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          mkdir -p hexlet_7344445/native_recovery/kompas_open
+
+      - name: Start official OpenKompas controller and satisfy first-run EULA
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          Xvfb :99 -screen 0 1920x1080x24 -ac >hexlet_7344445/native_recovery/kompas_open/xvfb.log 2>&1 &
+          sleep 2
+
+          python3 hexlet_7344445/native_recovery/recover_kompas_open.py             >hexlet_7344445/native_recovery/kompas_open/controller.log 2>&1 &
+          CTRL_PID=$!
+          echo "$CTRL_PID" >hexlet_7344445/native_recovery/kompas_open/controller.pid
+
+          # OpenKompas starts the visual application. On a fresh profile the EULA
+          # blocks API progress until the real "Принимаю" button is pressed.
+          for i in $(seq 1 45); do
+            sleep 1
+            if xdotool search --onlyvisible --name 'КОМПАС-3D v25' >/dev/null 2>&1; then break; fi
+          done
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_open/01_first_run.png || true
+          xdotool mousemove 406 540 click 1 || true
+          sleep 5
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_open/02_after_eula.png || true
+
+          # Wait for controller to create, save, close and reopen the real CDW.
+          for i in $(seq 1 60); do
+            if ! kill -0 "$CTRL_PID" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if kill -0 "$CTRL_PID" 2>/dev/null; then
+            echo "controller still running after timeout"
+            kill "$CTRL_PID" || true
+            exit 2
+          fi
+          wait "$CTRL_PID"
+          cat hexlet_7344445/native_recovery/kompas_open/controller.log
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_open/03_final_gui.png || true
+
+      - name: Strict acceptance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q 'RESULT=PASS_NATIVE_KOMPAS3D_OPENKOMPAS_DRAWING_REOPEN' hexlet_7344445/native_recovery/kompas_open/controller.log
+          test -s 'hexlet_7344445/native_recovery/kompas_open/Hexlet_KOMPAS3D_Привет_Хекслет.cdw'
+          test -s 'hexlet_7344445/native_recovery/kompas_open/Hexlet_KOMPAS3D_Привет_Хекслет_REOPENED.cdw'
+          sha256sum hexlet_7344445/native_recovery/kompas_open/*.cdw | tee hexlet_7344445/native_recovery/kompas_open/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-openkompas-native-drawing
+          path: hexlet_7344445/native_recovery/kompas_open/
+          if-no-files-found: warn
