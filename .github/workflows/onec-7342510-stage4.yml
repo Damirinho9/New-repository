@@ -1,0 +1,168 @@
+name: onec-7342510-stage4
+
+on:
+  push:
+    branches:
+      - onec-7342510-base
+    paths:
+      - 'onec-7342510/trigger-stage4.txt'
+  workflow_dispatch:
+
+jobs:
+  build-clean-infobase:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      ONEC_TRAINING_URL: ${{ secrets.ONEC_TRAINING_URL }}
+      TARGET_VERSION: 8.3.27.1508
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preflight - require official training download URL
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ONEC_TRAINING_URL)) {
+            throw "BLOCKER_ONEC_TRAINING_URL_MISSING: add a fresh official online.1c.ru training download URL as repository secret ONEC_TRAINING_URL"
+          }
+          Write-Host "Official training download URL is configured."
+
+      - name: Download and install 1C training platform
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $work = Join-Path $env:RUNNER_TEMP "onec-training"
+          $zip = Join-Path $work "training_8_3_27_1508_Windows.zip"
+          $unpack = Join-Path $work "unpack"
+          New-Item -ItemType Directory -Force -Path $work, $unpack | Out-Null
+          Write-Host "Downloading official 1C training distribution..."
+          Invoke-WebRequest -Uri $env:ONEC_TRAINING_URL -OutFile $zip -UseBasicParsing
+          $zipInfo = Get-Item $zip
+          if ($zipInfo.Length -lt 1000000) { throw "Downloaded file is unexpectedly small: $($zipInfo.Length) bytes" }
+          $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "TRAINING_ZIP_SIZE=$($zipInfo.Length)"
+          Write-Host "TRAINING_ZIP_SHA256=$zipHash"
+          Expand-Archive -Path $zip -DestinationPath $unpack -Force
+          $setup = Get-ChildItem -Path $unpack -Filter setup.exe -Recurse -File | Select-Object -First 1
+          if (-not $setup) { throw "setup.exe not found in training distribution" }
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "1C setup failed with exit code $($p.ExitCode)" }
+          $roots = @("C:\Program Files\1cv8t", "C:\Program Files (x86)\1cv8t", "C:\Program Files\1cv8", "C:\Program Files (x86)\1cv8") | Where-Object { Test-Path $_ }
+          $v8 = $null
+          foreach ($root in $roots) {
+            $candidate = Get-ChildItem -Path $root -Filter 1cv8t.exe -Recurse -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+            if ($candidate) { $v8 = $candidate; break }
+          }
+          if (-not $v8) {
+            foreach ($root in $roots) {
+              $candidate = Get-ChildItem -Path $root -Filter 1cv8.exe -Recurse -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+              if ($candidate) { $v8 = $candidate; break }
+            }
+          }
+          if (-not $v8) { throw "1cv8t.exe/1cv8.exe not found after installation" }
+          $fileVersion = $v8.VersionInfo.FileVersion
+          Write-Host "ONEC_EXE=$($v8.FullName)"
+          Write-Host "ONEC_FILE_VERSION=$fileVersion"
+          "V8_EXE=$($v8.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "V8_FILE_VERSION=$fileVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "TRAINING_ZIP_SHA256=$zipHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Generate minimal managed 1C configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tool = Join-Path $env:RUNNER_TEMP "cf-init.py"
+          $src = Join-Path $env:GITHUB_WORKSPACE "onec-7342510\config-src"
+          $pinned = "https://raw.githubusercontent.com/Nikolay-Shirokov/cc-1c-skills/4fc37e1f992057847228a69837337bd3c141c059/.claude/skills/cf-init/scripts/cf-init.py"
+          Invoke-WebRequest -Uri $pinned -OutFile $tool -UseBasicParsing
+          python $tool -Name DB7342510 -Synonym "База данных 7342510" -OutputDir $src -Version "1.0" -CompatibilityMode Version8_3_27 -FormatVersion 2.20
+          if (-not (Test-Path (Join-Path $src "Configuration.xml"))) { throw "Configuration.xml was not generated" }
+
+      - name: Create clean file infobase
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ib = Join-Path $env:RUNNER_TEMP "7342510-db"
+          $out = Join-Path $env:GITHUB_WORKSPACE "onec-7342510\stage4-output"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          if (Test-Path $ib) { Remove-Item -Recurse -Force $ib }
+          $createLog = Join-Path $out "01-create-infobase.log"
+          & $env:V8_EXE CREATEINFOBASE "File=$ib;" /DisableStartupDialogs /Out $createLog
+          if ($LASTEXITCODE -ne 0) { throw "CREATEINFOBASE failed: exit $LASTEXITCODE" }
+          $dbFile = Join-Path $ib "1Cv8.1CD"
+          if (-not (Test-Path $dbFile)) { throw "CREATEINFOBASE returned success but 1Cv8.1CD is missing" }
+          "IB_PATH=$ib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "OUT_PATH=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "INFOBASE_CREATED=true"
+
+      - name: Load configuration into clean infobase
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = Join-Path $env:GITHUB_WORKSPACE "onec-7342510\config-src"
+          & $env:V8_EXE DESIGNER /F $env:IB_PATH /DisableStartupDialogs /LoadConfigFromFiles $src /Out (Join-Path $env:OUT_PATH "02-load-config.log")
+          if ($LASTEXITCODE -ne 0) { throw "LoadConfigFromFiles failed: exit $LASTEXITCODE" }
+          & $env:V8_EXE DESIGNER /F $env:IB_PATH /DisableStartupDialogs /UpdateDBCfg /Out (Join-Path $env:OUT_PATH "03-update-db.log")
+          if ($LASTEXITCODE -ne 0) { throw "UpdateDBCfg failed: exit $LASTEXITCODE" }
+          & $env:V8_EXE DESIGNER /F $env:IB_PATH /DisableStartupDialogs /CheckConfig /Out (Join-Path $env:OUT_PATH "04-check-config.log")
+          if ($LASTEXITCODE -ne 0) { throw "CheckConfig failed: exit $LASTEXITCODE" }
+
+      - name: Verify launch in 1C Enterprise mode
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $log = Join-Path $env:OUT_PATH "05-enterprise.log"
+          $args = @("ENTERPRISE", "/F$env:IB_PATH", "/DisableStartupDialogs", "/Out$log")
+          $proc = Start-Process -FilePath $env:V8_EXE -ArgumentList $args -PassThru
+          Start-Sleep -Seconds 15
+          $proc.Refresh()
+          if ($proc.HasExited) {
+            $code = $proc.ExitCode
+            $body = if (Test-Path $log) { Get-Content $log -Raw -ErrorAction SilentlyContinue } else { "" }
+            throw "1C Enterprise exited during acceptance window, exit=$code. Log: $body"
+          }
+          Write-Host "ENTERPRISE_PROCESS_ALIVE=true"
+          Write-Host "ENTERPRISE_PID=$($proc.Id)"
+          Stop-Process -Id $proc.Id -Force
+          Start-Sleep -Seconds 2
+          if (Test-Path $log) {
+            $body = Get-Content $log -Raw -ErrorAction SilentlyContinue
+            if ($body -match "(?i)(ошибк|error|exception|configuration is not installed)") { throw "Enterprise log contains an error marker: $body" }
+          }
+
+      - name: Dump clean infobase to DT and calculate hashes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dt = Join-Path $env:OUT_PATH "7342510_stage4_clean.dt"
+          & $env:V8_EXE DESIGNER /F $env:IB_PATH /DisableStartupDialogs /DumpIB $dt /Out (Join-Path $env:OUT_PATH "06-dump-dt.log")
+          if ($LASTEXITCODE -ne 0) { throw "DumpIB failed: exit $LASTEXITCODE" }
+          if (-not (Test-Path $dt)) { throw "DT file was not created" }
+          Copy-Item (Join-Path $env:IB_PATH "1Cv8.1CD") (Join-Path $env:OUT_PATH "1Cv8.1CD") -Force
+          $dtHash = (Get-FileHash $dt -Algorithm SHA256).Hash.ToLowerInvariant()
+          $dbHash = (Get-FileHash (Join-Path $env:OUT_PATH "1Cv8.1CD") -Algorithm SHA256).Hash.ToLowerInvariant()
+          $lines = @(
+            "RESULT=PASS_STAGE4_CLEAN_INFOBASE",
+            "TARGET_PLATFORM=1C Enterprise training 8.3.27.1508",
+            "INSTALLED_FILE_VERSION=$env:V8_FILE_VERSION",
+            "CONFIGURATION=DB7342510",
+            "CONFIG_FORMAT=2.20",
+            "COMPATIBILITY_MODE=Version8_3_27",
+            "ENTERPRISE_LAUNCH=PASS",
+            "TRAINING_ZIP_SHA256=$env:TRAINING_ZIP_SHA256",
+            "DT_SHA256=$dtHash",
+            "DB_SHA256=$dbHash"
+          )
+          $lines | Set-Content -Path (Join-Path $env:OUT_PATH "stage4-result.txt") -Encoding utf8
+          Get-Content (Join-Path $env:OUT_PATH "stage4-result.txt")
+
+      - name: Upload Stage 4 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: onec-7342510-stage4-clean-infobase
+          path: |
+            onec-7342510/stage4-output/
+            onec-7342510/config-src/
+          if-no-files-found: error
+          retention-days: 7
