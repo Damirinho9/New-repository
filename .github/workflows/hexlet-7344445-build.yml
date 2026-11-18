@@ -1,0 +1,56 @@
+name: Hexlet 7344445 Build Packet Tracer Base Labs
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-packettracer
+    paths:
+      - "hexlet_7344445/build_packettracer.py"
+      - ".github/workflows/hexlet-7344445-build.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PTLAB_LIB: ${{ github.workspace }}/hexlet_7344445/.ptlab/device_templates.json
+      DONOR_DIR: /tmp/donor
+      HWIC_DONOR_DIR: /tmp/hwic-donor
+    steps:
+      - name: Checkout work branch
+        uses: actions/checkout@v4
+
+      - name: Install native PKT tooling
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --recurse-submodules https://github.com/fn-cafeina/lab-pkt.git /tmp/lab-pkt
+          python -m pip install --upgrade pip
+          python -m pip install -e /tmp/lab-pkt
+
+      - name: Clone native Packet Tracer donors
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/Jooiden/cisco-packet-tracer-labs.git /tmp/donor
+          git clone https://github.com/izscaryu/Cisco-packet-tracer-projekt.git /tmp/hwic-donor
+          test -f "/tmp/donor/4.pkt"
+          find /tmp/hwic-donor -name '*.pkt' -print
+
+      - name: Build and validate native labs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python hexlet_7344445/build_packettracer.py
+          find hexlet_7344445/out -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          sha256sum hexlet_7344445/out/*.pkt
+          test -f "hexlet_7344445/7344445_Cisco_PacketTracer_Базовый_блок.zip"
+
+      - name: Upload final package
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7344445-Cisco-PacketTracer-Base
+          path: |
+            hexlet_7344445/out/
+            hexlet_7344445/7344445_Cisco_PacketTracer_Базовый_блок.zip
+          if-no-files-found: error
