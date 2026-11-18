@@ -95,7 +95,7 @@ static IAngleDimensionPtr angle_dim(const ISymbols2DContainerPtr& sy,const ILine
                                     const ILineSegmentPtr& crank,double value){
   auto dim=req(req(sy->GetAngleDimensions(),"AngleDimensions")->Add(ksDrADimension),"AngleDimension Add");
   dim->SetBaseObject1(IDrawingObjectPtr(base)); dim->SetBaseObject2(IDrawingObjectPtr(crank));
-  dim->SetRadius(22.0); dim->SetDirection(false); dim->SetDimensionType(ksDrADimension);
+  dim->SetRadius(22.0); dim->SetDirection(false); dim->SetDimensionType(ksADMinAngle);
   require(dim->Update(),"AngleDimension Update");
   IDrawingObjectPtr dobj=dim;
   constraint(dobj,ksCFixedDim);
