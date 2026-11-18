@@ -74,7 +74,10 @@ jobs:
             apt-get update
             apt-get install -y wget curl ca-certificates gnupg lsb-release xvfb xauth dbus procps python3 zstd
             wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
-            bash /tmp/ascon.sh
+            bash /tmp/ascon.sh || true
+            rm -f /etc/apt/sources.list.d/ascon.list
+            echo "deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main" > /etc/apt/sources.list.d/ascon.list
+            test -s /etc/apt/trusted.gpg.d/ascon.gpg
             apt-get update
             apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
             dpkg -l "ascon-kompas*"
