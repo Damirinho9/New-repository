@@ -30,31 +30,15 @@ jobs:
           dpkg -l 'ascon-kompas*' | tee hexlet_7344445/native_recovery/kompas-installed.txt
           find /opt/ascon/kompas3d-v25/Bin -maxdepth 1 -type f -printf '%f\n' | sort | tee hexlet_7344445/native_recovery/kompas-bin-list.txt
 
-      - name: Launch real KOMPAS runtime and create/reopen native CDW
+      - name: Launch official KOMPAS Invisible via SDK and create/reopen native CDW
         shell: bash
         run: |
           set -euxo pipefail
           BIN=/opt/ascon/kompas3d-v25/Bin
           export PYTHONPATH="$BIN"
-          ln -sf "$BIN/ksinvisible" /tmp/kKompas
-          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >hexlet_7344445/native_recovery/kompas-live.out 2>hexlet_7344445/native_recovery/kompas-live.err &
-          WRAPPER_PID=$!
-          KP=""
-          for i in $(seq 1 45); do
-            sleep 1
-            KP=$(pgrep -x kKompas | head -1 || true)
-            [ -n "$KP" ] && break
-          done
-          echo "KPID=$KP" | tee hexlet_7344445/native_recovery/kompas-pid.txt
-          test -n "$KP"
-          for i in $(seq 1 50); do
-            sleep 1
-            ss -ltnp > hexlet_7344445/native_recovery/kompas-sockets.txt || true
-            grep -q "kKompas" hexlet_7344445/native_recovery/kompas-sockets.txt && break
-          done
-          grep -q "kKompas" hexlet_7344445/native_recovery/kompas-sockets.txt
+          export QT_QPA_PLATFORM=offscreen
           python3 hexlet_7344445/native_recovery/recover_kompas.py | tee hexlet_7344445/native_recovery/kompas-validation.log
-          kill "$WRAPPER_PID" 2>/dev/null || true
+          pgrep -af 'ksinvisible|kKompas' | tee hexlet_7344445/native_recovery/kompas-processes-after.txt || true
 
       - name: Strict artifact checks
         shell: bash
