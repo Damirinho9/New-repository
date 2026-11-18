@@ -21,7 +21,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 dbus-x11 file libxcb-res0 libxcb-dri2-0 libxcb-xkb1
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
@@ -39,15 +39,64 @@ jobs:
           mkdir -p "$CFG"
           RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
           [ -z "$RES" ] || cp -f "$RES" "$CFG/QtResources.bin"
-          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" "$BIN/kKompas" -automation >kompas-live.out 2>kompas-live.err &
+          dpkg -L ascon-kompas3d-v25 | tee kompas3d-files.txt
+          find /opt/ascon/kompas3d-v25 -maxdepth 4 -type f -perm -111 -exec file {} \; | tee kompas3d-executables.txt || true
+          FULL=$(awk -F: '/ELF.*executable/ {print $1}' kompas3d-executables.txt | grep -v '/ksinvisible          for i in $(seq 1 60); do
+            sleep 1
+            ss -ltnp > kompas-sockets.txt || true
+            grep -q kKompas kompas-sockets.txt && break
+          done
+          grep -q kKompas kompas-sockets.txt
+          python3 kompas-linux/prove_native3d_deb.py | tee proof-console.txt
+          grep -q '^RESULT=RUNTIME_NATIVE_3D_MUTATION_PASS$' work4_deb_native3d_probe.txt
+          kill "$WRAPPER_PID" 2>/dev/null || true
+      - name: Final container gate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import zipfile, pathlib, hashlib
+          p=pathlib.Path("work4_deb_native3d_probe.m3d")
+          assert p.exists() and p.stat().st_size>1024
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z: assert {"Contents","FileInfo"}.issubset(set(z.namelist()))
+          print("NATIVE_M3D_CONTAINER_PASS")
+          print(hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-debian-native3d-runtime-proof
+          if-no-files-found: ignore
+          path: |
+            work4_deb_native3d_probe.m3d
+            work4_deb_native3d_probe.txt
+            proof-console.txt
+            installed.txt
+            kompas-live.out
+            kompas-live.err
+            kompas-sockets.txt
+            kompas3d-files.txt
+            kompas3d-executables.txt
+ | head -1 || true)
+          if [ -z "$FULL" ]; then
+            FULL=$(dpkg -L ascon-kompas3d-v25 | while read p; do [ -x "$p" ] && echo "$p"; done | grep -v ksinvisible | head -1 || true)
+          fi
+          echo "FULL_EXEC=$FULL"
+          test -n "$FULL"
+          dbus-run-session -- env HOME="$HOME" PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN" QT_QPA_PLATFORM=offscreen "$FULL" -automation >kompas-live.out 2>kompas-live.err &
           WRAPPER_PID=$!
           KP=""
           for i in $(seq 1 90); do
             sleep 1
-            KP=$(pgrep -x kKompas | head -1 || true)
+            KP=$(pgrep -f "$(basename "$FULL")" | head -1 || true)
             [ -n "$KP" ] && break
+            if ! kill -0 "$WRAPPER_PID" 2>/dev/null; then break; fi
           done
-          test -n "$KP"
+          if [ -z "$KP" ]; then
+            cat kompas-live.err || true
+            cat kompas-live.out || true
+            exit 41
+          fi
           for i in $(seq 1 60); do
             sleep 1
             ss -ltnp > kompas-sockets.txt || true
