@@ -60,8 +60,10 @@ extern "C" int run_variant06_writer(){
     if(!top){ log("FAIL GetTopPart"); return 2; }
     log("CREATE_PART_PASS");
 
-    auto sketches=top->GetSketchs();
-    if(!sketches){ log("FAIL GetSketchs"); return 2; }
+    auto model=top->GetModelContainer();
+    if(!model){ log("FAIL GetModelContainer"); return 2; }
+    auto sketches=model->GetSketchs();
+    if(!sketches){ log("FAIL model GetSketchs"); return 2; }
     auto sk=sketches->Add();
     if(!sk){ log("FAIL sketch Add"); return 2; }
     auto plane=top->GetDefaultObject(o3d_planeXOY);
@@ -75,8 +77,8 @@ extern "C" int run_variant06_writer(){
     if(!sk->Update()){ log("FAIL sketch final Update"); return 2; }
     log("CREATE_SKETCH_PASS");
 
-    auto exts=top->GetExtrusions();
-    if(!exts){ log("FAIL GetExtrusions"); return 2; }
+    auto exts=model->GetExtrusions();
+    if(!exts){ log("FAIL model GetExtrusions"); return 2; }
     auto ext=exts->Add(o3d_baseExtrusion);
     if(!ext){ log("FAIL extrusion Add"); return 2; }
     ext->SetSketch(sk);
@@ -84,7 +86,7 @@ extern "C" int run_variant06_writer(){
       log("FAIL SetSideParameters"); return 2;
     }
     if(!ext->Update()){ log("FAIL extrusion Update"); return 2; }
-    if(!top->RebuildModel()){ log("FAIL top RebuildModel initial"); return 2; }
+    if(!top->RebuildModel(false)){ log("FAIL top RebuildModel initial"); return 2; }
     if(!doc->RebuildDocument()){ log("FAIL doc RebuildDocument initial"); return 2; }
     const double m10=top->GetMass();
     log("MASS_DEPTH10="+std::to_string(m10));
@@ -108,8 +110,10 @@ extern "C" int run_variant06_writer(){
     auto rtop=reopened->GetTopPart();
     if(!rtop){ log("FAIL reopened top"); return 2; }
     if(!reopened->RebuildDocument()){ log("FAIL reopened RebuildDocument"); return 2; }
-    if(!rtop->RebuildModel()){ log("FAIL reopened RebuildModel"); return 2; }
-    auto rexts=rtop->GetExtrusions();
+    if(!rtop->RebuildModel(false)){ log("FAIL reopened RebuildModel"); return 2; }
+    auto rmodel=rtop->GetModelContainer();
+    if(!rmodel){ log("FAIL reopened GetModelContainer"); return 2; }
+    auto rexts=rmodel->GetExtrusions();
     if(!rexts || rexts->GetCount()<1){ log("FAIL persisted extrusion missing"); return 2; }
     auto rext=rexts->GetExtrusion(0);
     if(!rext){ log("FAIL GetExtrusion(0)"); return 2; }
@@ -124,7 +128,7 @@ extern "C" int run_variant06_writer(){
       log("FAIL mutation SetSideParameters"); return 2;
     }
     if(!rext->Update()){ log("FAIL mutation extrusion Update"); return 2; }
-    if(!rtop->RebuildModel()){ log("FAIL mutation RebuildModel"); return 2; }
+    if(!rtop->RebuildModel(false)){ log("FAIL mutation RebuildModel"); return 2; }
     if(!reopened->RebuildDocument()){ log("FAIL mutation RebuildDocument"); return 2; }
     const double m14=rtop->GetMass();
     log("MASS_DEPTH14="+std::to_string(m14));
@@ -139,7 +143,7 @@ extern "C" int run_variant06_writer(){
     IKompasDocument3DPtr changed=changedBase;
     auto ctop=changed?changed->GetTopPart():IPartPtr{};
     if(!changed || !ctop){ log("FAIL changed reopened model"); return 2; }
-    if(!changed->RebuildDocument() || !ctop->RebuildModel()){ log("FAIL changed reopen rebuild"); return 2; }
+    if(!changed->RebuildDocument() || !ctop->RebuildModel(false)){ log("FAIL changed reopen rebuild"); return 2; }
     const double m14r=ctop->GetMass();
     log("MASS_CHANGED_REOPEN="+std::to_string(m14r));
     if(std::abs(m14r-m14)>std::max(1e-6,m14*1e-6)){
@@ -147,13 +151,14 @@ extern "C" int run_variant06_writer(){
     }
     log("MUTATED_SAVE_REOPEN_PASS");
 
-    auto cexts=ctop->GetExtrusions();
+    auto cmodel=ctop->GetModelContainer();
+    auto cexts=cmodel?cmodel->GetExtrusions():IExtrusionsPtr{};
     auto cext=cexts?cexts->GetExtrusion(0):IExtrusionPtr{};
     if(!cext){ log("FAIL changed extrusion lookup"); return 2; }
     if(!cext->SetSideParameters(true, etBlind, 10.0, 0.0, false, IModelObjectPtr{})){
       log("FAIL restore SetSideParameters"); return 2;
     }
-    if(!cext->Update() || !ctop->RebuildModel() || !changed->RebuildDocument()){
+    if(!cext->Update() || !ctop->RebuildModel(false) || !changed->RebuildDocument()){
       log("FAIL restore rebuild"); return 2;
     }
     const double m10restore=ctop->GetMass();
@@ -168,7 +173,7 @@ extern "C" int run_variant06_writer(){
     IKompasDocument3DPtr finalDoc=finalBase;
     auto ftop=finalDoc?finalDoc->GetTopPart():IPartPtr{};
     if(!finalBase || !finalDoc || !ftop){ log("FAIL final reopen"); return 2; }
-    if(!finalDoc->RebuildDocument() || !ftop->RebuildModel()){ log("FAIL final rebuild"); return 2; }
+    if(!finalDoc->RebuildDocument() || !ftop->RebuildModel(false)){ log("FAIL final rebuild"); return 2; }
     const double mf=ftop->GetMass();
     log("MASS_FINAL="+std::to_string(mf));
     if(std::abs(mf-m10)>std::max(1e-6,m10*1e-6)){ log("FAIL final nominal mass"); return 2; }
