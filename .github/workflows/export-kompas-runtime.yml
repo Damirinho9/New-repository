@@ -63,17 +63,56 @@ jobs:
           sha256sum kompas-v25-portable-runtime.tar.zst | tee runtime-SHA256.txt
           ls -lh kompas-v25-portable-runtime.tar.zst
           du -sh runtime-root
+          split -b 330M -d -a 2 kompas-v25-portable-runtime.tar.zst kompas-runtime.part-
+          sha256sum kompas-runtime.part-* | tee runtime-parts-SHA256.txt
+          ls -lh kompas-runtime.part-*
 
-      - name: Upload portable runtime
+      - name: Upload runtime chunk 00
         uses: actions/upload-artifact@v4
         with:
-          name: kompas-v25-portable-runtime
+          name: kompas-v25-runtime-part00
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+          path: kompas-runtime.part-00
+
+      - name: Upload runtime chunk 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-runtime-part01
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+          path: kompas-runtime.part-01
+
+      - name: Upload runtime chunk 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-runtime-part02
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+          path: kompas-runtime.part-02
+
+      - name: Upload runtime chunk 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-runtime-part03
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 3
+          path: kompas-runtime.part-03
+
+      - name: Upload runtime manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-runtime-manifests
           compression-level: 0
           if-no-files-found: error
           retention-days: 3
           path: |
-            kompas-v25-portable-runtime.tar.zst
             runtime-SHA256.txt
+            runtime-parts-SHA256.txt
             runtime-size.txt
             runtime-system-libs.txt
             installed.txt
