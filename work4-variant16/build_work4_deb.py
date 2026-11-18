@@ -335,8 +335,8 @@ def link_component(d3,comp,var_name,expr):
     v.SetExpression(expr)
     try: v.SetExternal(True)
     except Exception: pass
-    try: comp.SetSourceVariables()
-    except Exception: pass
+    # Do not call SetSourceVariables here: that command restores values from the
+    # source file and would intentionally clear the assembly-level override.
     req(comp.RebuildModel(False),f"component rebuild {expr}")
     return {"name":v.GetName(),"expression":v.GetExpression(),"value":float(v.GetValue())}
 
