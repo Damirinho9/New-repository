@@ -86,7 +86,9 @@ struct DocPart {
 };
 static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
   log("NEW_PART_BEFORE_DOCUMENTS_ADD");
-  auto base = require_ptr(docs->Add(ksDocumentPart, true), "Documents.Add part");
+  auto base = docs->AddWithDefaultSettings(ksDocumentPart, true);
+  if (!base) base = docs->Add(ksDocumentPart, true);
+  base = require_ptr(base, "Documents.AddWithDefaultSettings/Add part");
   log("NEW_PART_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast part document 3D");
@@ -96,7 +98,9 @@ static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
 }
 static DocPart new_assembly(const IDocumentsPtr& docs, const std::wstring& name) {
   log("NEW_ASSEMBLY_BEFORE_DOCUMENTS_ADD");
-  auto base = require_ptr(docs->Add(ksDocumentAssembly, true), "Documents.Add assembly");
+  auto base = docs->AddWithDefaultSettings(ksDocumentAssembly, true);
+  if (!base) base = docs->Add(ksDocumentAssembly, true);
+  base = require_ptr(base, "Documents.AddWithDefaultSettings/Add assembly");
   log("NEW_ASSEMBLY_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast assembly document 3D");
@@ -584,6 +588,8 @@ extern "C" int run_variant06_writer() {
     }
     log("BEFORE_GET_DOCUMENTS");
     auto docs=require_ptr(app.GetDocuments(),"Application Documents");
+    docs->SetLockTemplatesSettings(true);
+    log("LOCK_TEMPLATES_SETTINGS_PASS");
     log("AFTER_GET_DOCUMENTS");
     log("BEFORE_FIRST_PART_BUILD");
 
