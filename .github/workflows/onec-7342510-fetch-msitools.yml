@@ -1,0 +1,34 @@
+name: onec-7342510-fetch-msitools
+
+on:
+  push:
+    branches:
+      - onec-7342510-stage6-native
+    paths:
+      - '.github/workflows/onec-7342510-fetch-msitools.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install public MSI tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y msitools cabextract
+          mkdir -p bundle/bin bundle/lib
+          cp -L /usr/bin/msiextract /usr/bin/msiinfo /usr/bin/cabextract bundle/bin/
+          ldd /usr/bin/msiextract | tee bundle/ldd-msiextract.txt
+          for f in $(ldd /usr/bin/msiextract | awk '/=> \/|^\// {for(i=1;i<=NF;i++) if($i ~ /^\//) print $i}'); do
+            cp -L "$f" bundle/lib/ || true
+          done
+          for f in $(ldd /usr/bin/msiinfo | awk '/=> \/|^\// {for(i=1;i<=NF;i++) if($i ~ /^\//) print $i}'); do
+            cp -L "$f" bundle/lib/ || true
+          done
+      - name: Upload tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: msitools-ubuntu24
+          path: bundle/
+          retention-days: 1
