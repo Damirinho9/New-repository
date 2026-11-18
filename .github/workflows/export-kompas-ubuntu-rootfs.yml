@@ -120,6 +120,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          docker exec kompas-ubuntu bash -lc 'apt-get clean; rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /tmp/* /var/tmp/* || true'
           docker export kompas-ubuntu | zstd -T0 -7 -o out/kompas-ubuntu2404-v25-rootfs.tar.zst
           docker cp kompas-ubuntu:/root/installed-probe.txt out/installed-probe.txt
           sha256sum out/kompas-ubuntu2404-v25-rootfs.tar.zst | tee out/rootfs-SHA256.txt
@@ -151,6 +152,22 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with: {name: kompas-ubuntu-rootfs-part05, path: out/rootfs.part-05, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 06
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part06, path: out/rootfs.part-06, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 07
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part07, path: out/rootfs.part-07, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 08
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part08, path: out/rootfs.part-08, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 09
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part09, path: out/rootfs.part-09, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
       - name: Upload proof
         if: always()
         uses: actions/upload-artifact@v4
