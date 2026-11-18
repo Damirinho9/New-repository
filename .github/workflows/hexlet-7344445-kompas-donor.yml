@@ -1,0 +1,82 @@
+name: Hexlet 7344445 Native KOMPAS CDW from ASCON Donor
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - "hexlet_7344445/native_recovery/recover_kompas_donor.py"
+      - ".github/workflows/hexlet-7344445-kompas-donor.yml"
+  workflow_dispatch:
+
+jobs:
+  donor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS v25, SDK and tutorials
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb net-tools iproute2 libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25 ascon-kompas-tutorials-v25
+          find /opt/ascon -type f -iname '*.cdw' -printf '%s %p\n' | sort -n | tee hexlet_7344445/native_recovery/ascon-cdw-donors.txt
+          DONOR=$(find /opt/ascon -type f -iname '*.cdw' -printf '%s %p\n' | sort -n | awk 'NR==1{print $2}')
+          test -n "$DONOR"
+          test -s "$DONOR"
+          echo "DONOR_CDW=$DONOR" >> "$GITHUB_ENV"
+          sha256sum "$DONOR" | tee hexlet_7344445/native_recovery/ascon-donor-sha256.txt
+
+      - name: Open official CDW in real KOMPAS, add text, save, close and reopen
+        shell: bash
+        env:
+          DONOR_CDW: ${{ env.DONOR_CDW }}
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >hexlet_7344445/native_recovery/donor-live.out 2>hexlet_7344445/native_recovery/donor-live.err &
+          WRAPPER_PID=$!
+          KP=""
+          for i in $(seq 1 45); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          test -n "$KP"
+          for i in $(seq 1 50); do
+            sleep 1
+            ss -ltnp > hexlet_7344445/native_recovery/donor-sockets.txt || true
+            grep -q "kKompas" hexlet_7344445/native_recovery/donor-sockets.txt && break || true
+          done
+          grep -q "kKompas" hexlet_7344445/native_recovery/donor-sockets.txt
+          timeout 120 python3 hexlet_7344445/native_recovery/recover_kompas_donor.py | tee hexlet_7344445/native_recovery/donor-validation.log
+          kill "$WRAPPER_PID" 2>/dev/null || true
+
+      - name: Strict checks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q 'RESULT=PASS_NATIVE_KOMPAS3D_DONOR_SAVE_CLOSE_REOPEN' hexlet_7344445/native_recovery/donor-validation.log
+          test -s "hexlet_7344445/native_recovery/kompas_donor/Hexlet_KOMPAS3D_Привет_Хекслет.cdw"
+          test -s "hexlet_7344445/native_recovery/kompas_donor/Hexlet_KOMPAS3D_Привет_Хекслет_REOPENED.cdw"
+          sha256sum hexlet_7344445/native_recovery/kompas_donor/*.cdw
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-native-kompas3d-cdw
+          path: |
+            hexlet_7344445/native_recovery/kompas_donor/
+            hexlet_7344445/native_recovery/ascon-cdw-donors.txt
+            hexlet_7344445/native_recovery/ascon-donor-sha256.txt
+            hexlet_7344445/native_recovery/donor-*
+          if-no-files-found: warn
