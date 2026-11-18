@@ -81,10 +81,10 @@ jobs:
             apt-get install -y wget ca-certificates dbus procps glibc-i18ndata fontconfig python3 xauth
             echo "=== XVFB PACKAGE SEARCH ==="
             apt-cache search xvfb | tee /root/xvfb-search.txt || true
-            XVPKG=$(apt-cache search xvfb | awk 'NR==1{print $1}')
+            XVPKG=$(apt-cache search xvfb | head -1 | cut -d" " -f1)
             if [ -z "$XVPKG" ]; then
               apt-cache search xorg-server | tee -a /root/xvfb-search.txt || true
-              XVPKG=$(apt-cache search xorg-server | awk 'tolower($0) ~ /virtual|framebuffer|xvfb/ {print $1; exit}')
+              XVPKG=$(apt-cache search xorg-server | grep -Ei "virtual|framebuffer|xvfb" | head -1 | cut -d" " -f1)
             fi
             test -n "$XVPKG"
             echo "XVPKG=$XVPKG"
