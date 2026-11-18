@@ -127,13 +127,16 @@ def patch_options_multiuser(root: ET.Element) -> None:
     put(mu, "MU_ALLOW_PTMP_BROADCAST", "true")
 
 
-def build_remote_element(kind: str) -> ET.Element:
+def build_remote_element(kind: str, save_ref_id: str) -> ET.Element:
     data = REMOTE[kind]
     rn = ET.Element("REMOTE_NETWORK")
     eng = ET.SubElement(rn, "REMOTE_NETWORK_ENGINE")
     name = ET.SubElement(eng, "NAME", {"translate": "true"})
     name.text = data["name"]
     put(eng, "REMOTE_NETWORK_UUID", data["uuid"])
+    # Modern PT documents can address REMOTE_NETWORK_ENGINE through the same
+    # stable save-ref-id mechanism as ordinary devices.
+    put(eng, "SAVE_REF_ID", save_ref_id)
     outgoing = kind == "outgoing"
     put(eng, "OUTGOING", "true" if outgoing else "false")
     put(eng, "PEER_ADDRESS", "localhost" if outgoing else "")
@@ -192,27 +195,36 @@ def transplant_remote(path: Path, placeholder_name: str, kind: str) -> None:
     if placeholder is None or placeholder_idx is None:
         raise RuntimeError(f"placeholder {placeholder_name} missing")
     if placeholder_idx != len(devices) - 1:
-        raise RuntimeError("placeholder must be last device so remote index remains stable")
+        raise RuntimeError("placeholder must be last device")
+    placeholder_ref = (placeholder.findtext("ENGINE/SAVE_REF_ID") or "").strip()
+    if not placeholder_ref:
+        raise RuntimeError("placeholder SAVE_REF_ID missing")
 
-    # Turn the cable endpoint that targeted the placeholder into a genuine
-    # REMOTE_NETWORK endpoint. Packet Tracer donor files use the remote network
-    # as the next logical index after the last normal DEVICE.
+    # Modern Packet Tracer cables point FROM/TO to SAVE_REF_ID values.
+    # Reuse the placeholder's SAVE_REF_ID for REMOTE_NETWORK_ENGINE, so the
+    # existing Fa0/4 cable remains a valid stable reference after DEVICE removal.
     patched = False
     remote = REMOTE[kind]
     for link in links.findall("LINK"):
         cable = link.find("CABLE")
         if cable is None:
             continue
-        if cable.findtext("FROM") == str(placeholder_idx):
+        ports = cable.findall("PORT")
+        if cable.findtext("FROM") == placeholder_ref:
             put(cable, "FROM_DEVICE_MEM_ADDR", remote["dev_addr"])
             put(cable, "FROM_PORT_MEM_ADDR", remote["port_mem_addr"])
+            if len(ports) >= 1:
+                ports[0].text = "0"
             patched = True
-        if cable.findtext("TO") == str(placeholder_idx):
+        if cable.findtext("TO") == placeholder_ref:
             put(cable, "TO_DEVICE_MEM_ADDR", remote["dev_addr"])
             put(cable, "TO_PORT_MEM_ADDR", remote["port_mem_addr"])
+            if len(ports) >= 2:
+                ports[1].text = "0"
             patched = True
     if not patched:
-        raise RuntimeError("placeholder cable not found")
+        refs = [(c.findtext("FROM"), c.findtext("TO")) for c in (l.find("CABLE") for l in links.findall("LINK")) if c is not None]
+        raise RuntimeError(f"placeholder cable not found: ref={placeholder_ref} links={refs}")
     devs.remove(placeholder)
 
     patch_options_multiuser(root)
@@ -232,7 +244,7 @@ def transplant_remote(path: Path, placeholder_name: str, kind: str) -> None:
         remotes = ET.SubElement(root_mu, "REMOTE_NETWORKS")
     for c in list(remotes):
         remotes.remove(c)
-    remotes.append(build_remote_element(kind))
+    remotes.append(build_remote_element(kind, placeholder_ref))
     visibility = root_mu.find("PORT_VISIBILITY")
     if visibility is None:
         visibility = ET.SubElement(root_mu, "PORT_VISIBILITY")
@@ -287,25 +299,30 @@ def parse_pkt(path: Path) -> tuple[ET.Element, str]:
 
 def cable_remote_check(root: ET.Element, switch_name: str) -> dict:
     devs = root.findall("NETWORK/DEVICES/DEVICE")
-    names = [(d.findtext("ENGINE/NAME") or "").strip() for d in devs]
-    sw_idx = names.index(switch_name)
+    by_name = {(d.findtext("ENGINE/NAME") or "").strip(): d for d in devs}
+    switch = by_name[switch_name]
+    switch_ref = (switch.findtext("ENGINE/SAVE_REF_ID") or "").strip()
+    remote = root.find("MULTIUSER/REMOTE_NETWORKS/REMOTE_NETWORK")
+    if remote is None:
+        raise RuntimeError("REMOTE_NETWORK missing")
+    remote_ref = (remote.findtext("REMOTE_NETWORK_ENGINE/SAVE_REF_ID") or "").strip()
     links = root.findall("NETWORK/LINKS/LINK")
-    remote_idx = len(devs)
     matches = []
     for link in links:
         c = link.find("CABLE")
         if c is None:
             continue
         a, b = c.findtext("FROM"), c.findtext("TO")
-        if {a, b} == {str(sw_idx), str(remote_idx)}:
+        if {a, b} == {switch_ref, remote_ref}:
             matches.append({
                 "from": a,
                 "to": b,
+                "ports": [p.text for p in c.findall("PORT")],
                 "type": c.findtext("TYPE"),
                 "from_device_mem": c.findtext("FROM_DEVICE_MEM_ADDR"),
                 "to_device_mem": c.findtext("TO_DEVICE_MEM_ADDR"),
             })
-    return {"switch_index": sw_idx, "remote_index": remote_idx, "matches": matches}
+    return {"switch_ref": switch_ref, "remote_ref": remote_ref, "matches": matches}
 
 
 def validate(path: Path, session: int) -> dict:
