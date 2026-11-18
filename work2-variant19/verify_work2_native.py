@@ -142,7 +142,7 @@ def main():
     wp_doc = open_model(kompas, WORKPIECE)
     require(wp_doc.IsDetail(), "Workpiece M3D is not a detail")
     wp_top = require(wp_doc.GetPart(const.pTop_Part), "Workpiece top part unavailable")
-    require(wp_top.GetLastFeature(), "Workpiece contains no persisted 3D feature")
+    require(wp_doc.GetLastFeature(), "Workpiece contains no persisted 3D feature")
     try:
         wp_doc.close()
     except Exception:
@@ -151,7 +151,7 @@ def main():
     cutter_doc = open_model(kompas, CUTTER)
     require(cutter_doc.IsDetail(), "Cutter M3D is not a detail")
     cutter_top = require(cutter_doc.GetPart(const.pTop_Part), "Cutter top part unavailable")
-    require(cutter_top.GetLastFeature(), "Cutter contains no persisted 3D feature")
+    require(cutter_doc.GetLastFeature(), "Cutter contains no persisted 3D feature")
     try:
         cutter_doc.close()
     except Exception:
