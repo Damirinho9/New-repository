@@ -14,11 +14,11 @@ N_rol,13,pcs,methodology example,figure 50/54
 S,0.6,mm,methodology example,figure 50
 z,47.5,mm,dependent,(d+D)/4
 alpha,15,deg,selected,symmetric opposed roller rows
-D1,102.2,mm,dependent,ROUND((d+D)/2+0.6*d_rol)
-D2,91.4,mm,dependent,ROUND((d+D)/2-0.3*d_rol)
+D1,102,mm,dependent,ROUND((d+D)/2+0.6*d_rol)
+D2,91,mm,dependent,ROUND((d+D)/2-0.3*d_rol)
 cage_h,6.6,mm,dependent,S+b_rol/2
 cage_cell_d,13.2,mm,dependent,d_rol+2*S
-rivet_pitch_d,96.8,mm,dependent,(D1+D2)/2
+rivet_pitch_d,96.5,mm,dependent,(D1+D2)/2
 rivet_angle_offset,13.846153846,deg,dependent,360/(2*N_rol)
 rivet_d,1.6,mm,dependent,ROUND((ROUND(D1)-ROUND(D2))/6)*0.8
 inner_race_outer_d,85.4,mm,selected,2*(z-d_rol/2+1.2)
