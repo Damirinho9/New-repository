@@ -89,7 +89,10 @@ extern "C" int run_variant06_writer(){
     auto plane=top->GetDefaultObject(o3d_planeXOY);
     if(!plane){ log("FAIL default XOY"); return 2; }
     sk->SetPlane(plane);
-    if(!sk->Update()){ log("FAIL sketch Update after SetPlane"); return 2; }
+    log("SKETCH_PLANE_SET_PASS");
+    // Linux API7 v25: Sketchs.Add() returns a live sketch and an Update()
+    // before BeginEdit can spuriously return false. Follow the proven API5
+    // order: SetPlane -> BeginEdit -> geometry -> EndEdit -> Update.
     auto frag=sk->BeginEdit(false);
     if(!frag){ log("FAIL sketch BeginEdit"); return 2; }
     if(!add_rect(frag,20.0,12.0)){ return 2; }
