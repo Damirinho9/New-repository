@@ -1,0 +1,244 @@
+name: KOMPAS native Work 3 variant 19 associative CDW
+
+on:
+  workflow_dispatch:
+
+env:
+  WORK2_EXPECTED_HEAD: 45c402c20948f44fd461fc6d032c4f8359425b01
+  WORK2_ARTIFACT: 7335493-work2-variant19-native-top-down
+
+jobs:
+  select-accepted-work2:
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
+      run_url: ${{ steps.find.outputs.run_url }}
+      head_sha: ${{ steps.find.outputs.head_sha }}
+      artifact_id: ${{ steps.find.outputs.artifact_id }}
+    steps:
+      - name: Find accepted Work 2 from exact proven source commit
+        id: find
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const expected = process.env.WORK2_EXPECTED_HEAD.toLowerCase();
+            const name = process.env.WORK2_ARTIFACT;
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'work2-variant19-native.yml',
+                branch: 'kompas-7335493-native-work1',
+                status: 'success',
+                per_page: 100
+              }
+            );
+            const exact = runs
+              .filter(r => String(r.head_sha).toLowerCase() === expected)
+              .sort((a,b) => new Date(b.updated_at) - new Date(a.updated_at));
+            if (!exact.length) {
+              core.setFailed(
+                'WORK3_BLOCKED: no successful Work 2 run exists for exact head ' +
+                process.env.WORK2_EXPECTED_HEAD
+              );
+              return;
+            }
+            for (const run of exact) {
+              const arts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                {owner: context.repo.owner, repo: context.repo.repo, run_id: run.id, per_page: 100}
+              );
+              const art = arts.find(a => a.name === name && !a.expired);
+              if (art) {
+                core.setOutput('run_id', String(run.id));
+                core.setOutput('run_url', run.html_url);
+                core.setOutput('head_sha', run.head_sha);
+                core.setOutput('artifact_id', String(art.id));
+                core.info('WORK2_ACCEPTED_ARTIFACT_FOUND run=' + run.id + ' artifact=' + art.id);
+                return;
+              }
+            }
+            core.setFailed('WORK3_BLOCKED: exact successful Work 2 run has no live accepted artifact.');
+
+  build-native-work3:
+    needs: select-accepted-work2
+    runs-on: [self-hosted, Windows, X64, kompas]
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Work 3 source
+        uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Freeze Windows KOMPAS runtime contract
+        shell: powershell
+        run: |
+          Write-Host "Computer=$env:COMPUTERNAME"
+          Write-Host "User=$env:USERNAME"
+          Write-Host "OS=$([Environment]::OSVersion.VersionString)"
+          if ($env:KOMPAS_COMMERCIAL_CONFIRMED -ne "1") {
+            throw "Work 3 requires the same licensed Windows KOMPAS runtime contract."
+          }
+          if ($null -eq [type]::GetTypeFromProgID("KOMPAS.Application.7")) {
+            throw "KOMPAS.Application.7 is not registered."
+          }
+          if ($null -eq [type]::GetTypeFromProgID("Kompas.Application.5")) {
+            throw "Kompas.Application.5 is not registered."
+          }
+          New-Item -ItemType Directory -Force work3-variant19/native | Out-Null
+          @(
+            "RUNTIME_CONTRACT_PASS",
+            "SOURCE_WORK2_RUN=${{ needs.select-accepted-work2.outputs.run_id }}",
+            "SOURCE_WORK2_HEAD=${{ needs.select-accepted-work2.outputs.head_sha }}",
+            "SOURCE_WORK2_ARTIFACT_ID=${{ needs.select-accepted-work2.outputs.artifact_id }}",
+            "SOURCE_WORK2_URL=${{ needs.select-accepted-work2.outputs.run_url }}"
+          ) | Set-Content -Encoding UTF8 work3-variant19/native/source-run.txt
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pywin32
+        shell: powershell
+        run: python -m pip install --disable-pip-version-check pywin32
+
+      - name: Download exact accepted Work 2 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.WORK2_ARTIFACT }}
+          path: work3-variant19/input-raw
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.select-accepted-work2.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Normalize accepted Work 2 input
+        shell: powershell
+        run: |
+          $raw = "work3-variant19/input-raw"
+          $dst = "work3-variant19/input"
+          Remove-Item -Recurse -Force $dst -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $dst | Out-Null
+
+          $required = @(
+            "Work2_V19_Workpiece.m3d",
+            "Work2_V19_FormCutter.m3d",
+            "Work2_V19_TopDown.a3d",
+            "ACCEPTANCE.txt",
+            "verification.txt",
+            "SHA256.txt"
+          )
+          $optional = @(
+            "native-manifest.json",
+            "calculation.csv",
+            "calculation.md",
+            "runtime-proof.txt",
+            "build-report.txt"
+          )
+
+          foreach ($name in $required) {
+            $hits = @(Get-ChildItem $raw -Recurse -File | Where-Object { $_.Name -eq $name })
+            if ($hits.Count -ne 1) {
+              throw "Expected exactly one $name in accepted Work 2 artifact, found $($hits.Count)."
+            }
+            Copy-Item $hits[0].FullName (Join-Path $dst $name)
+          }
+          foreach ($name in $optional) {
+            $hits = @(Get-ChildItem $raw -Recurse -File | Where-Object { $_.Name -eq $name })
+            if ($hits.Count -eq 1) {
+              Copy-Item $hits[0].FullName (Join-Path $dst $name)
+            }
+          }
+
+      - name: Syntax gate
+        shell: powershell
+        run: python -m py_compile work3-variant19/gate_work2_input.py work3-variant19/build_work3_native.py work3-variant19/verify_work3_native.py
+
+      - name: Strict accepted Work 2 input gate
+        shell: powershell
+        run: |
+          python work3-variant19/gate_work2_input.py | Tee-Object -FilePath work3-variant19/native/input-gate.txt
+          if (-not (Select-String -Path work3-variant19/native/input-gate.txt -Pattern '^RESULT=PASS_WORK3_INPUT_GATE$' -Quiet)) {
+            throw "Work 3 input gate failed."
+          }
+
+      - name: Build native associative CDW
+        shell: powershell
+        run: |
+          python work3-variant19/build_work3_native.py
+          Get-Content work3-variant19/native/build-report.txt
+          if (-not (Select-String -Path work3-variant19/native/build-report.txt -Pattern '^RESULT=BUILD_NATIVE_WORK3_VARIANT19_PASS$' -Quiet)) {
+            throw "Work 3 native drawing build failed."
+          }
+
+      - name: Mutate source model, rebuild CDW, restore nominal
+        shell: powershell
+        run: |
+          python work3-variant19/verify_work3_native.py
+          Get-Content work3-variant19/native/verification.txt
+          if (-not (Select-String -Path work3-variant19/native/verification.txt -Pattern '^RESULT=PASS_NATIVE_WORK3_VARIANT19_ASSOCIATIVE_REBUILD$' -Quiet)) {
+            throw "Work 3 associative mutation/rebuild/restore test failed."
+          }
+
+      - name: Final native container, nominal-source and SHA gate
+        shell: powershell
+        run: |
+          $dir = "work3-variant19/native"
+          $cdw = "$dir/Work3_V19_FormCutter.cdw"
+          $source = "work3-variant19/input/Work2_V19_FormCutter.m3d"
+          foreach ($p in @($cdw, $source)) {
+            $f = Get-Item $p -ErrorAction Stop
+            if ($f.Length -lt 1024) { throw "$p is unexpectedly small." }
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+            if ($bytes[0] -ne 0x50 -or $bytes[1] -ne 0x4B) {
+              throw "$p is not a modern native KOMPAS container."
+            }
+          }
+
+          $src = Get-Content "$dir/source-work2.json" -Raw | ConvertFrom-Json
+          $expected = $src.files.'Work2_V19_FormCutter.m3d'
+          $actual = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected.ToLowerInvariant()) {
+            throw "Accepted Work 2 cutter was not restored byte-for-byte."
+          }
+
+          Get-FileHash @($cdw, $source) -Algorithm SHA256 | Format-Table -AutoSize | Out-String | Set-Content -Encoding UTF8 "$dir/SHA256.txt"
+          @(
+            "WORK2_SOURCE_SHA_RESTORED_PASS",
+            "RESULT=PASS_NATIVE_WORK3_VARIANT19"
+          ) | Set-Content -Encoding UTF8 "$dir/ACCEPTANCE.txt"
+          Get-Content "$dir/SHA256.txt"
+          Get-Content "$dir/ACCEPTANCE.txt"
+
+      - name: Upload strictly accepted Work 3 native package
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work3-variant19-native-cdw
+          if-no-files-found: error
+          path: |
+            work3-variant19/native/Work3_V19_FormCutter.cdw
+            work3-variant19/native/work3-manifest.json
+            work3-variant19/native/source-work2.json
+            work3-variant19/native/source-run.txt
+            work3-variant19/native/input-gate.txt
+            work3-variant19/native/build-report.txt
+            work3-variant19/native/verification.txt
+            work3-variant19/native/SHA256.txt
+            work3-variant19/native/ACCEPTANCE.txt
+            work3-variant19/input/calculation.csv
+            work3-variant19/input/calculation.md
+
+      - name: Upload failure diagnostics only
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work3-variant19-native-diagnostics
+          if-no-files-found: ignore
+          path: |
+            work3-variant19/native/source-run.txt
+            work3-variant19/native/input-gate.txt
+            work3-variant19/native/build-report.txt
+            work3-variant19/native/verification.txt
+            work3-variant19/native/work3-manifest.json
