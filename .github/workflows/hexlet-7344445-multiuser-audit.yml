@@ -37,3 +37,5 @@ jobs:
           name: 7344445-multiuser-donor-audit
           path: hexlet_7344445/multiuser_audit/
           if-no-files-found: error
+
+# rerun tolerant parser
