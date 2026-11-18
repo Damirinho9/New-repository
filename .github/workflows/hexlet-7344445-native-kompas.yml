@@ -1,0 +1,79 @@
+name: Hexlet 7344445 Native KOMPAS Recovery
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - "hexlet_7344445/native_recovery/recover_kompas.py"
+      - ".github/workflows/hexlet-7344445-native-kompas.yml"
+  workflow_dispatch:
+
+jobs:
+  kompas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS v25 Linux + SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          dpkg -l 'ascon-kompas*' | tee hexlet_7344445/native_recovery/kompas-installed.txt
+          find /opt/ascon/kompas3d-v25/Bin -maxdepth 1 -type f -printf '%f\n' | sort | tee hexlet_7344445/native_recovery/kompas-bin-list.txt
+
+      - name: Launch real KOMPAS runtime and create/reopen native CDW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >hexlet_7344445/native_recovery/kompas-live.out 2>hexlet_7344445/native_recovery/kompas-live.err &
+          WRAPPER_PID=$!
+          KP=""
+          for i in $(seq 1 45); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          echo "KPID=$KP" | tee hexlet_7344445/native_recovery/kompas-pid.txt
+          test -n "$KP"
+          for i in $(seq 1 50); do
+            sleep 1
+            ss -ltnp > hexlet_7344445/native_recovery/kompas-sockets.txt || true
+            grep -q "kKompas" hexlet_7344445/native_recovery/kompas-sockets.txt && break
+          done
+          grep -q "kKompas" hexlet_7344445/native_recovery/kompas-sockets.txt
+          python3 hexlet_7344445/native_recovery/recover_kompas.py | tee hexlet_7344445/native_recovery/kompas-validation.log
+          kill "$WRAPPER_PID" 2>/dev/null || true
+
+      - name: Strict artifact checks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q 'RESULT=PASS_NATIVE_KOMPAS3D_DRAWING_REOPEN' hexlet_7344445/native_recovery/kompas-validation.log
+          test -f "hexlet_7344445/native_recovery/kompas/Hexlet_KOMPAS3D_Привет_Хекслет.cdw"
+          test -f "hexlet_7344445/native_recovery/kompas/Hexlet_KOMPAS3D_Привет_Хекслет_REOPENED.cdw"
+          sha256sum hexlet_7344445/native_recovery/kompas/*.cdw
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-native-kompas3d
+          path: |
+            hexlet_7344445/native_recovery/kompas/
+            hexlet_7344445/native_recovery/kompas-*.txt
+            hexlet_7344445/native_recovery/kompas-*.log
+            hexlet_7344445/native_recovery/kompas-live.*
+            hexlet_7344445/native_recovery/kompas-sockets.txt
+            hexlet_7344445/native_recovery/kompas-pid.txt
+          if-no-files-found: warn
