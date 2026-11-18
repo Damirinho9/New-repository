@@ -81,7 +81,7 @@ extern "C" int run_variant06_writer(){
     if(!exts){ log("FAIL model GetExtrusions"); return 2; }
     auto ext=exts->Add(o3d_baseExtrusion);
     if(!ext){ log("FAIL extrusion Add"); return 2; }
-    ext->SetSketch(sk);
+    ext->SetProfiles({IModelObjectPtr(sk)});
     if(!ext->SetSideParameters(true, etBlind, 10.0, 0.0, false, IModelObjectPtr{})){
       log("FAIL SetSideParameters"); return 2;
     }
