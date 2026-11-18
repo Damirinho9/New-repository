@@ -45,14 +45,18 @@ extern "C" int run_variant06_writer(){
     app.GetSystemVersion(ma,mi,re,bu);
     log("KOMPAS_VERSION="+std::to_string(ma)+"."+std::to_string(mi)+"."+std::to_string(re)+" build="+std::to_string(bu));
 
+    log("BEFORE_GET_DOCUMENTS");
     auto docs=app.GetDocuments();
+    log("AFTER_GET_DOCUMENTS");
     if(!docs){ log("FAIL documents"); return 2; }
 
     const std::wstring out=L"/tmp/work4_native3d_probe.m3d";
     std::filesystem::remove("/tmp/work4_native3d_probe.m3d");
 
-    auto base=docs->AddWithDefaultSettings(ksDocumentPart, true);
-    if(!base){ log("FAIL AddWithDefaultSettings part"); return 2; }
+    log("BEFORE_ADD_PART");
+    auto base=docs->Add(ksDocumentPart, true);
+    log("AFTER_ADD_PART");
+    if(!base){ log("FAIL Documents.Add part"); return 2; }
     app.SetActiveDocument(base);
     IKompasDocument3DPtr doc=base;
     if(!doc){ log("FAIL cast IKompasDocument3D"); return 2; }
