@@ -1,0 +1,4 @@
+[
+  {"type":"Catalog","name":"Номенклатура","synonym":"Номенклатура","codeLength":20,"descriptionLength":150,"autonumbering":false,"checkUnique":true,"attributes":["ЕдиницаИзмерения: CatalogRef.ЕдиницыИзмерения","ВидНоменклатуры: String(20)","ЦенаЗакупки: Number(15,2) | nonneg","ЦенаПродажи: Number(15,2) | nonneg","СтавкаНДС: String(10)"]},
+  {"type":"Catalog","name":"Контрагенты","synonym":"Контрагенты","codeLength":9,"descriptionLength":150,"autonumbering":true,"checkUnique":false,"attributes":["ИНН: String(12)","ТипКонтрагента: String(30)","Договор: String(200)"]}
+]
