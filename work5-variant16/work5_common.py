@@ -109,7 +109,8 @@ def cut_extrusion(part,const,sk,depth,name):
 
 def rotated_profile(part,const,points,name):
     sk,sd,d2=create_sketch(part,const,const.o3d_planeXOY,name)
-    require(d2.ksLineSeg(points[0][0],0.0,points[-1][0],0.0,const.ksCSAxis),f"{name}: axis")
+    xs=[p[0] for p in points]
+    require(d2.ksLineSeg(min(xs),0.0,max(xs),0.0,const.ksCSAxis),f"{name}: axis")
     for a,b in zip(points,points[1:]):
         require(d2.ksLineSeg(a[0],a[1],b[0],b[1],const.ksCSNormal),f"{name}: profile")
     end_sketch(sd)
