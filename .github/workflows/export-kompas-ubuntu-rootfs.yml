@@ -72,7 +72,9 @@ jobs:
             set -euxo pipefail
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            apt-get install -y wget curl ca-certificates gnupg lsb-release xvfb xauth dbus procps python3 zstd locales
+            apt-get install -y wget curl ca-certificates gnupg lsb-release xvfb xauth dbus procps python3 zstd locales fontconfig \
+              libxcb-res0 libxcb-dri2-0 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 \
+              libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libunwind8
             wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
             bash /tmp/ascon.sh || true
             rm -f /etc/apt/sources.list.d/ascon.list
