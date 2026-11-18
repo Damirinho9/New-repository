@@ -97,7 +97,7 @@ static void* scheduler(void*){
     [app](){
       blog("BOOTSTRAP_IN_GUI_QUEUE");
       QTimer::singleShot(
-        15000,
+        30000,
         app,
         [](){
           blog("BOOTSTRAP_TIMER_FIRED_GUI");
