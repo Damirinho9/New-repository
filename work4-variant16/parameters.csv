@@ -1,0 +1,27 @@
+parameter,value,unit,status,source_or_formula
+variant,16,,given,table 3.1 and table 3.2
+bearing_type,double-row tapered roller angular-contact,,given,table 3.1 variant 16
+topology,double inner ring + two outer cups,,given,variant 16 sketch
+D,120,mm,methodology example,d_nar in figure 43
+d,70,mm,methodology example,d_vn in figure 43
+T,40,mm,selected,two-row total width controlling variable
+C,40,mm,dependent,C=T
+B,20,mm,dependent,B=T/2
+R,2,mm,selected,ring fillet
+b_rol,12,mm,methodology example,figure 43
+d_rol,12,mm,methodology example,figure 43
+N_rol,13,pcs,methodology example,figure 50/54
+S,0.6,mm,methodology example,figure 50
+z,47.5,mm,dependent,(d+D)/4
+alpha,15,deg,selected,symmetric opposed roller rows
+D1,102.2,mm,dependent,ROUND((d+D)/2+0.6*d_rol)
+D2,91.4,mm,dependent,ROUND((d+D)/2-0.3*d_rol)
+cage_h,6.6,mm,dependent,S+b_rol/2
+cage_cell_d,13.2,mm,dependent,d_rol+2*S
+rivet_pitch_d,96.8,mm,dependent,(D1+D2)/2
+rivet_angle_offset,13.846153846,deg,dependent,360/(2*N_rol)
+rivet_d,1.6,mm,dependent,ROUND((ROUND(D1)-ROUND(D2))/6)*0.8
+inner_race_outer_d,85.4,mm,selected,2*(z-d_rol/2+1.2)
+outer_race_inner_d,104.6,mm,selected,2*(z+d_rol/2-1.2)
+roller_draft,5,deg,selected,tapered roller frustum
+rebuild_test_T,44,mm,test,T nominal 40 -> 44 -> 40
