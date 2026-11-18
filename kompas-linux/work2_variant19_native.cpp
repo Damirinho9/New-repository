@@ -198,13 +198,6 @@ static std::array<double,3> origin(const IPartPtr& p){
   return {x,y,z};
 }
 
-static fs::path native_template(const std::string& ext){
-  const fs::path dir{"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates"};
-  req(fs::exists(dir),"KOMPAS template directory");
-  for(const auto& e:fs::directory_iterator(dir))
-    if(e.is_regular_file() && e.path().extension()==ext) return e.path();
-  throw std::runtime_error("native KOMPAS template missing: "+ext);
-}
 static IPartPtr insert_component(const IPartPtr& asmTop,const fs::path& file,const std::wstring& name){
   auto parts=req(asmTop->GetParts(),"assembly parts");
   auto c=req(parts->AddFromFile(file.wstring(),true,false),"AddFromFile "+file.string());
@@ -246,11 +239,11 @@ static std::vector<IPartPtr> parts_by_file(const IPartPtr& top,const fs::path& f
 static void close_doc(const IKompasDocumentPtr& d){ try{d->Close(kdDoNotSaveChanges);}catch(...){} }
 
 static void build_top_down(const IDocumentsPtr& docs){
-  // Assembly is created first from ASCON's own empty native A3D template.
-  // This preserves the required top-down order while avoiding the broken
-  // Documents.Add(3D) call in Linux ksinvisible.
-  auto atpl=native_template(".a3d");
-  auto base=req(docs->Open(atpl.wstring(),true,false),"Open native A3D template");
+  // Create the assembly first through the native API. This path is proven
+  // to return a live 3D document in hosted KOMPAS v25; template Open is not used.
+  log("ASSEMBLY_BEFORE_DOCUMENTS_ADD");
+  auto base=req(docs->Add(ksDocumentAssembly,true),"Documents.Add assembly");
+  log("ASSEMBLY_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr asmDoc=base;
   auto top=req(asmDoc->GetTopPart(),"assembly top");
   top->SetName(L"WORK2_V19_TOP_DOWN");
@@ -261,11 +254,11 @@ static void build_top_down(const IDocumentsPtr& docs){
   log("ASSEMBLY_FIRST_PASS");
 
   // Workpiece is created only after the assembly exists on disk.
-  auto mtpl=native_template(".m3d");
-  auto wb=req(docs->Open(mtpl.wstring(),true,false),"Open native M3D template for workpiece");
+  log("WORKPIECE_BEFORE_DOCUMENTS_ADD");
+  auto wb=req(docs->Add(ksDocumentPart,true),"Documents.Add workpiece");
+  log("WORKPIECE_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr wdoc=wb;
-  auto wtop=req(wdoc->GetTopPart(),"workpiece template top");
-  require(!wdoc->GetLastFeature(),"workpiece template not empty");
+  auto wtop=req(wdoc->GetTopPart(),"workpiece top");
   wtop->SetName(L"WORKPIECE_V19");
   build_workpiece(wtop,wdoc);
   require(wb->SaveAs(WORKPIECE.wstring()),"workpiece SaveAs");
@@ -275,10 +268,11 @@ static void build_top_down(const IDocumentsPtr& docs){
 
   // Cutter is also created after the assembly, then inserted and made dependent
   // on the already inserted workpiece through a real MoldCavity operation.
-  auto cb=req(docs->Open(mtpl.wstring(),true,false),"Open native M3D template for cutter");
+  log("CUTTER_BEFORE_DOCUMENTS_ADD");
+  auto cb=req(docs->Add(ksDocumentPart,true),"Documents.Add cutter");
+  log("CUTTER_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr cdoc=cb;
-  auto ctop=req(cdoc->GetTopPart(),"cutter template top");
-  require(!cdoc->GetLastFeature(),"cutter template not empty");
+  auto ctop=req(cdoc->GetTopPart(),"cutter top");
   ctop->SetName(L"FORM_CUTTER_V19");
   build_cutter(ctop,cdoc);
   require(cb->SaveAs(CUTTER.wstring()),"cutter SaveAs");
