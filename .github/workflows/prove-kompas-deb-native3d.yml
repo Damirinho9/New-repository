@@ -28,17 +28,21 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           dpkg -l 'ascon-kompas*' | tee installed.txt
-      - name: Start ksinvisible and prove native 3D mutation
+      - name: Start full kKompas and prove native 3D mutation
         shell: bash
         run: |
           set -euxo pipefail
           BIN=/opt/ascon/kompas3d-v25/Bin
           export PYTHONPATH="$BIN"
-          ln -sf "$BIN/ksinvisible" /tmp/kKompas
-          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >kompas-live.out 2>kompas-live.err &
+          export HOME="$HOME"
+          CFG="$HOME/.config/ascon/KOMPAS-3D/25"
+          mkdir -p "$CFG"
+          RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$CFG/QtResources.bin"
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" "$BIN/kKompas" -automation >kompas-live.out 2>kompas-live.err &
           WRAPPER_PID=$!
           KP=""
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             sleep 1
             KP=$(pgrep -x kKompas | head -1 || true)
             [ -n "$KP" ] && break
