@@ -1,0 +1,77 @@
+name: Hexlet 7344445 Native KOMPAS Template Recovery
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - "hexlet_7344445/native_recovery/recover_kompas_template.py"
+      - ".github/workflows/hexlet-7344445-native-kompas-template.yml"
+  workflow_dispatch:
+
+jobs:
+  kompas-template:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install official KOMPAS v25 Linux + SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+
+      - name: Get real native CDW donor
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/n0emo/uni.git /tmp/uni
+          DONOR='/tmp/uni/bachelors/term-4/engineering-graphics/lab-1/lab-1.cdw'
+          test -s "$DONOR"
+          file "$DONOR"
+          sha256sum "$DONOR" | tee hexlet_7344445/native_recovery/donor-cdw-sha256.txt
+
+      - name: Open donor in real KOMPAS, clean, add text, save and reopen
+        shell: bash
+        env:
+          DONOR_CDW: /tmp/uni/bachelors/term-4/engineering-graphics/lab-1/lab-1.cdw
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >hexlet_7344445/native_recovery/kompas-template-live.out 2>hexlet_7344445/native_recovery/kompas-template-live.err &
+          WRAPPER_PID=$!
+          for i in $(seq 1 60); do
+            sleep 1
+            pgrep -x kKompas >/dev/null && ss -ltnp 2>/dev/null | grep -q kKompas && break || true
+          done
+          pgrep -x kKompas
+          python3 hexlet_7344445/native_recovery/recover_kompas_template.py | tee hexlet_7344445/native_recovery/kompas-template-validation.log
+          kill "$WRAPPER_PID" 2>/dev/null || true
+
+      - name: Strict checks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q 'RESULT=PASS_NATIVE_KOMPAS3D_TEMPLATE_SAVE_REOPEN' hexlet_7344445/native_recovery/kompas-template-validation.log
+          test -s "hexlet_7344445/native_recovery/kompas_template/Hexlet_KOMPAS3D_Привет_Хекслет.cdw"
+          test -s "hexlet_7344445/native_recovery/kompas_template/Hexlet_KOMPAS3D_Привет_Хекслет_REOPENED.cdw"
+          sha256sum hexlet_7344445/native_recovery/kompas_template/*.cdw
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-native-kompas3d-template
+          path: |
+            hexlet_7344445/native_recovery/kompas_template/
+            hexlet_7344445/native_recovery/donor-cdw-sha256.txt
+            hexlet_7344445/native_recovery/kompas-template-*.log
+            hexlet_7344445/native_recovery/kompas-template-live.*
+          if-no-files-found: warn
