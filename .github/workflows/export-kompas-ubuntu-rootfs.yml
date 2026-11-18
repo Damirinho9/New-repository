@@ -34,9 +34,10 @@ jobs:
           print("ACTIVE3D",lm.IsKompasModuleActive(constants.ksKompasModule3D) if lm else None)
           docs=app.GetDocuments()
           print("DOCS",bool(docs))
-          candidates=glob.glob("/opt/ascon/kompas3d-v25/SDK/**/*.m3d",recursive=True)
+          preferred="/opt/ascon/kompas3d-v25/Samples/Models/Bracket.m3d"
+          candidates=[preferred] if os.path.isfile(preferred) else glob.glob("/opt/ascon/kompas3d-v25/Samples/**/*.m3d",recursive=True)
           print("M3D_CANDIDATES",len(candidates))
-          if not candidates: raise SystemExit("NO_SDK_M3D")
+          if not candidates: raise SystemExit("NO_PRODUCT_M3D")
           sample=candidates[0]
           print("SAMPLE",sample,os.path.getsize(sample))
           doc=docs.Open(sample,False,False)
