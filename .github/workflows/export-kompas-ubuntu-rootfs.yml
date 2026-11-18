@@ -1,4 +1,4 @@
-name: Prove and export full Ubuntu KOMPAS v25 rootfs
+name: Prove and export clean Ubuntu KOMPAS v25 rootfs
 
 on:
   workflow_dispatch:
@@ -12,19 +12,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: Install full official KOMPAS and prove SDK document lifecycle
+      - name: Build clean Ubuntu 24.04 KOMPAS environment and prove lifecycle
         shell: bash
         run: |
           set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y wget ca-certificates gnupg xvfb xauth dbus procps python3 zstd
-          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
-          sudo bash /tmp/ascon.sh || true
-          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
-          dpkg -l 'ascon-kompas*' | tee /tmp/installed.txt
-
+          mkdir -p out
           cat > /tmp/probe.py <<'PY'
           import os, sys, glob
           BIN="/opt/ascon/kompas3d-v25/Bin"
@@ -72,41 +64,53 @@ jobs:
           print("REOPEN_REBUILD_PASS")
           doc2.Close(constants.kdDoNotSaveChanges)
           app.Quit()
-          print("RESULT=UBUNTU_INSTALLED_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS")
+          print("RESULT=UBUNTU_CONTAINER_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS")
           PY
 
-          export HOME=/root XDG_CONFIG_HOME=/root/.config
-          sudo mkdir -p /root/.config/ascon/KOMPAS-3D/25 /root/.config/ascon/"KOMPAS-3D Invisible"/25
-          if [ -d /etc/ascon/KOMPAS-3D/25 ]; then
-            sudo cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/KOMPAS-3D/25/
-            sudo cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/"KOMPAS-3D Invisible"/25/
-          fi
-          RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
-          [ -z "$RES" ] || sudo cp -f "$RES" /root/.config/ascon/"KOMPAS-3D Invisible"/25/QtResources.bin
-          sudo rm -rf /tmp/.X11-unix
-          sudo mkdir -p /tmp/.X11-unix
-          sudo chmod 1777 /tmp/.X11-unix
-          Xvfb :105 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
-          XV=$!
-          trap 'kill "$XV" 2>/dev/null || true' EXIT
-          sleep 2
-          test -S /tmp/.X11-unix/X105
-          export DISPLAY=:105 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
-          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
-          sudo --preserve-env=DISPLAY,QT_QPA_PLATFORM,LIBGL_ALWAYS_SOFTWARE,PYTHONPATH,HOME,XDG_CONFIG_HOME dbus-run-session -- python3 /tmp/probe.py | tee /tmp/ubuntu-probe.txt
-          grep -q 'RESULT=UBUNTU_INSTALLED_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS' /tmp/ubuntu-probe.txt
+          docker run --name kompas-ubuntu -d ubuntu:24.04 sleep infinity
+          docker exec kompas-ubuntu bash -lc '
+            set -euxo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y wget ca-certificates gnupg xvfb xauth dbus procps python3 zstd
+            wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+            bash /tmp/ascon.sh || true
+            echo "deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main" > /etc/apt/sources.list.d/ascon.list
+            apt-get update
+            apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+            dpkg -l "ascon-kompas*"
+          '
+          docker cp /tmp/probe.py kompas-ubuntu:/root/probe.py
+          docker exec kompas-ubuntu bash -lc '
+            set -euxo pipefail
+            export HOME=/root XDG_CONFIG_HOME=/root/.config
+            mkdir -p /root/.config/ascon/KOMPAS-3D/25 /root/.config/ascon/"KOMPAS-3D Invisible"/25
+            if [ -d /etc/ascon/KOMPAS-3D/25 ]; then
+              cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/KOMPAS-3D/25/
+              cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/"KOMPAS-3D Invisible"/25/
+            fi
+            RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+            [ -z "$RES" ] || cp -f "$RES" /root/.config/ascon/"KOMPAS-3D Invisible"/25/QtResources.bin
+            mkdir -p /tmp/.X11-unix
+            chmod 1777 /tmp/.X11-unix
+            rm -f /tmp/.X11-unix/X105
+            Xvfb :105 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
+            XV=$!
+            trap "kill $XV 2>/dev/null || true" EXIT
+            sleep 2
+            test -S /tmp/.X11-unix/X105
+            export DISPLAY=:105 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+            export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+            dbus-run-session -- python3 /root/probe.py | tee /root/installed-probe.txt
+            grep -q "RESULT=UBUNTU_CONTAINER_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS" /root/installed-probe.txt
+          '
 
-      - name: Build portable full rootfs only after native PASS
+      - name: Export proven rootfs
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p rootfs out
-          # Copy the full userspace needed by the already-proven installed runtime.
-          sudo tar --one-file-system -cpf -             --exclude='./proc' --exclude='./sys' --exclude='./dev' --exclude='./run'             --exclude='./mnt' --exclude='./media' --exclude='./home/runner/work'             -C / . | sudo tar -xpf - -C rootfs
-          sudo cp /tmp/probe.py rootfs/root/probe.py
-          sudo cp /tmp/ubuntu-probe.txt rootfs/root/installed-probe.txt
-          sudo tar -cf - -C rootfs . | zstd -T0 -7 -o out/kompas-ubuntu2404-v25-rootfs.tar.zst
-          sudo cp /tmp/ubuntu-probe.txt out/installed-probe.txt
+          docker export kompas-ubuntu | zstd -T0 -7 -o out/kompas-ubuntu2404-v25-rootfs.tar.zst
+          docker cp kompas-ubuntu:/root/installed-probe.txt out/installed-probe.txt
           sha256sum out/kompas-ubuntu2404-v25-rootfs.tar.zst | tee out/rootfs-SHA256.txt
           split -b 330M -d -a 2 out/kompas-ubuntu2404-v25-rootfs.tar.zst out/rootfs.part-
           sha256sum out/rootfs.part-* | tee out/rootfs-parts-SHA256.txt
