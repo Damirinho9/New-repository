@@ -337,7 +337,7 @@ static void set_place(const IPartPtr& comp,double ox,double oy,double oz,
   require(pl->SetVector(o3d_axisOX,x[0],x[1],x[2]),"placement X");
   require(pl->SetVector(o3d_axisOY,y[0],y[1],y[2]),"placement Y");
   require(pl->SetVector(o3d_axisOZ,z[0],z[1],z[2]),"placement Z");
-  require(comp->UpdatePlacement(),"component UpdatePlacement");
+  require(comp->UpdatePlacement(false),"component UpdatePlacement");
 }
 static IVariablePtr source_var(const IPartPtr& comp,const std::wstring& name) {
   IFeaturePtr feat=comp;
