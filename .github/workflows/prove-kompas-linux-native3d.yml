@@ -102,6 +102,11 @@ jobs:
             CFG=/root/.config/ascon/KOMPAS-3D/25
             BIN=/opt/ascon/kompas3d-v25/Bin
             mkdir -p "$CFG"
+            if [ -d /etc/ascon/KOMPAS-3D/25 ]; then
+              cp -a /etc/ascon/KOMPAS-3D/25/. "$CFG/" || true
+            fi
+            echo "=== PROFILE CONTENT ==="
+            find "$CFG" -maxdepth 2 -type f -printf "%P\n" | sort | head -200 || true
             RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
             [ -z "$RES" ] || cp -f "$RES" "$CFG/QtResources.bin"
             KEXEC="$BIN/kKompas"
