@@ -2,6 +2,12 @@ name: KOMPAS native Work 3 variant 19 associative CDW
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - kompas-7335493-native-work1
+    paths:
+      - 'work3-variant19/**'
+      - '.github/workflows/work3-variant19-native.yml'
 
 env:
   WORK2_EXPECTED_HEAD: 45c402c20948f44fd461fc6d032c4f8359425b01
