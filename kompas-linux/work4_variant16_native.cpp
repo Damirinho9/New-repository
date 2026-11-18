@@ -85,7 +85,9 @@ struct DocPart {
   IPartPtr top;
 };
 static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
-  auto base = require_ptr(docs->AddWithDefaultSettings(ksDocumentPart, true), "AddWithDefaultSettings part");
+  log("NEW_PART_BEFORE_DOCUMENTS_ADD");
+  auto base = require_ptr(docs->Add(ksDocumentPart, true), "Documents.Add part");
+  log("NEW_PART_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast part document 3D");
   auto top = require_ptr(doc->GetTopPart(), "part TopPart");
@@ -93,7 +95,9 @@ static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
   return {base,doc,top};
 }
 static DocPart new_assembly(const IDocumentsPtr& docs, const std::wstring& name) {
-  auto base = require_ptr(docs->AddWithDefaultSettings(ksDocumentAssembly, true), "AddWithDefaultSettings assembly");
+  log("NEW_ASSEMBLY_BEFORE_DOCUMENTS_ADD");
+  auto base = require_ptr(docs->Add(ksDocumentAssembly, true), "Documents.Add assembly");
+  log("NEW_ASSEMBLY_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast assembly document 3D");
   auto top = require_ptr(doc->GetTopPart(), "assembly TopPart");
@@ -554,7 +558,10 @@ extern "C" int run_variant06_writer() {
     app.SetHideMessage(ksHideMessageYes);
     int ma=0,mi=0,re=0,bu=0; app.GetSystemVersion(ma,mi,re,bu);
     log("KOMPAS_VERSION="+std::to_string(ma)+"."+std::to_string(mi)+"."+std::to_string(re)+" build="+std::to_string(bu));
+    log("BEFORE_GET_DOCUMENTS");
     auto docs=require_ptr(app.GetDocuments(),"Application Documents");
+    log("AFTER_GET_DOCUMENTS");
+    log("BEFORE_FIRST_PART_BUILD");
 
     double im=build_annulus(docs,inner_path(),L"INNER_DOUBLE_RING_V16",P.innerOD,P.d,P.T);
     log("INNER_DOUBLE_RING_NATIVE_PASS");
