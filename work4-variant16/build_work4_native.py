@@ -83,7 +83,8 @@ def build_roller(kompas, const, p):
 
 def build_cage_half(kompas, const, p):
     doc, part = create_part_doc(kompas, const, CAGE, "CAGE_HALF_V16")
-    add_user_var(part, "W", p["S"], "Cage-half plate thickness", True)
+    add_user_var(part, "H", p["cage_h"], "Cage-half total axial depth", True)
+    add_user_var(part, "S", p["S"], "Uncut backing-ring thickness", True)
     add_user_var(part, "D1", p["D1"], "Outer cage diameter", True)
     add_user_var(part, "D2", p["D2"], "Inner cage diameter", True)
     add_user_var(part, "Z", p["z"], "Cell pitch radius", True)
@@ -91,12 +92,14 @@ def build_cage_half(kompas, const, p):
     add_user_var(part, "N_ROL", p["N_rol"], "Cell count", True)
 
     sk = annulus_sketch(part, const, p["D1"], p["D2"], "CAGE_BASE_RING")
-    base = create_extrusion(part, const, sk, p["S"], "CAGE_BASE_EXTRUSION")
-    hits = bind_feature_var_by_value(part, base, p["S"], "W")
+    # The half-cage is h = S + b_rol/2 deep. The pockets are cut only b_rol/2,
+    # leaving an uncut backing ring of thickness S, so the cage stays connected.
+    base = create_extrusion(part, const, sk, p["cage_h"], "CAGE_BASE_EXTRUSION")
+    hits = bind_feature_var_by_value(part, base, p["cage_h"], "H")
 
     # One true roller pocket, then a native concentric copy N_ROL.
     psk = circle_sketch(part, const, p["cage_cell_d"], p["z"], 0.0, "CAGE_CELL_SEED")
-    seed = create_cut(part, const, psk, max(2.0, p["S"]*4.0), "CAGE_CELL_CUT")
+    seed = create_cut(part, const, psk, p["b_rol"]/2.0, "CAGE_CELL_CUT")
     arr = circular_copy(part, const, seed, int(p["N_rol"]), "CAGE_CELLS_N_ROL")
     require(part.RebuildModel(), "cage rebuild after cell array")
     require(part.SetMaterial("Сталь 20", 7.85), "cage material")
@@ -133,20 +136,21 @@ def build_master_geometry(top, const, p):
 
     # Outer and inner envelopes.
     for y in (ro, -ro, ri, -ri):
-        require(d2.ksLineSeg(x0, y, x1, y, const.ksCSAuxiliary),
+        require(d2.ksLineSeg(x0, y, x1, y, const.ksCSNormal),
                 "master envelope line")
     for x in (x0, 0.0, x1):
-        require(d2.ksLineSeg(x, -ro, x, ro, const.ksCSAuxiliary),
+        require(d2.ksLineSeg(x, -ro, x, ro, const.ksCSNormal),
                 "master axial station")
     # Roller-row centerlines and pitch points.
     for sx in (-1.0, 1.0):
         xc = sx*p["T"]/4.0
-        require(d2.ksPoint(xc, z, 0), "master row pitch point +")
-        require(d2.ksPoint(xc, -z, 0), "master row pitch point -")
         dy = math.tan(math.radians(p["alpha"])) * p["b_rol"]/2.0
         require(d2.ksLineSeg(xc-p["b_rol"]/2.0, z-sx*dy,
                              xc+p["b_rol"]/2.0, z+sx*dy,
-                             const.ksCSCenter), "master roller axis")
+                             const.ksCSNormal), "master roller axis")
+        require(d2.ksLineSeg(xc-p["b_rol"]/2.0, -z+sx*dy,
+                             xc+p["b_rol"]/2.0, -z-sx*dy,
+                             const.ksCSNormal), "master mirrored roller axis")
     finish_sketch(sd)
     return sk
 
@@ -357,8 +361,8 @@ def main():
     for row in (0, 1):
         row_x = (-1.0 if row == 0 else 1.0)*p["T"]/4.0
         a, b = cages[2*row], cages[2*row+1]
-        component_var_expression(a, "W", "S")
-        component_var_expression(b, "W", "S")
+        component_var_expression(a, "H", "cage_h")
+        component_var_expression(b, "H", "cage_h")
         placement_axes(a, (1,0,0), (0,1,0), (row_x-p["b_rol"]/2.0-p["S"],0,0))
         placement_axes(b, (-1,0,0), (0,1,0), (row_x+p["b_rol"]/2.0+p["S"],0,0))
 
