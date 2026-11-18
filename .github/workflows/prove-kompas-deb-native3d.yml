@@ -1,0 +1,80 @@
+name: Prove KOMPAS Debian native 3D mutation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/prove-kompas-deb-native3d.yml'
+      - 'kompas-linux/prove_native3d_deb.py'
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+      - name: Install exact historical KOMPAS professional runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          dpkg -l 'ascon-kompas*' | tee installed.txt
+      - name: Start ksinvisible and prove native 3D mutation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >kompas-live.out 2>kompas-live.err &
+          WRAPPER_PID=$!
+          KP=""
+          for i in $(seq 1 60); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          test -n "$KP"
+          for i in $(seq 1 60); do
+            sleep 1
+            ss -ltnp > kompas-sockets.txt || true
+            grep -q kKompas kompas-sockets.txt && break
+          done
+          grep -q kKompas kompas-sockets.txt
+          python3 kompas-linux/prove_native3d_deb.py | tee proof-console.txt
+          grep -q '^RESULT=RUNTIME_NATIVE_3D_MUTATION_PASS$' work4_deb_native3d_probe.txt
+          kill "$WRAPPER_PID" 2>/dev/null || true
+      - name: Final container gate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import zipfile, pathlib, hashlib
+          p=pathlib.Path("work4_deb_native3d_probe.m3d")
+          assert p.exists() and p.stat().st_size>1024
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z: assert {"Contents","FileInfo"}.issubset(set(z.namelist()))
+          print("NATIVE_M3D_CONTAINER_PASS")
+          print(hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-debian-native3d-runtime-proof
+          if-no-files-found: ignore
+          path: |
+            work4_deb_native3d_probe.m3d
+            work4_deb_native3d_probe.txt
+            proof-console.txt
+            installed.txt
+            kompas-live.out
+            kompas-live.err
+            kompas-sockets.txt
