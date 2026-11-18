@@ -45,6 +45,22 @@ extern "C" int run_variant06_writer(){
     app.GetSystemVersion(ma,mi,re,bu);
     log("KOMPAS_VERSION="+std::to_string(ma)+"."+std::to_string(mi)+"."+std::to_string(re)+" build="+std::to_string(bu));
 
+    log("BEFORE_LICENSE_MANAGER");
+    auto license=app.GetApplicationLicenseManager();
+    if(license){
+      log("LICENSE_MANAGER_PASS");
+      log("KOMPAS_VARIANT="+std::to_string((int)license->GetKompasVariant()));
+      bool active3d=license->IsKompasModuleActive(ksKompasModule3D);
+      log(std::string("LICENSE_3D_ACTIVE_BEFORE=")+(active3d?"1":"0"));
+      if(!active3d){
+        log("LICENSE_3D_ACTIVATE_REQUEST");
+        license->SetKompasModuleActive(ksKompasModule3D,true);
+        active3d=license->IsKompasModuleActive(ksKompasModule3D);
+        log(std::string("LICENSE_3D_ACTIVE_AFTER=")+(active3d?"1":"0"));
+      }
+    } else {
+      log("LICENSE_MANAGER_NULL");
+    }
     log("BEFORE_GET_DOCUMENTS");
     auto docs=app.GetDocuments();
     log("AFTER_GET_DOCUMENTS");
