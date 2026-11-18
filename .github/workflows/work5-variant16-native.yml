@@ -1,0 +1,178 @@
+name: KOMPAS native Work 5 variant 16 Orgstankinprom
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - kompas-7335493-native-work1
+    paths:
+      - 'work5-variant16/**'
+      - '.github/workflows/work5-variant16-native.yml'
+
+jobs:
+  source-and-syntax-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Syntax gate
+        run: |
+          python -m py_compile             work5-variant16/work5_common.py             work5-variant16/build_work5_native.py             work5-variant16/verify_work5_native.py
+
+      - name: Exact figure 59r contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import csv
+
+          root=Path("work5-variant16")
+          basis=(root/"source_basis.md").read_text(encoding="utf-8")
+          required=[
+            'Универсальное зажимное устройство конструкции института "Оргстанкинпром"',
+            "Гайка 1","Гайка 2","Прихват 3","Болт 4","Гидроцилиндр 5",
+            "Шток-поршень 6","Гайка 7","Шайбы 8","Пружина 9","Подставка 10",
+            "cylinder body moves downward"
+          ]
+          missing=[x for x in required if x not in basis]
+          if missing:
+              raise SystemExit(f"Source contract missing: {missing}")
+
+          rows=list(csv.DictReader((root/"components.csv").open(encoding="utf-8-sig")))
+          mandatory=[r for r in rows if r["mandatory"]=="yes"]
+          if len(mandatory)!=13:
+              raise SystemExit(f"Expected 13 mandatory CAD files, got {len(mandatory)}")
+
+          params={r["parameter"]:r for r in csv.DictReader((root/"parameters.csv").open(encoding="utf-8-sig"))}
+          if int(float(params["variant"]["value"])) != 16:
+              raise SystemExit("Variant drift")
+          if any(params[k]["status"]!="selected" for k in params if k!="variant"):
+              raise SystemExit("Selected dimensions must not be represented as source-given dimensions")
+
+          print("SOURCE_FIGURE_59R_EXACT_DEVICE_PASS")
+          print("POSITIONS_1_TO_10_CONTRACT_PASS")
+          print("OPERATING_PRINCIPLE_CONTRACT_PASS")
+          print("NO_FAKE_SOURCE_DIMENSIONS_PASS")
+          print("RESULT=PASS_WORK5_VARIANT16_SOURCE_GATE")
+          PY
+
+  build-native-work5:
+    needs: source-and-syntax-gate
+    runs-on: [self-hosted, Windows, X64, kompas]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Freeze licensed Windows KOMPAS runtime
+        shell: powershell
+        run: |
+          if ($env:KOMPAS_COMMERCIAL_CONFIRMED -ne "1") {
+            throw "Work 5 requires licensed Windows KOMPAS runtime."
+          }
+          if ($null -eq [type]::GetTypeFromProgID("KOMPAS.Application.7")) {
+            throw "KOMPAS.Application.7 is not registered."
+          }
+          if ($null -eq [type]::GetTypeFromProgID("Kompas.Application.5")) {
+            throw "Kompas.Application.5 is not registered."
+          }
+          New-Item -ItemType Directory -Force work5-variant16/native | Out-Null
+          "RUNTIME_CONTRACT_PASS" | Set-Content -Encoding UTF8 work5-variant16/native/runtime-contract.txt
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pywin32
+        shell: powershell
+        run: python -m pip install --disable-pip-version-check pywin32
+
+      - name: Build native M3D and A3D
+        shell: powershell
+        working-directory: work5-variant16
+        run: |
+          python build_work5_native.py
+          Get-Content native/build-report.txt
+          if (-not (Select-String -Path native/build-report.txt -Pattern '^RESULT=BUILD_NATIVE_WORK5_VARIANT16_ORGSTANKINPROM_PASS$' -Quiet)) {
+            throw "Work 5 native build failed."
+          }
+
+      - name: Verify construction mates motion reopen rebuild
+        shell: powershell
+        working-directory: work5-variant16
+        run: |
+          python verify_work5_native.py
+          Get-Content native/verification.txt
+          if (-not (Select-String -Path native/verification.txt -Pattern '^RESULT=PASS_NATIVE_WORK5_VARIANT16_ORGSTANKINPROM$' -Quiet)) {
+            throw "Work 5 native construction acceptance failed."
+          }
+
+      - name: Final SHA and acceptance
+        shell: powershell
+        run: |
+          $dir="work5-variant16/native"
+          $files=Get-ChildItem $dir -File | Where-Object { $_.Extension -in ".m3d",".a3d" }
+          if (($files | Where-Object Extension -eq ".m3d").Count -ne 13) {
+            throw "Expected exactly 13 M3D files."
+          }
+          if (($files | Where-Object Extension -eq ".a3d").Count -ne 1) {
+            throw "Expected exactly one A3D file."
+          }
+          Get-FileHash $files.FullName -Algorithm SHA256 |
+            Format-Table -AutoSize | Out-String |
+            Set-Content -Encoding UTF8 "$dir/SHA256.txt"
+          @(
+            "SOURCE_FIGURE_59R_PASS",
+            "POSITIONS_1_TO_10_PASS",
+            "REAL_3D_MATES_PASS",
+            "CYLINDER_BODY_MOTION_ROD_STATIONARY_PASS",
+            "A3D_RELATIVE_DEPENDENCIES_PASS",
+            "FINAL_SAVE_CLOSE_REOPEN_REBUILD_PASS",
+            "RESULT=PASS_NATIVE_WORK5_VARIANT16_ORGSTANKINPROM"
+          ) | Set-Content -Encoding UTF8 "$dir/ACCEPTANCE.txt"
+          Get-Content "$dir/SHA256.txt"
+          Get-Content "$dir/ACCEPTANCE.txt"
+
+      - name: Upload accepted Work 5 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work5-variant16-orgstankinprom-native
+          if-no-files-found: error
+          path: |
+            work5-variant16/native/*.m3d
+            work5-variant16/native/*.a3d
+            work5-variant16/native/native-manifest.json
+            work5-variant16/native/build-report.txt
+            work5-variant16/native/verification.txt
+            work5-variant16/native/runtime-contract.txt
+            work5-variant16/native/SHA256.txt
+            work5-variant16/native/ACCEPTANCE.txt
+            work5-variant16/source_basis.md
+            work5-variant16/components.csv
+            work5-variant16/parameters.csv
+            work5-variant16/legacy_source_hashes.csv
+
+      - name: Upload Work 5 failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work5-variant16-diagnostics
+          if-no-files-found: ignore
+          path: |
+            work5-variant16/native/*.txt
+            work5-variant16/native/*.json
+            work5-variant16/source_basis.md
+            work5-variant16/components.csv
+            work5-variant16/parameters.csv
