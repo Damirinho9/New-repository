@@ -1,0 +1,108 @@
+name: mailru-public-folder-fetch
+on:
+  push:
+    paths:
+      - '.github/workflows/mailru-public-folder-fetch.yml'
+
+jobs:
+  fetch:
+    if: contains(github.event.head_commit.message, '[mailru-fetch]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public folder and build manifest
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, re, json, time, hashlib, pathlib, urllib.parse, urllib.request
+
+          PUBLIC = "https://cloud.mail.ru/public/H9cv/5nRmemDQ1"
+          OUT = pathlib.Path("mailru_download")
+          OUT.mkdir(parents=True, exist_ok=True)
+          UA = "Mozilla/5.0"
+
+          def get(url):
+              req = urllib.request.Request(url, headers={"User-Agent": UA})
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  return r.read(), dict(r.headers)
+
+          html, _ = get(PUBLIC)
+          text = html.decode("utf-8", "replace")
+          m = re.search(r'''pageId['"]*:\\s*['"]*([^"'\\s,]+)''', text)
+          if not m:
+              raise SystemExit("pageId not found")
+          page_id = m.group(1)
+          print("PAGE_ID=" + page_id)
+
+          api = "https://cloud.mail.ru/api/v2"
+          disp_raw, _ = get(api + "/dispatcher?" + urllib.parse.urlencode({"x-page-id": page_id}))
+          disp = json.loads(disp_raw)
+          base = disp["body"]["weblink_get"][0]["url"].rstrip("/")
+          print("BASE=" + base)
+
+          link_id = "H9cv/5nRmemDQ1"
+          manifest = []
+
+          def safe_name(s):
+              bad = '<>:"|?*'
+              return ''.join(ch for ch in s if ord(ch) >= 32 and ch not in bad)
+
+          def walk(link, parent=""):
+              q = urllib.parse.urlencode({"weblink": link, "x-page-id": page_id})
+              raw, _ = get(api + "/folder?" + q)
+              data = json.loads(raw)["body"]
+              folder = "/".join(x for x in [parent.strip("/"), data.get("name","").strip("/")] if x)
+              for item in data.get("list", []):
+                  name = item["name"]
+                  typ = item.get("type")
+                  if typ == "folder":
+                      walk(link.rstrip("/") + "/" + urllib.parse.quote(name, safe=""), folder)
+                  else:
+                      rel = "/".join(x for x in [folder, name] if x)
+                      rel = safe_name(rel)
+                      target = OUT / rel
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      url_path = "/".join(urllib.parse.quote(p, safe="") for p in (link.rstrip("/") + "/" + name).split("/"))
+                      direct = base + "/" + url_path
+                      print("DOWNLOADING", rel, item.get("size"))
+                      req = urllib.request.Request(direct, headers={"User-Agent": UA})
+                      with urllib.request.urlopen(req, timeout=120) as r, open(target, "wb") as f:
+                          while True:
+                              b = r.read(1024*1024)
+                              if not b: break
+                              f.write(b)
+                      h = hashlib.sha256(target.read_bytes()).hexdigest()
+                      manifest.append({
+                          "path": rel,
+                          "name": name,
+                          "size_api": item.get("size"),
+                          "size_downloaded": target.stat().st_size,
+                          "sha256": h,
+                          "type": typ,
+                          "mtime": item.get("mtime"),
+                          "virus_scan": item.get("virus_scan")
+                      })
+
+          walk(link_id)
+          manifest.sort(key=lambda x: x["path"])
+          pathlib.Path("manifest.json").write_text(json.dumps({
+              "public_url": PUBLIC,
+              "page_id": page_id,
+              "file_count": len(manifest),
+              "files": manifest
+          }, ensure_ascii=False, indent=2), encoding="utf-8")
+          pathlib.Path("manifest.tsv").write_text(
+              "path\tsize\tsha256\n" + "\n".join(f'{x["path"]}\t{x["size_downloaded"]}\t{x["sha256"]}' for x in manifest),
+              encoding="utf-8"
+          )
+          print("FILES=" + str(len(manifest)))
+          PY
+      - name: Upload source data
+        uses: actions/upload-artifact@v4
+        with:
+          name: mailru-7342510-source
+          path: |
+            mailru_download/
+            manifest.json
+            manifest.tsv
+          if-no-files-found: error
+          retention-days: 3
