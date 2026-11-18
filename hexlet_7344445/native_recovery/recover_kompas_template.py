@@ -91,3 +91,5 @@ result={
 }
 (OUT/"validation.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
 print("RESULT=PASS_NATIVE_KOMPAS3D_TEMPLATE_SAVE_REOPEN")
+
+# trigger official ASCON donor workflow
