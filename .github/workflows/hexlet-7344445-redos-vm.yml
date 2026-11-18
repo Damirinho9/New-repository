@@ -1,0 +1,91 @@
+name: Hexlet 7344445 Native RED OS VM Proof
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-redos-vm.yml"
+  workflow_dispatch:
+
+jobs:
+  redos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU and VNC control tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils curl python3-pip imagemagick
+          python3 -m pip install --break-system-packages vncdotool pillow
+          mkdir -p hexlet_7344445/native_recovery/redos
+
+      - name: Download official RED OS 8.0.3 x86_64 Live GNOME ISO
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://files.red-soft.ru/redos/8.0/x86_64/live/Redos-GNOME-Live-x86_64-8.0.3-20260716.iso'
+          curl -fL --retry 5 --retry-delay 5 --connect-timeout 30 -o /tmp/redos.iso "$URL"
+          ls -lh /tmp/redos.iso | tee hexlet_7344445/native_recovery/redos/iso-size.txt
+          sha256sum /tmp/redos.iso | tee hexlet_7344445/native_recovery/redos/iso-sha256.txt
+
+      - name: Boot native RED OS VM under QEMU TCG
+        shell: bash
+        run: |
+          set -euxo pipefail
+          qemu-system-x86_64             -machine accel=tcg             -cpu max             -smp 2             -m 3072             -cdrom /tmp/redos.iso             -boot d             -device virtio-vga             -netdev user,id=n1             -device e1000,netdev=n1             -vnc 127.0.0.1:1             -monitor unix:/tmp/redos-monitor.sock,server,nowait             -daemonize             -pidfile /tmp/redos.pid
+          cat /tmp/redos.pid | tee hexlet_7344445/native_recovery/redos/qemu-pid.txt
+          ps -fp "$(cat /tmp/redos.pid)" | tee hexlet_7344445/native_recovery/redos/qemu-ps.txt
+
+      - name: Capture boot and interact with live desktop
+        shell: bash
+        run: |
+          set -euxo pipefail
+          VNC='127.0.0.1::5901'
+          sleep 35
+          vncdotool -s "$VNC" capture hexlet_7344445/native_recovery/redos/01_boot_menu.png || true
+          vncdotool -s "$VNC" key enter || true
+
+          for n in 1 2 3 4 5 6; do
+            sleep 45
+            vncdotool -s "$VNC" capture "hexlet_7344445/native_recovery/redos/boot_checkpoint_${n}.png" || true
+          done
+
+          vncdotool -s "$VNC" key ctrl-alt-t || true
+          sleep 8
+          vncdotool -s "$VNC" type "printf '\\n=== RED OS NATIVE VM ===\\n'; cat /etc/os-release; uname -a; printf '\\n=== NETWORK ===\\n'; ip -brief addr; printf '\\n=== NMCLI ===\\n'; nmcli -t -f GENERAL.STATE,GENERAL.CONNECTION device show 2>/dev/null | head -20; printf '\\nEND_NATIVE_PROOF\\n'" || true
+          vncdotool -s "$VNC" key enter || true
+          sleep 10
+          vncdotool -s "$VNC" capture hexlet_7344445/native_recovery/redos/02_terminal_native_proof.png || true
+
+          vncdotool -s "$VNC" key ctrl-shift-plus || true
+          sleep 3
+          vncdotool -s "$VNC" capture hexlet_7344445/native_recovery/redos/03_terminal_native_proof_zoom.png || true
+
+          identify hexlet_7344445/native_recovery/redos/*.png | tee hexlet_7344445/native_recovery/redos/image-identify.txt
+          test -s hexlet_7344445/native_recovery/redos/02_terminal_native_proof.png
+
+      - name: Record result
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > hexlet_7344445/native_recovery/redos/README_NATIVE.txt <<'EOF'
+          Native runtime proof:
+          - Official RED OS 8.0.3 x86_64 Live GNOME ISO downloaded from files.red-soft.ru.
+          - Booted as a real x86_64 virtual machine using qemu-system-x86_64 (TCG).
+          - Screenshots were captured from the guest framebuffer over VNC.
+          - No generated/fake UI was used.
+          - Terminal proof was attempted via real keyboard input into the guest session.
+          - This proves a native RED OS VM environment, but does not prove any specific Hexlet practice until its exact criterion/page is obtained.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-native-redos-vm
+          path: hexlet_7344445/native_recovery/redos/
+          if-no-files-found: warn
