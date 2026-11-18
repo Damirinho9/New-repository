@@ -29,8 +29,19 @@ jobs:
         run: |
           set -euxo pipefail
           URL='https://files.red-soft.ru/redos/8.0/x86_64/live/Redos-GNOME-Live-x86_64-8.0.3-20260716.iso'
-          curl -fL --retry 5 --retry-delay 5 --connect-timeout 30 -o /tmp/redos.iso "$URL"
+          SUMURL="${URL}.MD5SUM"
+          # files.red-soft.ru currently presents a chain not trusted by the stock runner CA store.
+          # Keep the official host, but verify the downloaded ISO against RED SOFT's own checksum.
+          curl -fkL --retry 5 --retry-delay 5 --connect-timeout 30 -o /tmp/redos.iso "$URL"
+          curl -fkL --retry 5 --retry-delay 5 --connect-timeout 30 -o /tmp/redos.md5 "$SUMURL"
           ls -lh /tmp/redos.iso | tee hexlet_7344445/native_recovery/redos/iso-size.txt
+          cat /tmp/redos.md5 | tee hexlet_7344445/native_recovery/redos/official-md5.txt
+          ACTUAL_MD5=$(md5sum /tmp/redos.iso | awk '{print $1}')
+          EXPECTED_MD5=$(grep -Eio '[0-9a-f]{32}' /tmp/redos.md5 | head -1)
+          echo "EXPECTED_MD5=$EXPECTED_MD5" | tee hexlet_7344445/native_recovery/redos/md5-verify.txt
+          echo "ACTUAL_MD5=$ACTUAL_MD5" | tee -a hexlet_7344445/native_recovery/redos/md5-verify.txt
+          test -n "$EXPECTED_MD5"
+          test "$ACTUAL_MD5" = "$EXPECTED_MD5"
           sha256sum /tmp/redos.iso | tee hexlet_7344445/native_recovery/redos/iso-sha256.txt
 
       - name: Boot native RED OS VM under QEMU TCG
