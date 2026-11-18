@@ -1,0 +1,35 @@
+name: Export two XCB runtime libraries for local KOMPAS acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/export-kompas-xcb-runtime.yml'
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install exact runtime libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libxcb-res0 libxcb-dri2-0
+          mkdir -p out
+          RES=$(ldconfig -p | awk '/libxcb-res.so.0/{print $NF; exit}')
+          DRI=$(ldconfig -p | awk '/libxcb-dri2.so.0/{print $NF; exit}')
+          test -n "$RES"
+          test -n "$DRI"
+          cp -L "$RES" out/libxcb-res.so.0
+          cp -L "$DRI" out/libxcb-dri2.so.0
+          file out/*
+          sha256sum out/* | tee out/SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-local-xcb-runtime
+          path: out/**
+          if-no-files-found: error
+          retention-days: 3
