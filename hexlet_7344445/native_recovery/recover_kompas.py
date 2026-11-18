@@ -16,8 +16,15 @@ print("BUILD", app.GetBuildNumber())
 docs = app.GetDocuments()
 # Create a real drawing, not a fragment.
 doc = docs.Add(c.ksDocumentDrawing, True)
+print("ADD_PLAIN", doc)
 if doc is None:
-    raise SystemExit("Documents.Add(ksDocumentDrawing) failed")
+    try:
+        doc = docs.AddWithDefaultSettings(c.ksDocumentDrawing, True)
+        print("ADD_DEFAULT", doc)
+    except Exception as exc:
+        print("ADD_DEFAULT_ERROR", type(exc).__name__, str(exc))
+if doc is None:
+    raise SystemExit("Both Add and AddWithDefaultSettings for ksDocumentDrawing failed")
 d2 = ksapi.IKompasDocument2D(doc)
 view = d2.GetViewsAndLayersManager().GetViews().GetActiveView()
 dc = ksapi.IDrawingContainer(view)
