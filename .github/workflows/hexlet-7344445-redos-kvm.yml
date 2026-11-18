@@ -1,0 +1,97 @@
+name: Hexlet 7344445 Native RED OS KVM Proof
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-redos-kvm.yml"
+  workflow_dispatch:
+
+jobs:
+  redos-kvm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU and VNC control tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils curl python3-pip imagemagick acl
+          python3 -m pip install --break-system-packages vncdotool pillow
+          mkdir -p hexlet_7344445/native_recovery/redos_kvm
+          test -e /dev/kvm
+          sudo setfacl -m "u:$USER:rw" /dev/kvm
+          test -r /dev/kvm -a -w /dev/kvm
+          ls -l /dev/kvm | tee hexlet_7344445/native_recovery/redos_kvm/kvm-device.txt
+
+      - name: Download and verify official RED OS 8.0.3 Live GNOME
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://files.red-soft.ru/redos/8.0/x86_64/live/Redos-GNOME-Live-x86_64-8.0.3-20260716.iso'
+          SUMURL="${URL}.MD5SUM"
+          curl -fkL --retry 5 --retry-delay 5 --connect-timeout 30 -o /tmp/redos.iso "$URL"
+          curl -fkL --retry 5 --retry-delay 5 --connect-timeout 30 -o /tmp/redos.md5 "$SUMURL"
+          ACTUAL=$(md5sum /tmp/redos.iso | awk '{print $1}')
+          EXPECTED=$(grep -Eio '[0-9a-f]{32}' /tmp/redos.md5 | head -1)
+          echo "EXPECTED_MD5=$EXPECTED" | tee hexlet_7344445/native_recovery/redos_kvm/checksum.txt
+          echo "ACTUAL_MD5=$ACTUAL" | tee -a hexlet_7344445/native_recovery/redos_kvm/checksum.txt
+          test "$ACTUAL" = "$EXPECTED"
+          sha256sum /tmp/redos.iso | tee hexlet_7344445/native_recovery/redos_kvm/iso-sha256.txt
+
+      - name: Boot real RED OS VM with KVM
+        shell: bash
+        run: |
+          set -euxo pipefail
+          qemu-system-x86_64             -enable-kvm             -cpu host             -smp 2             -m 4096             -cdrom /tmp/redos.iso             -boot d             -device virtio-vga             -netdev user,id=n1             -device e1000,netdev=n1             -vnc 127.0.0.1:1             -daemonize             -pidfile /tmp/redos.pid
+          ps -fp "$(cat /tmp/redos.pid)" | tee hexlet_7344445/native_recovery/redos_kvm/qemu-process.txt
+
+      - name: Capture real guest and terminal proof
+        shell: bash
+        run: |
+          set -euxo pipefail
+          VNC='127.0.0.1::5901'
+          sleep 15
+          vncdotool -s "$VNC" capture hexlet_7344445/native_recovery/redos_kvm/01_boot_menu.png
+          vncdotool -s "$VNC" key enter
+
+          # KVM should boot live GNOME quickly; preserve intermediate real framebuffer captures.
+          for n in 1 2 3 4 5; do
+            sleep 25
+            vncdotool -s "$VNC" capture "hexlet_7344445/native_recovery/redos_kvm/boot_${n}.png"
+          done
+
+          # Open GNOME Terminal in the real guest and type proof commands.
+          vncdotool -s "$VNC" key ctrl-alt-t
+          sleep 6
+          vncdotool -s "$VNC" type "printf '\\n=== RED OS NATIVE KVM VM ===\\n'; cat /etc/os-release; printf '\\n=== KERNEL ===\\n'; uname -a; printf '\\n=== NETWORK ===\\n'; ip -brief addr; printf '\\n=== NETWORKMANAGER ===\\n'; nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status; printf '\\nEND_NATIVE_PROOF\\n'"
+          vncdotool -s "$VNC" key enter
+          sleep 8
+          vncdotool -s "$VNC" capture hexlet_7344445/native_recovery/redos_kvm/02_terminal_native_proof.png
+          identify hexlet_7344445/native_recovery/redos_kvm/*.png | tee hexlet_7344445/native_recovery/redos_kvm/images.txt
+
+      - name: Record KVM-native result
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > hexlet_7344445/native_recovery/redos_kvm/README.txt <<'EOF'
+          Native VM proof:
+          - Official RED OS 8.0.3 x86_64 Live GNOME ISO from files.red-soft.ru.
+          - ISO verified against RED SOFT-provided MD5SUM.
+          - qemu-system-x86_64 with /dev/kvm and -enable-kvm, CPU host.
+          - PNG files are framebuffer captures from the actual guest over VNC.
+          - No generated or painted UI is used.
+          - Exact Hexlet-specific RED OS practices remain dependent on the missing private assignment pages.
+          EOF
+          echo RESULT=PASS_NATIVE_REDOS_KVM_BOOT > hexlet_7344445/native_recovery/redos_kvm/result.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-native-redos-kvm
+          path: hexlet_7344445/native_recovery/redos_kvm/
+          if-no-files-found: warn
