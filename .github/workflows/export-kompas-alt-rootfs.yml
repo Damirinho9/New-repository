@@ -78,7 +78,18 @@ jobs:
               -e "s#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"
             find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
             apt-get update
-            apt-get install -y wget ca-certificates dbus procps glibc-i18ndata fontconfig python3 xorg-server-xvfb xauth
+            apt-get install -y wget ca-certificates dbus procps glibc-i18ndata fontconfig python3 xauth
+            echo "=== XVFB PACKAGE SEARCH ==="
+            apt-cache search xvfb | tee /root/xvfb-search.txt || true
+            XVPKG=$(apt-cache search xvfb | awk 'NR==1{print $1}')
+            if [ -z "$XVPKG" ]; then
+              apt-cache search xorg-server | tee -a /root/xvfb-search.txt || true
+              XVPKG=$(apt-cache search xorg-server | awk 'tolower($0) ~ /virtual|framebuffer|xvfb/ {print $1; exit}')
+            fi
+            test -n "$XVPKG"
+            echo "XVPKG=$XVPKG"
+            apt-get install -y "$XVPKG"
+            command -v Xvfb
             apt-get install -y libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
             wget -O /tmp/ascon-stable-alt.sh https://repo.ascon.ru/scripts/ascon-stable-alt.sh
             sed -i -E "/^[[:space:]]*apt-get[[:space:]]+update[[:space:]]*$/d" /tmp/ascon-stable-alt.sh
