@@ -1,0 +1,64 @@
+name: Hexlet 7344445 Official ASCON CDW Mutation
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-ascon-cdw-mutate.yml"
+      - "hexlet_7344445/native_recovery/recover_kompas_template.py"
+  workflow_dispatch:
+
+jobs:
+  mutate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install official KOMPAS + SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb desktop-file-utils libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          test -s '/opt/ascon/kompas3d-v25/Samples/Drawings/12020/12020.CDW'
+
+      - name: Mutate official ASCON CDW and reopen in KOMPAS Invisible
+        shell: bash
+        env:
+          DONOR_CDW: /opt/ascon/kompas3d-v25/Samples/Drawings/12020/12020.CDW
+        run: |
+          set -euxo pipefail
+          mkdir -p hexlet_7344445/native_recovery/kompas_template
+          sha256sum "$DONOR_CDW" | tee hexlet_7344445/native_recovery/kompas_template/official-donor-sha256.txt
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >hexlet_7344445/native_recovery/kompas_template/live.out 2>hexlet_7344445/native_recovery/kompas_template/live.err &
+          WRAPPER_PID=$!
+          for i in $(seq 1 60); do
+            sleep 1
+            pgrep -x kKompas >/dev/null && ss -ltnp 2>/dev/null | grep -q kKompas && break || true
+          done
+          pgrep -x kKompas
+          python3 hexlet_7344445/native_recovery/recover_kompas_template.py | tee hexlet_7344445/native_recovery/kompas_template/validation.log
+          kill "$WRAPPER_PID" 2>/dev/null || true
+      - name: Strict acceptance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q 'RESULT=PASS_NATIVE_KOMPAS3D_TEMPLATE_SAVE_REOPEN' hexlet_7344445/native_recovery/kompas_template/validation.log
+          test -s 'hexlet_7344445/native_recovery/kompas_template/Hexlet_KOMPAS3D_Привет_Хекслет.cdw'
+          test -s 'hexlet_7344445/native_recovery/kompas_template/Hexlet_KOMPAS3D_Привет_Хекслет_REOPENED.cdw'
+          sha256sum hexlet_7344445/native_recovery/kompas_template/*.cdw
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-official-ascon-cdw-mutation
+          path: hexlet_7344445/native_recovery/kompas_template/
+          if-no-files-found: warn
