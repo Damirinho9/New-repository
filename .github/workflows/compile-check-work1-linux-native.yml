@@ -1,0 +1,33 @@
+name: Compile-check Work 1 Linux native FRW builder
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - 'kompas-linux/work1_variant06_native.cpp'
+      - '.github/workflows/compile-check-work1-linux-native.yml'
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+      - uses: actions/download-artifact@v4
+        with:
+          name: kompas-v25-full-ksapi
+          path: sdk-artifact
+          repository: ${{ github.repository }}
+          run-id: 43801985021
+          github-token: ${{ github.token }}
+      - name: Syntax-check against official v25 KsAPI headers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INC=$(dirname "$(find sdk-artifact -type f -name KsAPI.h -print -quit)")
+          test -n "$INC"
+          g++ -std=c++20 -fsyntax-only -I"$INC" kompas-linux/work1_variant06_native.cpp
+          echo RESULT=WORK1_NATIVE_CPP_COMPILE_PASS
