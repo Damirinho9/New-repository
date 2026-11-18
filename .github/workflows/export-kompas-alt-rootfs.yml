@@ -49,7 +49,7 @@ jobs:
           print("CAST_3D_PASS")
           if not d3.RebuildDocument():
               raise SystemExit("REBUILD_DOCUMENT_FAIL")
-          top=d3.TopPart
+          top=d3.GetTopPart()
           if top and not top.RebuildModel(False):
               raise SystemExit("REBUILD_MODEL_FAIL")
           print("REBUILD_PASS")
