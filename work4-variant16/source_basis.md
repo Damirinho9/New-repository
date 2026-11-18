@@ -1,5 +1,14 @@
 # Work 4 - variant 16 - verified source basis
 
+## Source provenance
+
+Original methodology file from order 7335493:
+- file: `Компьютерное моделирование в машиностроении.doc`
+- SHA-256: `c8cf9bc3b26df5b86e97d0341a248e176c9296aebe8fa553299ebde24eace612`
+- source order archive SHA-256: `0f3ed71ce72ce20df6bdfafdda3601eba66ba38d64642909256e13468ae0a0fe`
+- supplied practical-tasks archive SHA-256: `66750405755b111a9e94baf719af83e7105fff675552c795bca7e7510e7186d8`
+
+
 ## Exact assignment
 
 The source methodology "Компьютерное моделирование в машиностроении", checked assignment 4, table 3.1 defines variant 16 as:
@@ -28,8 +37,8 @@ The methodology requires a real parametric model and describes a bearing example
 - rebuild verification after changing a controlling variable.
 
 For the cage the source gives:
-- D1 = ROUND((d_vn + d_nar)/2 + 0.6*d_rol)
-- D2 = ROUND((d_vn + d_nar)/2 - 0.3*d_rol)
+- D1 = ROUND((d_vn + d_nar)/2 + 0.6*d_rol) = 102 mm for the adopted nominal set
+- D2 = ROUND((d_vn + d_nar)/2 - 0.3*d_rol) = 91 mm for the adopted nominal set
 - h = S + b_rol/2
 - cell diameter = d_rol + 2*S
 - rivet-hole pitch diameter = (D1 + D2)/2
