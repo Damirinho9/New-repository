@@ -1,0 +1,30 @@
+name: Hexlet 7344445 RED OS VM KVM Probe
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-redos-kvm-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe hardware virtualization
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p hexlet_7344445/native_recovery/redos_kvm
+          uname -a | tee hexlet_7344445/native_recovery/redos_kvm/uname.txt
+          ls -l /dev/kvm 2>&1 | tee hexlet_7344445/native_recovery/redos_kvm/kvm.txt || true
+          id | tee -a hexlet_7344445/native_recovery/redos_kvm/kvm.txt
+          grep -Eo 'vmx|svm' /proc/cpuinfo | head -20 | tee hexlet_7344445/native_recovery/redos_kvm/cpu-virt.txt || true
+          test -e /dev/kvm && echo KVM_DEVICE_PRESENT=1 || echo KVM_DEVICE_PRESENT=0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7344445-redos-kvm-probe
+          path: hexlet_7344445/native_recovery/redos_kvm/
