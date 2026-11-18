@@ -242,7 +242,9 @@ static void build_top_down(const IDocumentsPtr& docs){
   // Create the assembly first through the native API. This path is proven
   // to return a live 3D document in hosted KOMPAS v25; template Open is not used.
   log("ASSEMBLY_BEFORE_DOCUMENTS_ADD");
-  auto base=req(docs->Add(ksDocumentAssembly,true),"Documents.Add assembly");
+  auto base=docs->AddWithDefaultSettings(ksDocumentAssembly,true);
+  if(!base) base=docs->Add(ksDocumentAssembly,true);
+  base=req(base,"Documents.AddWithDefaultSettings/Add assembly");
   log("ASSEMBLY_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr asmDoc=base;
   auto top=req(asmDoc->GetTopPart(),"assembly top");
@@ -255,7 +257,9 @@ static void build_top_down(const IDocumentsPtr& docs){
 
   // Workpiece is created only after the assembly exists on disk.
   log("WORKPIECE_BEFORE_DOCUMENTS_ADD");
-  auto wb=req(docs->Add(ksDocumentPart,true),"Documents.Add workpiece");
+  auto wb=docs->AddWithDefaultSettings(ksDocumentPart,true);
+  if(!wb) wb=docs->Add(ksDocumentPart,true);
+  wb=req(wb,"Documents.AddWithDefaultSettings/Add workpiece");
   log("WORKPIECE_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr wdoc=wb;
   auto wtop=req(wdoc->GetTopPart(),"workpiece top");
@@ -269,7 +273,9 @@ static void build_top_down(const IDocumentsPtr& docs){
   // Cutter is also created after the assembly, then inserted and made dependent
   // on the already inserted workpiece through a real MoldCavity operation.
   log("CUTTER_BEFORE_DOCUMENTS_ADD");
-  auto cb=req(docs->Add(ksDocumentPart,true),"Documents.Add cutter");
+  auto cb=docs->AddWithDefaultSettings(ksDocumentPart,true);
+  if(!cb) cb=docs->Add(ksDocumentPart,true);
+  cb=req(cb,"Documents.AddWithDefaultSettings/Add cutter");
   log("CUTTER_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr cdoc=cb;
   auto ctop=req(cdoc->GetTopPart(),"cutter top");
@@ -400,6 +406,8 @@ extern "C" int run_variant06_writer(){
       log(std::string("LICENSE_3D_ACTIVE_AFTER=")+(active?"1":"0"));
     }
     auto docs=req(app.GetDocuments(),"Application Documents");
+    docs->SetLockTemplatesSettings(true);
+    log("LOCK_TEMPLATES_SETTINGS_PASS");
     build_top_down(docs);
     manifest();
     acceptance(docs);
