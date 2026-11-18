@@ -27,13 +27,59 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
 
-      - name: Get real native CDW donor
+      - name: Get native CDW from official ASCON examples
         shell: bash
         run: |
           set -euxo pipefail
-          git clone --depth 1 https://github.com/n0emo/uni.git /tmp/uni
-          DONOR='/tmp/uni/bachelors/term-4/engineering-graphics/lab-1/lab-1.cdw'
+          dpkg -L ascon-kompas-graphic-v25 | tee hexlet_7344445/native_recovery/ascon-graphic-files.txt
+          DONOR=$(dpkg -L ascon-kompas-graphic-v25 | grep -Ei '\\.cdw
+
+      - name: Open donor in real KOMPAS, clean, add text, save and reopen
+        shell: bash
+        env:
+          DONOR_CDW: ${{ env.DONOR_CDW }}
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >hexlet_7344445/native_recovery/kompas-template-live.out 2>hexlet_7344445/native_recovery/kompas-template-live.err &
+          WRAPPER_PID=$!
+          for i in $(seq 1 60); do
+            sleep 1
+            pgrep -x kKompas >/dev/null && ss -ltnp 2>/dev/null | grep -q kKompas && break || true
+          done
+          pgrep -x kKompas
+          python3 hexlet_7344445/native_recovery/recover_kompas_template.py | tee hexlet_7344445/native_recovery/kompas-template-validation.log
+          kill "$WRAPPER_PID" 2>/dev/null || true
+
+      - name: Strict checks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q 'RESULT=PASS_NATIVE_KOMPAS3D_TEMPLATE_SAVE_REOPEN' hexlet_7344445/native_recovery/kompas-template-validation.log
+          test -s "hexlet_7344445/native_recovery/kompas_template/Hexlet_KOMPAS3D_Привет_Хекслет.cdw"
+          test -s "hexlet_7344445/native_recovery/kompas_template/Hexlet_KOMPAS3D_Привет_Хекслет_REOPENED.cdw"
+          sha256sum hexlet_7344445/native_recovery/kompas_template/*.cdw
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-native-kompas3d-template
+          path: |
+            hexlet_7344445/native_recovery/kompas_template/
+            hexlet_7344445/native_recovery/donor-cdw-sha256.txt
+            hexlet_7344445/native_recovery/kompas-template-*.log
+            hexlet_7344445/native_recovery/kompas-template-live.*
+          if-no-files-found: warn
+ | head -1 || true)
+          if [ -z "$DONOR" ]; then
+            echo "No .cdw example found in ascon-kompas-graphic-v25"
+            exit 2
+          fi
           test -s "$DONOR"
+          echo "DONOR_CDW=$DONOR" >> "$GITHUB_ENV"
+          echo "$DONOR" | tee hexlet_7344445/native_recovery/donor-cdw-path.txt
           file "$DONOR"
           sha256sum "$DONOR" | tee hexlet_7344445/native_recovery/donor-cdw-sha256.txt
 
