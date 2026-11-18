@@ -58,7 +58,7 @@ static void run_writer_main_thread(){
   // Keep retrying while the KOMPAS document subsystem finishes asynchronous
   // initialization in headless mode. The workflow's polling window is finite,
   // so this limit remains bounded but no longer truncates the document wait.
-  if(attempts>=150){
+  if(attempts>=20){
     blog("BOOTSTRAP_RETRY_LIMIT");
     return;
   }
