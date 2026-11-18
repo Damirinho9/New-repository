@@ -32,10 +32,11 @@ jobs:
           lm=app.GetApplicationLicenseManager()
           print("VARIANT", lm.GetKompasVariant() if lm else None)
           print("ACTIVE3D", lm.IsKompasModuleActive(constants.ksKompasModule3D) if lm else None)
-          candidates=glob.glob("/opt/ascon/kompas3d-v25/SDK/**/*.m3d", recursive=True)
+          preferred="/opt/ascon/kompas3d-v25/Samples/Models/Bracket.m3d"
+          candidates=[preferred] if os.path.isfile(preferred) else glob.glob("/opt/ascon/kompas3d-v25/Samples/**/*.m3d", recursive=True)
           print("M3D_CANDIDATES", len(candidates))
           if not candidates:
-              raise SystemExit("NO_SDK_M3D")
+              raise SystemExit("NO_PRODUCT_M3D")
           sample=candidates[0]
           print("SAMPLE", sample, os.path.getsize(sample))
           docs=app.GetDocuments()
