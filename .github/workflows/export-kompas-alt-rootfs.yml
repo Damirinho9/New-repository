@@ -21,7 +21,8 @@ jobs:
           import os, sys, glob, time
           BIN="/opt/ascon/kompas3d-v25/Bin"
           sys.path.insert(0, BIN)
-          import ksapi\n          from constants import constants
+          import ksapi
+          from constants import constants
           print("PYTHON", sys.version.replace("\n"," "))
           app=ksapi.OpenKompasInvisible()
           if not app:
@@ -50,10 +51,14 @@ jobs:
           if not d3.RebuildDocument():
               raise SystemExit("REBUILD_DOCUMENT_FAIL")
           top=d3.GetTopPart()
-          if top and not top.RebuildModel(False):
+          if not top or not top.RebuildModel(False):
               raise SystemExit("REBUILD_MODEL_FAIL")
           print("REBUILD_PASS")
-          doc.Close(constants.kdDoNotSaveChanges)
+          if not doc.Save():
+              raise SystemExit("SAVE_FAIL")
+          print("SAVE_PASS")
+          if not doc.Close(constants.kdDoNotSaveChanges):
+              raise SystemExit("CLOSE_FAIL")
           print("CLOSE_PASS")
           doc2=docs.Open(sample, False, False)
           if not doc2:
@@ -62,10 +67,13 @@ jobs:
           d32=ksapi.IKompasDocument3D(doc2)
           if not d32 or not d32.RebuildDocument():
               raise SystemExit("REOPEN_REBUILD_FAIL")
+          top2=d32.GetTopPart()
+          if not top2 or not top2.RebuildModel(False):
+              raise SystemExit("REOPEN_REBUILD_MODEL_FAIL")
           print("REOPEN_REBUILD_PASS")
           doc2.Close(constants.kdDoNotSaveChanges)
           app.Quit()
-          print("RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_REOPEN_PASS")
+          print("RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS")
           PY
 
           docker run --name kompas-alt -d alt:p11 sleep infinity
@@ -125,7 +133,7 @@ jobs:
             export DISPLAY=:103 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
             export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
             dbus-run-session -- python3 /root/probe.py | tee /root/installed-probe.txt
-            grep -q "RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_REOPEN_PASS" /root/installed-probe.txt
+            grep -q "RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS" /root/installed-probe.txt
           '
 
       - name: Export rootfs and prove it again via plain chroot
@@ -159,7 +167,7 @@ jobs:
             export DISPLAY=:104 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
             export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
             dbus-run-session -- python3 /root/probe.py | tee /root/chroot-probe.txt
-            grep -q "RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_REOPEN_PASS" /root/chroot-probe.txt
+            grep -q "RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS" /root/chroot-probe.txt
           '
           sudo cp /tmp/kompas-chroot/root/chroot-probe.txt out/chroot-probe.txt
           split -b 330M -d -a 2 out/kompas-alt-p11-v25-rootfs.tar.zst out/rootfs.part-
