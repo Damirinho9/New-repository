@@ -1,0 +1,49 @@
+name: Hexlet 7344445 Probe KOMPAS KsAPI Samples
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-ksapi-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official KOMPAS SDK package and inspect samples
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg unzip
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          mkdir -p /tmp/sdk hexlet_7344445/native_recovery/ksapi_probe
+          cd /tmp/sdk
+          apt-get download ascon-kompas-sdk-v25
+          DEB=$(ls ascon-kompas-sdk-v25*.deb | head -1)
+          dpkg-deb -x "$DEB" extracted
+          find extracted -maxdepth 7 -type f | sort | tee "$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ksapi_probe/files.txt"
+          find extracted -type f \( -name '*.zip' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print | tee "$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ksapi_probe/sample-candidates.txt"
+          grep -R -n -E 'CreateKompasApplication|GetKompas|AddWithDefaultSettings|ksDocumentDrawing' extracted 2>/dev/null | head -500 | tee "$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ksapi_probe/grep.txt" || true
+          # Unpack likely C/CPP sample zips for inspectable source.
+          while IFS= read -r z; do
+            case "$z" in
+              *KsAPICLink*Samples.zip|*KsAPI*Samples.zip)
+                d="$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ksapi_probe/$(basename "$(dirname "$z")")_$(basename "$z" .zip)"
+                mkdir -p "$d"
+                unzip -q "$z" -d "$d" || true
+                ;;
+            esac
+          done < <(find extracted -type f -name '*.zip')
+          grep -R -n -E 'CreateKompasApplication|ksDocumentDrawing|GetDocuments\(\)' "$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ksapi_probe" 2>/dev/null | head -1000 | tee "$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ksapi_probe/unpacked-grep.txt" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7344445-ksapi-probe
+          path: hexlet_7344445/native_recovery/ksapi_probe/
