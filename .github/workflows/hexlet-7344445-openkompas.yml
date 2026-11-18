@@ -49,8 +49,13 @@ jobs:
             if xdotool search --onlyvisible --name 'КОМПАС-3D v25' >/dev/null 2>&1; then break; fi
           done
           import -display :99 -window root hexlet_7344445/native_recovery/kompas_open/01_first_run.png || true
-          xdotool mousemove 406 540 click 1 || true
-          sleep 5
+          xdotool mousemove --sync 407 540
+          xdotool mousedown 1
+          sleep 1
+          xdotool mouseup 1
+          sleep 1
+          xdotool key Return || true
+          sleep 7
           import -display :99 -window root hexlet_7344445/native_recovery/kompas_open/02_after_eula.png || true
 
           # Wait for controller to create, save, close and reopen the real CDW.
