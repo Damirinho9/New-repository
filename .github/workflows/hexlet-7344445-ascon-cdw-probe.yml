@@ -1,0 +1,37 @@
+name: Hexlet 7344445 Probe ASCON CDW Examples
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-ascon-cdw-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official ASCON package without full install
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          mkdir -p hexlet_7344445/native_recovery/ascon_cdw_probe /tmp/debs
+          cd /tmp/debs
+          apt-get download ascon-kompas-graphic-v25
+          DEB=$(ls ascon-kompas-graphic-v25*.deb | head -1)
+          dpkg-deb -c "$DEB" | tee "$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ascon_cdw_probe/package-files.txt"
+          grep -Ei '\.cdw($|[[:space:]])|templates|samples|examples|прим' "$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ascon_cdw_probe/package-files.txt" | tee "$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ascon_cdw_probe/cdw-and-template-files.txt" || true
+          test -s "$GITHUB_WORKSPACE/hexlet_7344445/native_recovery/ascon_cdw_probe/package-files.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7344445-ascon-cdw-probe
+          path: hexlet_7344445/native_recovery/ascon_cdw_probe/
