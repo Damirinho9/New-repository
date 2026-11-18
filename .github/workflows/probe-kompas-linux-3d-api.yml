@@ -36,3 +36,8 @@ jobs:
           grep -R -n -E 'GetParts|GetSketches|GetExtrusions|AddFromFile|GetVariable|AddVariable|VariableCollection|GetMass|SetMaterial' "$INC" | head -500 || true
           echo '=== ENUMS ==='
           grep -R -n -E 'ksDocumentPart|ksDocumentAssembly|ksdtPart|ksdtAssembly|ksDocument3D' "$INC" | head -300 || true
+          echo '=== EXACT PART/DOC/SKETCH/EXTRUSION SIGNATURES ==='
+          sed -n '26380,26740p' "$INC/KsAPI.h"
+          sed -n '27060,27430p' "$INC/KsAPI.h"
+          grep -n -B25 -A80 'struct IKompasDocument3D' "$INC/KsAPI.h" | head -250 || true
+          grep -n -B20 -A120 'struct IPart :' "$INC/KsAPI.h" | head -250 || true
