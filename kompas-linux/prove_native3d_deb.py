@@ -39,7 +39,7 @@ def main():
     docs=req(app.GetDocuments(),"Documents")
     OUT.unlink(missing_ok=True)
 
-    base=req(docs.AddWithDefaultSettings(c.ksDocumentPart, True),"AddWithDefaultSettings part")
+    base=req(docs.Add(c.ksDocumentPart, True),"Documents.Add part")
     d3=ksapi.IKompasDocument3D(base)
     top=req(d3.GetTopPart(),"TopPart")
     mc=req(top.GetModelContainer(),"ModelContainer")
