@@ -165,6 +165,7 @@ def main():
 if __name__=="__main__":
     try: main()
     except Exception as e:
-        LOG.write_text("RESULT=RUNTIME_NATIVE_3D_MUTATION_FAIL\n"+repr(e)+"\n",encoding="utf-8")
+        previous = LOG.read_text(encoding="utf-8", errors="replace") if LOG.exists() else ""
+        LOG.write_text(previous + "RESULT=RUNTIME_NATIVE_3D_MUTATION_FAIL\n" + repr(e) + "\n", encoding="utf-8")
         print(LOG.read_text(encoding="utf-8"),end="")
         raise
