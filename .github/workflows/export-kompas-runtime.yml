@@ -1,0 +1,79 @@
+name: Export KOMPAS v25 portable runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/export-kompas-runtime.yml'
+
+jobs:
+  export-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS v25 runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb zstd
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          dpkg -l 'ascon-kompas*' | tee installed.txt
+          du -sh /opt/ascon/kompas3d-v25 /opt/ascon/kompas3d-v25/* 2>/dev/null | tee runtime-size.txt || true
+
+      - name: Build portable runtime bundle
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          test -x "$BIN/ksinvisible"
+          mkdir -p runtime-root/opt/ascon runtime-root/system-libs
+          sudo cp -a /opt/ascon/kompas3d-v25 runtime-root/opt/ascon/
+          if [ -d /opt/ascon/common ]; then sudo cp -a /opt/ascon/common runtime-root/opt/ascon/; fi
+
+          # Capture direct ELF dependencies of executable and product shared libraries.
+          find "$BIN" -maxdepth 1 -type f -perm -111 -o -name '*.so*' > /tmp/elf-candidates.txt || true
+          while IFS= read -r f; do
+            file "$f" | grep -q ELF || continue
+            ldd "$f" 2>/dev/null | awk '/=> \/|^\// {for(i=1;i<=NF;i++) if($i ~ /^\//) print $i}' || true
+          done < /tmp/elf-candidates.txt | sort -u > runtime-system-libs.txt
+          while IFS= read -r lib; do
+            [ -f "$lib" ] || continue
+            mkdir -p "runtime-root/system-libs$(dirname "$lib")"
+            cp -L "$lib" "runtime-root/system-libs$lib"
+          done < runtime-system-libs.txt
+
+          cat > runtime-root/RUNTIME_README.txt <<'EOF'
+          Official ASCON KOMPAS-3D v25 files exported from the ASCON Debian repository.
+          Product root: /opt/ascon/kompas3d-v25
+          Entry point: Bin/ksinvisible
+          Use PYTHONPATH=<product>/Bin for ksapi/constants Python modules.
+          system-libs mirrors direct executable/shared-library dependencies for relocation fallback.
+          EOF
+
+          tar --zstd -cf kompas-v25-portable-runtime.tar.zst -C runtime-root .
+          sha256sum kompas-v25-portable-runtime.tar.zst | tee runtime-SHA256.txt
+          ls -lh kompas-v25-portable-runtime.tar.zst
+          du -sh runtime-root
+
+      - name: Upload portable runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-portable-runtime
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+          path: |
+            kompas-v25-portable-runtime.tar.zst
+            runtime-SHA256.txt
+            runtime-size.txt
+            runtime-system-libs.txt
+            installed.txt
