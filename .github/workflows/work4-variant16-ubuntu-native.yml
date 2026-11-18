@@ -1,0 +1,185 @@
+name: KOMPAS Ubuntu Work 4 variant 16 native acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/work4-variant16-ubuntu-native.yml'
+      - 'kompas-linux/work4_variant16_native.cpp'
+      - 'kompas-linux/bootstrap_variant06_qt.cpp'
+      - 'work4-variant16/source_basis.md'
+      - 'work4-variant16/parameters.csv'
+
+jobs:
+  native-work4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Build and run Work 4 in clean Ubuntu KOMPAS v25
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf result/work4-ubuntu-native
+          mkdir -p result/work4-ubuntu-native
+
+          docker run --rm --name work4-kompas \
+            -v "$PWD:/work" \
+            ubuntu:24.04 bash -lc '
+              set -euxo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y \
+                wget curl ca-certificates gnupg lsb-release xvfb xauth dbus procps \
+                locales fontconfig qt6-base-dev pkg-config clang g++ libc++-dev libc++abi-dev \
+                libxcb-res0 libxcb-dri2-0 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 \
+                libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libunwind8 libxcb-xkb1 libxkbcommon-x11-0 \
+                libxcb-util1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render0 libxcb-shm0 \
+                libxcb-sync1 libxcb-xfixes0 libxcb-glx0 libxcb-present0 libxcb-dri3-0
+
+              wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+              bash /tmp/ascon.sh || true
+              rm -f /etc/apt/sources.list.d/ascon.list
+              echo "deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main" > /etc/apt/sources.list.d/ascon.list
+              test -s /etc/apt/trusted.gpg.d/ascon.gpg
+              apt-get update
+              apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+
+              BIN=/opt/ascon/kompas3d-v25/Bin
+              INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+              test -x "$BIN/ksinvisible"
+              test -d "$INC"
+
+              echo "=== unresolved ksinvisible libraries ==="
+              ldd "$BIN/ksinvisible" | tee /tmp/ksinvisible-ldd.txt
+              if grep -q "not found" /tmp/ksinvisible-ldd.txt; then
+                grep "not found" /tmp/ksinvisible-ldd.txt
+                exit 42
+              fi
+
+              clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread \
+                -I"$INC" /work/kompas-linux/work4_variant16_native.cpp \
+                -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi \
+                -o /tmp/writer_variant06.so
+
+              g++ -std=c++20 -O2 -fPIC -shared -pthread \
+                /work/kompas-linux/bootstrap_variant06_qt.cpp \
+                $(pkg-config --cflags --libs Qt6Core) -ldl \
+                -o /tmp/bootstrap_variant06_qt.so
+
+              export HOME=/root XDG_CONFIG_HOME=/root/.config
+              mkdir -p /root/.config/ascon/KOMPAS-3D/25 /root/.config/ascon/"KOMPAS-3D Invisible"/25
+              if [ -d /etc/ascon/KOMPAS-3D/25 ]; then
+                cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/KOMPAS-3D/25/ || true
+                cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/"KOMPAS-3D Invisible"/25/ || true
+              fi
+              RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+              [ -z "$RES" ] || cp -f "$RES" /root/.config/ascon/"KOMPAS-3D Invisible"/25/QtResources.bin
+
+              rm -rf /tmp/work4_v16_native
+              rm -f /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
+              mkdir -p /tmp/.X11-unix
+              chmod 1777 /tmp/.X11-unix
+              rm -f /tmp/.X11-unix/X106
+
+              Xvfb :106 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
+              XV=$!
+              trap "kill $XV 2>/dev/null || true" EXIT
+              sleep 2
+              test -S /tmp/.X11-unix/X106
+
+              export DISPLAY=:106 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
+              unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+              dbus-run-session -- env \
+                HOME=/root XDG_CONFIG_HOME=/root/.config DISPLAY=:106 QT_QPA_PLATFORM=xcb \
+                LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN" \
+                LD_PRELOAD=/tmp/bootstrap_variant06_qt.so \
+                "$BIN/ksinvisible" -automation >/tmp/kompas-work4.out 2>/tmp/kompas-work4.err &
+              KP=$!
+
+              PASS=0
+              for i in $(seq 1 150); do
+                sleep 2
+                if grep -q "^RESULT=PASS_NATIVE_WORK4_VARIANT16$" /tmp/work4_v16_native/work4.log 2>/dev/null; then
+                  PASS=1
+                  break
+                fi
+                if ! kill -0 "$KP" 2>/dev/null; then
+                  break
+                fi
+              done
+
+              cat /tmp/work1_bootstrap.log 2>/dev/null || true
+              cat /tmp/work4_v16_native/work4.log 2>/dev/null || true
+              tail -200 /tmp/kompas-work4.err 2>/dev/null || true
+
+              if [ "$PASS" != "1" ]; then
+                mkdir -p /work/result/work4-ubuntu-native/diagnostics
+                cp /tmp/work1_bootstrap.log /work/result/work4-ubuntu-native/diagnostics/ 2>/dev/null || true
+                cp /tmp/work4_v16_native/work4.log /work/result/work4-ubuntu-native/diagnostics/ 2>/dev/null || true
+                cp /tmp/kompas-work4.err /work/result/work4-ubuntu-native/diagnostics/ 2>/dev/null || true
+                cp /tmp/ksinvisible-ldd.txt /work/result/work4-ubuntu-native/diagnostics/ 2>/dev/null || true
+                exit 30
+              fi
+
+              test -s /tmp/work4_v16_native/Work4_V16_Bearing.a3d
+              grep -q "^RESULT=PASS_NATIVE_WORK4_VARIANT16_REOPEN_REBUILD_PARAMETRIC$" /tmp/work4_v16_native/work4.log
+              grep -q "^FINAL_NOMINAL_REOPEN_PASS$" /tmp/work4_v16_native/work4.log
+
+              cp -a /tmp/work4_v16_native/. /work/result/work4-ubuntu-native/
+              cp /tmp/work1_bootstrap.log /work/result/work4-ubuntu-native/
+              cp /tmp/ksinvisible-ldd.txt /work/result/work4-ubuntu-native/
+            '
+
+      - name: Strict container and hash gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          D=result/work4-ubuntu-native
+          test -s "$D/Work4_V16_InnerDoubleRing.m3d"
+          test -s "$D/Work4_V16_OuterCup_L.m3d"
+          test -s "$D/Work4_V16_OuterCup_R.m3d"
+          test -s "$D/Work4_V16_TaperRoller.m3d"
+          test -s "$D/Work4_V16_CageHalf.m3d"
+          test -s "$D/Work4_V16_Rivet.m3d"
+          test -s "$D/Work4_V16_Bearing.a3d"
+          grep -q '^RESULT=PASS_NATIVE_WORK4_VARIANT16_REOPEN_REBUILD_PARAMETRIC$' "$D/work4.log"
+          grep -q '^RESULT=PASS_NATIVE_WORK4_VARIANT16$' "$D/work4.log"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, zipfile
+          d=Path("result/work4-ubuntu-native")
+          files=sorted(list(d.glob("*.m3d"))+list(d.glob("*.a3d")))
+          assert len(files)==7, [p.name for p in files]
+          lines=[]
+          for p in files:
+              assert p.stat().st_size>1024, p
+              assert zipfile.is_zipfile(p), p
+              with zipfile.ZipFile(p) as z:
+                  names=set(z.namelist())
+                  assert "Contents" in names and "FileInfo" in names, (p,names)
+              h=hashlib.sha256(p.read_bytes()).hexdigest()
+              lines.append(f"{h}  {p.name}")
+          (d/"SHA256.txt").write_text("\n".join(lines)+"\n")
+          (d/"ACCEPTANCE.txt").write_text(
+              "KOMPAS_V25_HOSTED_UBUNTU_PASS\n"
+              "OPEN_REBUILD_SAVE_CLOSE_REOPEN_REBUILD_PASS\n"
+              "PARAMETRIC_T_40_44_40_PASS\n"
+              "RESULT=PASS_NATIVE_WORK4_VARIANT16\n"
+          )
+          PY
+          cp work4-variant16/source_basis.md "$D/"
+          cp work4-variant16/parameters.csv "$D/"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-work4-variant16-ubuntu-native
+          if-no-files-found: error
+          path: result/work4-ubuntu-native/**
