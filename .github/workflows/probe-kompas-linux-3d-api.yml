@@ -1,0 +1,38 @@
+name: Probe KOMPAS Linux native 3D API
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/probe-kompas-linux-3d-api.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Download and inspect official KOMPAS v25 SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y aria2 rpm2cpio cpio
+          mkdir -p probe/sdkroot
+          SDK_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
+          aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d probe -o sdk.rpm "$SDK_URL"
+          (cd probe/sdkroot && rpm2cpio ../sdk.rpm | cpio -idm --quiet)
+          INC="$PWD/probe/sdkroot/opt/ascon/kompas3d-v25/SDK/KsAPI/Include"
+          test -f "$INC/KsAPI.h"
+          echo '=== 3D INTERFACES ==='
+          grep -R -n -E 'IKompasDocument3D|IPart7|IFeature7|ISketch|IExtrusion|ICutExtrusion|IRevolve|IParts7|IPlacement|IVariable' "$INC" | head -500 || true
+          echo '=== DOCUMENT METHODS ==='
+          grep -R -n -E 'AddWithDefaultSettings|ksDocumentPart|ksDocumentAssembly|GetTopPart|TopPart|Rebuild|SaveAs|Close' "$INC" | head -500 || true
+          echo '=== PART METHODS ==='
+          grep -R -n -E 'GetParts|GetSketches|GetExtrusions|AddFromFile|GetVariable|AddVariable|VariableCollection|GetMass|SetMaterial' "$INC" | head -500 || true
+          echo '=== ENUMS ==='
+          grep -R -n -E 'ksDocumentPart|ksDocumentAssembly|ksdtPart|ksdtAssembly|ksDocument3D' "$INC" | head -300 || true
