@@ -14,7 +14,7 @@ on:
 jobs:
   prove:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,8 +28,10 @@ jobs:
           sudo apt-get install -y aria2 rpm2cpio cpio clang libc++-dev libc++abi-dev qt6-base-dev pkg-config
           mkdir -p fastbuild sdkroot gfxroot result
           GFX_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          D3_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas3d-v25-25.0.5.2780-0.x86_64.rpm'
           SDK_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
           aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o graphic.rpm "$GFX_URL"
+          aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o kompas3d.rpm "$D3_URL"
           aria2c --allow-overwrite=true --auto-file-renaming=false -x 8 -s 8 -k 2M -d fastbuild -o sdk.rpm "$SDK_URL"
           (cd sdkroot && rpm2cpio ../fastbuild/sdk.rpm | cpio -idm --quiet)
           (cd gfxroot && rpm2cpio ../fastbuild/graphic.rpm | cpio -idm --quiet './opt/ascon/kompas3d-v25/Bin/libksAPI.so')
@@ -94,11 +96,10 @@ jobs:
             apt_update_resilient
 
             mkdir -p /var/cache/apt/archives
-            PRINT=$(apt-get --print-uris install ascon-kompas-graphic-v25 2>/dev/null || true)
-            CACHE_NAME=$(printf "%s\n" "$PRINT" | awk "/ascon-kompas-graphic-v25/ {gsub(/\x27/,"",$2); print $2; exit}")
-            [ -n "$CACHE_NAME" ] || CACHE_NAME="ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm"
-            cp /work/fastbuild/graphic.rpm "/var/cache/apt/archives/$CACHE_NAME"
-            apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 || true
+            cp /work/fastbuild/graphic.rpm /var/cache/apt/archives/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm
+            cp /work/fastbuild/kompas3d.rpm /var/cache/apt/archives/ascon-kompas3d-v25-25.0.5.2780-0.x86_64.rpm
+            apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-v25
+            rpm -qa | grep -E "^ascon-kompas" | sort || true
 
             export HOME=/root XDG_CONFIG_HOME=/root/.config
             CFG=/root/.config/ascon/KOMPAS-3D/25
@@ -106,9 +107,20 @@ jobs:
             mkdir -p "$CFG"
             RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
             [ -z "$RES" ] || cp -f "$RES" "$CFG/QtResources.bin"
-            cd "$BIN"
-            timeout 20s dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config QT_QPA_PLATFORM=offscreen ./kKompas -automation >/tmp/kompas-init.out 2>/tmp/kompas-init.err || true
+            KEXEC="$BIN/kKompas"
+            if [ ! -x "$KEXEC" ] && [ -x "$BIN/ksinvisible" ]; then
+              ln -sf "$BIN/ksinvisible" /tmp/kKompas
+              KEXEC=/tmp/kKompas
+            fi
+            if [ ! -x "$KEXEC" ]; then
+              echo "No executable kKompas/ksinvisible found in $BIN"
+              find "$BIN" -maxdepth 1 -type f -printf "%f\n" | sort
+              exit 41
+            fi
+            echo "KEXEC=$KEXEC"
+            timeout 20s dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config QT_QPA_PLATFORM=offscreen "$KEXEC" -automation >/tmp/kompas-init.out 2>/tmp/kompas-init.err || true
             pkill -x kKompas 2>/dev/null || true
+            pkill -x ksinvisible 2>/dev/null || true
 
             cp /work/fastbuild/writer_variant06.so /tmp/writer_variant06.so
             cp /work/fastbuild/bootstrap_variant06_qt.so /tmp/bootstrap_variant06_qt.so
@@ -116,7 +128,7 @@ jobs:
             rm -f /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
             export LANG=C.UTF-8 LC_ALL=C.UTF-8 QT_QPA_PLATFORM=offscreen LD_LIBRARY_PATH="$BIN"
             unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
-            dbus-run-session -- env LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$BIN/kKompas" -automation >/tmp/kompas-proof.out 2>/tmp/kompas-proof.err &
+            dbus-run-session -- env LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$KEXEC" -automation >/tmp/kompas-proof.out 2>/tmp/kompas-proof.err &
             KP=$!
             PASS=0
             for i in $(seq 1 140); do
