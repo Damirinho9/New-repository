@@ -132,7 +132,7 @@ jobs:
             test -S /tmp/.X11-unix/X103
             export DISPLAY=:103 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
             export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
-            dbus-run-session -- python3 /root/probe.py | tee /root/installed-probe.txt
+            timeout 90s dbus-run-session -- python3 /root/probe.py | tee /root/installed-probe.txt
             grep -q "RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS" /root/installed-probe.txt
           '
 
