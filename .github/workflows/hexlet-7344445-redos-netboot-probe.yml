@@ -22,7 +22,7 @@ jobs:
           BASE='https://repo2.red-soft.ru/redos/8.0/x86_64/os'
           for p in images/boot.iso images/pxeboot/vmlinuz images/pxeboot/initrd.img repodata/repomd.xml; do
             echo "=== $BASE/$p ===" | tee -a hexlet_7344445/native_recovery/redos_netboot/probe.txt
-            curl -fsSIL "$BASE/$p" | tee -a hexlet_7344445/native_recovery/redos_netboot/probe.txt || true
+            curl -kfsSIL "$BASE/$p" | tee -a hexlet_7344445/native_recovery/redos_netboot/probe.txt || true
           done
       - uses: actions/upload-artifact@v4
         with:
