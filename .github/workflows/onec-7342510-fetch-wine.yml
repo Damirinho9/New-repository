@@ -1,0 +1,26 @@
+name: onec-7342510-fetch-wine
+
+on:
+  push:
+    branches:
+      - onec-7342510-stage5
+    paths:
+      - '.github/workflows/onec-7342510-fetch-wine.yml'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public Wine build
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3             -o wine-11.18-amd64-wow64.tar.xz             https://github.com/Kron4ek/Wine-Builds/releases/download/11.18/wine-11.18-amd64-wow64.tar.xz
+          echo "f899879b8c37e0b20adca19d147cf77436f3f1a37bf16d08d27fa7137a52b9ba  wine-11.18-amd64-wow64.tar.xz" | sha256sum -c -
+      - name: Upload Wine
+        uses: actions/upload-artifact@v4
+        with:
+          name: wine-11.18-amd64-wow64
+          path: wine-11.18-amd64-wow64.tar.xz
+          if-no-files-found: error
+          retention-days: 1
