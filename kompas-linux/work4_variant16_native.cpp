@@ -552,6 +552,12 @@ extern "C" int run_variant06_writer() {
   static bool done=false;
   if(done) return 0;
   try {
+    // Every bootstrap retry must leave a readable diagnostic file behind.
+    // Close the old stream before removing the previous attempt directory;
+    // otherwise Linux keeps writing to an unlinked inode and the workflow
+    // sees RC=2 with no work4.log.
+    if(lg.is_open()) lg.close();
+    lg.clear();
     fs::remove_all(OUTDIR);
     fs::create_directories(OUTDIR);
     lg.open(LOG,std::ios::out|std::ios::app);
