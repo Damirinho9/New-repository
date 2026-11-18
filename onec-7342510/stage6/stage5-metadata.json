@@ -1,0 +1,5 @@
+[
+  {"type":"Catalog","name":"Организации","synonym":"Организации","codeLength":3,"descriptionLength":100,"autonumbering":false,"checkUnique":true,"attributes":["ИНН: String(12)","РасчетныйСчет: String(20)","НаименованиеКассы: String(100)"]},
+  {"type":"Catalog","name":"Склады","synonym":"Склады","codeLength":9,"descriptionLength":100,"autonumbering":true,"checkUnique":false},
+  {"type":"Catalog","name":"ЕдиницыИзмерения","synonym":"Единицы измерения","codeLength":10,"descriptionLength":50,"autonumbering":false,"checkUnique":true}
+]
