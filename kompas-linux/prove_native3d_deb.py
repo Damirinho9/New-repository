@@ -36,10 +36,50 @@ def main():
     lines=[]
     app=req(ksapi.GetKompas(),"GetKompas None")
     lines.append("GET_KOMPAS_PASS")
+    try:
+        lines.append("APPLICATION_NAME="+str(app.GetApplicationName(True)))
+    except Exception as e:
+        lines.append("APPLICATION_NAME_ERROR="+repr(e))
+    try:
+        lines.append("BUILD="+str(app.GetBuildNumber()))
+    except Exception as e:
+        lines.append("BUILD_ERROR="+repr(e))
+    try:
+        lm=app.GetApplicationLicenseManager()
+        lines.append("LICENSE_MANAGER="+("PASS" if lm else "NONE"))
+        if lm:
+            try:
+                lines.append("KOMPAS_VARIANT="+str(lm.GetKompasVariant()))
+            except Exception as e:
+                lines.append("KOMPAS_VARIANT_ERROR="+repr(e))
+            try:
+                active=bool(lm.IsKompasModuleActive(c.ksKompasModule3D))
+                lines.append("LICENSE_3D_ACTIVE_BEFORE="+("1" if active else "0"))
+                if not active:
+                    try:
+                        rv=lm.SetKompasModuleActive(c.ksKompasModule3D,True)
+                        lines.append("LICENSE_3D_ACTIVATE_RETURN="+repr(rv))
+                    except Exception as e:
+                        lines.append("LICENSE_3D_ACTIVATE_ERROR="+repr(e))
+                    try:
+                        active2=bool(lm.IsKompasModuleActive(c.ksKompasModule3D))
+                        lines.append("LICENSE_3D_ACTIVE_AFTER="+("1" if active2 else "0"))
+                    except Exception as e:
+                        lines.append("LICENSE_3D_ACTIVE_AFTER_ERROR="+repr(e))
+            except Exception as e:
+                lines.append("LICENSE_3D_CHECK_ERROR="+repr(e))
+    except Exception as e:
+        lines.append("LICENSE_MANAGER_ERROR="+repr(e))
+    LOG.write_text("\n".join(lines)+"\n",encoding="utf-8")
     docs=req(app.GetDocuments(),"Documents")
     OUT.unlink(missing_ok=True)
 
-    base=req(docs.Add(c.ksDocumentPart, True),"Documents.Add part")
+    lines.append("BEFORE_DOCUMENTS_ADD_PART")
+    LOG.write_text("\n".join(lines)+"\n",encoding="utf-8")
+    base=docs.Add(c.ksDocumentPart, True)
+    lines.append("DOCUMENTS_ADD_PART_RETURN="+repr(base))
+    LOG.write_text("\n".join(lines)+"\n",encoding="utf-8")
+    base=req(base,"Documents.Add part")
     d3=ksapi.IKompasDocument3D(base)
     top=req(d3.GetTopPart(),"TopPart")
     mc=req(top.GetModelContainer(),"ModelContainer")
