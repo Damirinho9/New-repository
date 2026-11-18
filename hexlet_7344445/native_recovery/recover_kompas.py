@@ -7,9 +7,9 @@ OUT = pathlib.Path("hexlet_7344445/native_recovery/kompas")
 OUT.mkdir(parents=True, exist_ok=True)
 cdw = OUT / "Hexlet_KOMPAS3D_Привет_Хекслет.cdw"
 
-app = ksapi.GetKompas()
+app = ksapi.OpenKompasInvisible()
 if app is None:
-    raise SystemExit("GetKompas returned None")
+    raise SystemExit("OpenKompasInvisible returned None")
 print("APP_NAME", app.GetApplicationName(True))
 print("BUILD", app.GetBuildNumber())
 
