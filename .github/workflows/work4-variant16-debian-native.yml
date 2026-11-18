@@ -1,0 +1,201 @@
+name: KOMPAS Debian Xvfb native Work 4 variant 16
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/work4-variant16-debian-native.yml'
+      - 'kompas-linux/prove_native3d_deb.py'
+      - 'work4-variant16/build_work4_deb.py'
+      - 'work4-variant16/verify_work4_deb.py'
+      - 'work4-variant16/parameters.csv'
+      - 'work4-variant16/source_basis.md'
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Install exact historical KOMPAS professional runtime and SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             wget ca-certificates gnupg xvfb openbox dbus-x11 net-tools iproute2             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 python3
+
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main'             | sudo tee /etc/apt/sources.list.d/ascon-fixed.list
+          sudo rm -f /etc/apt/sources.list.d/ascon.list || true
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+
+          dpkg -l 'ascon-kompas*' | tee installed.txt
+          test -x /opt/ascon/kompas3d-v25/Bin/ksinvisible
+          test -f /opt/ascon/kompas3d-v25/SDK/KsAPI/Include/KsAPI.h
+          test -f /opt/ascon/kompas3d-v25/Bin/ksapi.py
+          test -f /opt/ascon/kompas3d-v25/Bin/constants.py
+
+      - name: Launch exact proven Debian Xvfb KOMPAS API runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          rm -f /tmp/kompas-live.out /tmp/kompas-live.err
+
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             /tmp/kKompas -automation >/tmp/kompas-live.out 2>/tmp/kompas-live.err &
+          echo $! > /tmp/kompas-wrapper.pid
+
+          KP=""
+          for i in $(seq 1 60); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          echo "KPID=$KP" | tee kompas-pid.txt
+          if [ -z "$KP" ]; then
+            ps aux | grep -E 'kKompas|ksinvisible' || true
+            cat /tmp/kompas-live.err || true
+            exit 2
+          fi
+
+          for i in $(seq 1 60); do
+            sleep 1
+            ss -ltnp > kompas-sockets.txt || true
+            if grep -q "kKompas" kompas-sockets.txt; then break; fi
+          done
+          cat kompas-sockets.txt
+          grep -q "kKompas" kompas-sockets.txt
+          ps -o pid,comm,args -p "$KP" | tee process-ps.txt
+
+      - name: Prove native 3D create mutate save close reopen restore
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN"
+          python3 kompas-linux/prove_native3d_deb.py | tee deb-native3d-proof-console.txt
+          grep -q '^RESULT=RUNTIME_NATIVE_3D_MUTATION_PASS$' work4_deb_native3d_probe.txt
+          test -s work4_deb_native3d_probe.m3d
+
+      - name: Build exact native Work 4 variant 16
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN"
+          python3 work4-variant16/build_work4_deb.py | tee work4-deb-build-console.txt
+          grep -q '^RESULT=BUILD_NATIVE_WORK4_VARIANT16_PASS$' work4-variant16/native-deb/build-report.txt
+
+      - name: Strict native parametric acceptance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN"
+          python3 work4-variant16/verify_work4_deb.py | tee work4-deb-verify-console.txt
+          grep -q '^RESULT=PASS_NATIVE_WORK4_VARIANT16_REOPEN_REBUILD_PARAMETRIC$'             work4-variant16/native-deb/verification.txt
+
+      - name: Final native package SHA and acceptance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          D=work4-variant16/native-deb
+          files=(
+            "$D/Work4_V16_InnerDoubleRing.m3d"
+            "$D/Work4_V16_OuterCup_L.m3d"
+            "$D/Work4_V16_OuterCup_R.m3d"
+            "$D/Work4_V16_TaperRoller.m3d"
+            "$D/Work4_V16_CageHalf.m3d"
+            "$D/Work4_V16_Rivet.m3d"
+            "$D/Work4_V16_Bearing.a3d"
+          )
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          d=Path("work4-variant16/native-deb")
+          names=[
+            "Work4_V16_InnerDoubleRing.m3d",
+            "Work4_V16_OuterCup_L.m3d",
+            "Work4_V16_OuterCup_R.m3d",
+            "Work4_V16_TaperRoller.m3d",
+            "Work4_V16_CageHalf.m3d",
+            "Work4_V16_Rivet.m3d",
+            "Work4_V16_Bearing.a3d",
+          ]
+          for n in names:
+              p=d/n
+              assert p.exists() and p.stat().st_size > 1024, n
+              assert zipfile.is_zipfile(p), n
+              with zipfile.ZipFile(p) as z:
+                  assert {"Contents","FileInfo"}.issubset(set(z.namelist())), n
+          print("ALL_NATIVE_CONTAINER_PASS")
+          PY
+          sha256sum "${files[@]}" | tee "$D/SHA256.txt"
+          cat > "$D/ACCEPTANCE.txt" <<'EOF'
+          SOURCE_VARIANT16_EXACT_TOPOLOGY_PASS
+          RUNTIME_NATIVE_3D_MUTATION_PASS
+          ALL_DETAILS_REOPEN_REBUILD_PASS
+          MASTER_GEOMETRY_REOPEN_PASS
+          PARAMETRIC_T_40_44_40_PASS
+          PHYSICAL_GEOMETRY_CHANGE_PASS
+          PHYSICAL_GEOMETRY_RESTORE_PASS
+          FINAL_NOMINAL_REOPEN_PASS
+          RESULT=PASS_NATIVE_WORK4_VARIANT16
+          EOF
+          cat "$D/ACCEPTANCE.txt"
+
+      - name: Collect diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p result/diagnostics
+          cp /tmp/kompas-live.out result/diagnostics/ 2>/dev/null
+          cp /tmp/kompas-live.err result/diagnostics/ 2>/dev/null
+          cp installed.txt result/diagnostics/ 2>/dev/null
+          cp kompas-pid.txt result/diagnostics/ 2>/dev/null
+          cp kompas-sockets.txt result/diagnostics/ 2>/dev/null
+          cp process-ps.txt result/diagnostics/ 2>/dev/null
+          cp work4_deb_native3d_probe.txt result/diagnostics/ 2>/dev/null
+          cp deb-native3d-proof-console.txt result/diagnostics/ 2>/dev/null
+          cp work4-deb-build-console.txt result/diagnostics/ 2>/dev/null
+          cp work4-deb-verify-console.txt result/diagnostics/ 2>/dev/null
+          cp work4-variant16/native-deb/build-report.txt result/diagnostics/ 2>/dev/null
+          cp work4-variant16/native-deb/verification.txt result/diagnostics/ 2>/dev/null
+
+      - name: Upload accepted Work 4 package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work4-variant16-native-parametric-bearing
+          if-no-files-found: error
+          path: |
+            work4-variant16/native-deb/**
+            work4-variant16/source_basis.md
+            work4-variant16/parameters.csv
+            work4_deb_native3d_probe.txt
+
+      - name: Upload Debian diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work4-variant16-debian-diagnostics
+          if-no-files-found: ignore
+          path: result/diagnostics/**
+
+      - name: Stop KOMPAS
+        if: always()
+        shell: bash
+        run: |
+          kill "$(cat /tmp/kompas-wrapper.pid 2>/dev/null)" 2>/dev/null || true
+          pkill -x kKompas 2>/dev/null || true
