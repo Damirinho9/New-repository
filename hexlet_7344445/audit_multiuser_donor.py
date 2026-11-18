@@ -1,6 +1,5 @@
 from pathlib import Path
 from ptlab import codec
-import xml.etree.ElementTree as ET
 import json, os, re, hashlib
 
 ROOT = Path(os.environ.get("DONOR_DIR","/tmp/ccna"))
@@ -16,25 +15,20 @@ for p in paths:
     raw=codec.decode(p)
     text=raw.decode("utf-8",errors="replace")
     item={"file":p.name,"bytes":p.stat().st_size,"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),"root":""}
-    root=ET.fromstring(raw)
-    item["root"]=root.tag
-    # dump key multiuser subtrees
+    mroot=re.search(r"<([A-Z0-9_]+)", text)
+    item["root"]=mroot.group(1) if mroot else ""
     for tag in ("MULTIUSER","REMOTE_NETWORKS","REMOTE_NETWORK","IPC_MANAGER"):
-        els=root.findall(".//"+tag)
-        item[tag]=[ET.tostring(e,encoding="unicode") for e in els]
-    # all device models/names in activity
+        item[tag]=re.findall(fr"<{tag}\\b[^>]*>.*?</{tag}>",text,flags=re.S|re.I)
     devs=[]
-    for d in root.findall(".//DEVICE"):
-        model=""
-        typ=d.find("TYPE")
-        if typ is not None:
-            model=typ.attrib.get("model","")
-        name=(d.findtext("NAME") or "").strip()
+    for block in re.findall(r"<DEVICE>.*?</DEVICE>",text,flags=re.S|re.I):
+        mm=re.search(r'<TYPE[^>]*model="([^"]*)"',block,re.I)
+        nn=re.search(r"<NAME[^>]*>(.*?)</NAME>",block,flags=re.S|re.I)
+        model=mm.group(1) if mm else ""
+        name=re.sub(r"<.*?>","",nn.group(1)).strip() if nn else ""
         if model or name:
             devs.append({"name":name,"model":model})
     item["devices"]=devs
-    # all literals useful for multiuser
-    item["literals"]=sorted(set(re.findall(r"[^<>\n]{1,120}(?:3800\d|localhost|REMOTE_NETWORK|Multiuser|MU_|Channel\d|PEER)[^<>\n]{0,120}",text,re.I)))
+    item["literals"]=sorted(set(re.findall(r"[^<>\\n]{1,120}(?:3800\\d|localhost|REMOTE_NETWORK|Multiuser|MU_|Channel\\d|PEER)[^<>\\n]{0,120}",text,re.I)))
     rows.append(item)
     (OUT/(p.stem+".xml")).write_bytes(raw)
 
@@ -44,8 +38,8 @@ for item in rows:
     print("MODELS",sorted(set(d["model"] for d in item["devices"] if d["model"])))
     for tag in ("MULTIUSER","REMOTE_NETWORKS","REMOTE_NETWORK","IPC_MANAGER"):
         print(tag,"count",len(item[tag]))
-        for s in item[tag][:3]:
-            print(s[:4000])
+        for block in item[tag][:3]:
+            print(block[:5000])
     print("LITERALS")
     for s in item["literals"][:100]:
         print(" ",s)
