@@ -13,6 +13,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Build clean Ubuntu 24.04 KOMPAS environment and prove lifecycle
+        continue-on-error: true
         shell: bash
         run: |
           set -euxo pipefail
@@ -114,7 +115,8 @@ jobs:
             grep -q "RESULT=UBUNTU_CONTAINER_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS" /root/installed-probe.txt
           '
 
-      - name: Export proven rootfs
+      - name: Export installed rootfs for local native acceptance
+        if: always()
         shell: bash
         run: |
           set -euxo pipefail
@@ -126,24 +128,31 @@ jobs:
           ls -lh out/rootfs.part-*
 
       - name: Upload part 00
+        if: always()
         uses: actions/upload-artifact@v4
         with: {name: kompas-ubuntu-rootfs-part00, path: out/rootfs.part-00, compression-level: 0, retention-days: 3}
       - name: Upload part 01
+        if: always()
         uses: actions/upload-artifact@v4
         with: {name: kompas-ubuntu-rootfs-part01, path: out/rootfs.part-01, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
       - name: Upload part 02
+        if: always()
         uses: actions/upload-artifact@v4
         with: {name: kompas-ubuntu-rootfs-part02, path: out/rootfs.part-02, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
       - name: Upload part 03
+        if: always()
         uses: actions/upload-artifact@v4
         with: {name: kompas-ubuntu-rootfs-part03, path: out/rootfs.part-03, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
       - name: Upload part 04
+        if: always()
         uses: actions/upload-artifact@v4
         with: {name: kompas-ubuntu-rootfs-part04, path: out/rootfs.part-04, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
       - name: Upload part 05
+        if: always()
         uses: actions/upload-artifact@v4
         with: {name: kompas-ubuntu-rootfs-part05, path: out/rootfs.part-05, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
       - name: Upload proof
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kompas-ubuntu-rootfs-proof
@@ -152,3 +161,11 @@ jobs:
             out/rootfs-SHA256.txt
             out/rootfs-parts-SHA256.txt
           retention-days: 3
+
+      - name: Enforce native proof after rootfs export
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s out/installed-probe.txt
+          grep -q 'RESULT=UBUNTU_CONTAINER_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS' out/installed-probe.txt
