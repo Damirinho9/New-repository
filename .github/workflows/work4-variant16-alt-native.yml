@@ -45,15 +45,16 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          rm -rf /tmp/.X11-unix
-          mkdir -p /tmp/.X11-unix
-          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/host-xvfb.out 2>/tmp/host-xvfb.err &
+          sudo mkdir -p /tmp/.X11-unix
+          sudo chmod 1777 /tmp/.X11-unix
+          sudo rm -f /tmp/.X11-unix/X101
+          Xvfb :101 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/host-xvfb.out 2>/tmp/host-xvfb.err &
           HOST_XVFB_PID=$!
           trap 'kill "$HOST_XVFB_PID" 2>/dev/null || true' EXIT
           sleep 2
-          test -S /tmp/.X11-unix/X99
-          DISPLAY=:99 xdpyinfo >/tmp/host-xdpyinfo.txt 2>&1 || true
-          docker run --rm -e DISPLAY=:99 -v /tmp/.X11-unix:/tmp/.X11-unix -v "$PWD:/work" alt:p11 bash -lc '
+          test -S /tmp/.X11-unix/X101
+          DISPLAY=:101 xdpyinfo >/tmp/host-xdpyinfo.txt 2>&1 || true
+          docker run --rm -e DISPLAY=:101 -v /tmp/.X11-unix:/tmp/.X11-unix -v "$PWD:/work" alt:p11 bash -lc '
             set -euxo pipefail
             find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i               -e "s#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"               -e "s#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"               -e "s#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"               -e "s#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"
             find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
@@ -131,10 +132,10 @@ jobs:
               exit 41
             fi
             echo "KEXEC=$KEXEC"
-            test -S /tmp/.X11-unix/X99
-            export DISPLAY=:99 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+            test -S /tmp/.X11-unix/X101
+            export DISPLAY=:101 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
             echo "DISPLAY=$DISPLAY QT_QPA_PLATFORM=$QT_QPA_PLATFORM LIBGL_ALWAYS_SOFTWARE=$LIBGL_ALWAYS_SOFTWARE"
-            timeout 25s dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config DISPLAY=:99 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 "$KEXEC" -automation >/tmp/kompas-init.out 2>/tmp/kompas-init.err || true
+            timeout 25s dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config DISPLAY=:101 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 "$KEXEC" -automation >/tmp/kompas-init.out 2>/tmp/kompas-init.err || true
             pkill -x kKompas 2>/dev/null || true
             pkill -x ksinvisible 2>/dev/null || true
 
@@ -142,9 +143,9 @@ jobs:
             cp /work/fastbuild/bootstrap_variant06_qt.so /tmp/bootstrap_variant06_qt.so
             rm -rf /tmp/work4_v16_native
             rm -f /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
-            export LANG=C.UTF-8 LC_ALL=C.UTF-8 QT_QPA_PLATFORM=xcb LD_LIBRARY_PATH="$BIN" DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1
+            export LANG=C.UTF-8 LC_ALL=C.UTF-8 QT_QPA_PLATFORM=xcb LD_LIBRARY_PATH="$BIN" DISPLAY=:101 LIBGL_ALWAYS_SOFTWARE=1
             unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
-            dbus-run-session -- env DISPLAY=:99 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$KEXEC" -automation >/tmp/kompas-proof.out 2>/tmp/kompas-proof.err &
+            dbus-run-session -- env DISPLAY=:101 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$KEXEC" -automation >/tmp/kompas-proof.out 2>/tmp/kompas-proof.err &
             KP=$!
             PASS=0
             for i in $(seq 1 140); do
@@ -160,7 +161,7 @@ jobs:
             cat /tmp/work4_v16_native/work4.log 2>/dev/null || true
             tail -200 /tmp/kompas-proof.err 2>/dev/null || true
             echo "=== HOST XVFB SOCKET ==="
-            ls -l /tmp/.X11-unix/X99 2>/dev/null || true
+            ls -l /tmp/.X11-unix/X101 2>/dev/null || true
             if [ "$PASS" = "1" ] && [ -s /tmp/work4_v16_native/Work4_V16_Bearing.a3d ]; then
               rm -rf /work/result/work4-native
               mkdir -p /work/result/work4-native
