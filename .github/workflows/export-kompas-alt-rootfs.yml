@@ -1,0 +1,201 @@
+name: Prove and export full ALT p11 KOMPAS v25 rootfs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/export-kompas-alt-rootfs.yml'
+
+jobs:
+  prove-export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Build exact ALT p11 KOMPAS environment and prove document Open
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          cat > /tmp/probe.py <<'PY'
+          import os, sys, glob, time
+          BIN="/opt/ascon/kompas3d-v25/Bin"
+          sys.path.insert(0, BIN)
+          import ksapi, constants
+          print("PYTHON", sys.version.replace("\n"," "))
+          app=ksapi.OpenKompasInvisible()
+          if not app:
+              raise SystemExit("OPEN_KOMPAS_INVISIBLE_FAIL")
+          print("KOMPAS_OPEN_PASS")
+          print("VERSION", app.GetSystemVersion())
+          lm=app.ApplicationLicenseManager
+          print("VARIANT", lm.KompasVariant if lm else None)
+          print("ACTIVE3D", lm.IsKompasModuleActive(constants.ksKompasModule3D) if lm else None)
+          candidates=glob.glob("/opt/ascon/kompas3d-v25/SDK/**/*.m3d", recursive=True)
+          print("M3D_CANDIDATES", len(candidates))
+          if not candidates:
+              raise SystemExit("NO_SDK_M3D")
+          sample=candidates[0]
+          print("SAMPLE", sample, os.path.getsize(sample))
+          docs=app.Documents
+          doc=docs.Open(sample, False, False)
+          if not doc:
+              print("ERROR_CODE", getattr(app,"LastErrorCode",None))
+              raise SystemExit("DOCUMENT_OPEN_FAIL")
+          print("DOCUMENT_OPEN_PASS", doc.PathName if hasattr(doc,"PathName") else sample)
+          d3=ksapi.IKompasDocument3D(doc)
+          if not d3:
+              raise SystemExit("CAST_3D_FAIL")
+          print("CAST_3D_PASS")
+          if not d3.RebuildDocument():
+              raise SystemExit("REBUILD_DOCUMENT_FAIL")
+          top=d3.TopPart
+          if top and not top.RebuildModel(False):
+              raise SystemExit("REBUILD_MODEL_FAIL")
+          print("REBUILD_PASS")
+          doc.Close(constants.kdDoNotSaveChanges)
+          print("CLOSE_PASS")
+          doc2=docs.Open(sample, False, False)
+          if not doc2:
+              raise SystemExit("REOPEN_FAIL")
+          print("REOPEN_PASS")
+          d32=ksapi.IKompasDocument3D(doc2)
+          if not d32 or not d32.RebuildDocument():
+              raise SystemExit("REOPEN_REBUILD_FAIL")
+          print("REOPEN_REBUILD_PASS")
+          doc2.Close(constants.kdDoNotSaveChanges)
+          app.Quit()
+          print("RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_REOPEN_PASS")
+          PY
+
+          docker run --name kompas-alt -d alt:p11 sleep infinity
+          docker exec kompas-alt bash -lc '
+            set -euxo pipefail
+            find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i \
+              -e "s#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g" \
+              -e "s#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g" \
+              -e "s#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g" \
+              -e "s#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"
+            find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
+            apt-get update
+            apt-get install -y wget ca-certificates dbus procps glibc-i18ndata fontconfig python3 xorg-server-xvfb xauth
+            apt-get install -y libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
+            wget -O /tmp/ascon-stable-alt.sh https://repo.ascon.ru/scripts/ascon-stable-alt.sh
+            sed -i -E "/^[[:space:]]*apt-get[[:space:]]+update[[:space:]]*$/d" /tmp/ascon-stable-alt.sh
+            bash /tmp/ascon-stable-alt.sh
+            find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i \
+              -e "s#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g" \
+              -e "s#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"
+            find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
+            apt-get update
+            apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25 ascon-kompas-v25
+            rpm -qa | grep "^ascon-kompas" | sort
+          '
+          docker cp /tmp/probe.py kompas-alt:/root/probe.py
+
+          docker exec kompas-alt bash -lc '
+            set -euxo pipefail
+            export HOME=/root XDG_CONFIG_HOME=/root/.config
+            mkdir -p /root/.config/ascon/KOMPAS-3D/25 /root/.config/ascon/"KOMPAS-3D Invisible"/25
+            if [ -d /etc/ascon/KOMPAS-3D/25 ]; then
+              cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/KOMPAS-3D/25/
+              cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/"KOMPAS-3D Invisible"/25/
+            fi
+            RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+            [ -z "$RES" ] || cp -f "$RES" /root/.config/ascon/"KOMPAS-3D Invisible"/25/QtResources.bin
+            rm -f /tmp/.X11-unix/X103
+            mkdir -p /tmp/.X11-unix
+            chmod 1777 /tmp/.X11-unix
+            Xvfb :103 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
+            XV=$!
+            trap "kill $XV 2>/dev/null || true" EXIT
+            sleep 2
+            test -S /tmp/.X11-unix/X103
+            export DISPLAY=:103 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+            export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+            dbus-run-session -- python3 /root/probe.py | tee /root/installed-probe.txt
+            grep -q "RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_REOPEN_PASS" /root/installed-probe.txt
+          '
+
+      - name: Export rootfs and prove it again via plain chroot
+        shell: bash
+        run: |
+          set -euxo pipefail
+          docker export kompas-alt | zstd -T0 -7 -o out/kompas-alt-p11-v25-rootfs.tar.zst
+          docker cp kompas-alt:/root/installed-probe.txt out/installed-probe.txt
+          sha256sum out/kompas-alt-p11-v25-rootfs.tar.zst | tee out/rootfs-SHA256.txt
+          ls -lh out/kompas-alt-p11-v25-rootfs.tar.zst
+          mkdir -p /tmp/kompas-chroot
+          zstd -dc out/kompas-alt-p11-v25-rootfs.tar.zst | sudo tar -xf - -C /tmp/kompas-chroot
+          sudo cp /tmp/probe.py /tmp/kompas-chroot/root/probe.py
+          sudo mkdir -p /tmp/kompas-chroot/dev /tmp/kompas-chroot/tmp/.X11-unix
+          for spec in "null c 1 3" "zero c 1 5" "random c 1 8" "urandom c 1 9"; do
+            set -- $spec
+            sudo rm -f "/tmp/kompas-chroot/dev/$1"
+            sudo mknod -m 666 "/tmp/kompas-chroot/dev/$1" "$2" "$3" "$4" || true
+          done
+          sudo chroot /tmp/kompas-chroot /bin/bash -lc '
+            set -euxo pipefail
+            export HOME=/root XDG_CONFIG_HOME=/root/.config
+            rm -f /tmp/.X11-unix/X104
+            mkdir -p /tmp/.X11-unix
+            chmod 1777 /tmp/.X11-unix
+            Xvfb :104 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
+            XV=$!
+            trap "kill $XV 2>/dev/null || true" EXIT
+            sleep 2
+            test -S /tmp/.X11-unix/X104
+            export DISPLAY=:104 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+            export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+            dbus-run-session -- python3 /root/probe.py | tee /root/chroot-probe.txt
+            grep -q "RESULT=ALT_INSTALLED_KOMPAS_OPEN_REBUILD_REOPEN_PASS" /root/chroot-probe.txt
+          '
+          sudo cp /tmp/kompas-chroot/root/chroot-probe.txt out/chroot-probe.txt
+          split -b 330M -d -a 2 out/kompas-alt-p11-v25-rootfs.tar.zst out/rootfs.part-
+          sha256sum out/rootfs.part-* | tee out/rootfs-parts-SHA256.txt
+          ls -lh out/rootfs.part-*
+
+      - name: Upload rootfs part 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-alt-rootfs-part00
+          compression-level: 0
+          retention-days: 3
+          path: out/rootfs.part-00
+
+      - name: Upload rootfs part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-alt-rootfs-part01
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: ignore
+          path: out/rootfs.part-01
+
+      - name: Upload rootfs part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-alt-rootfs-part02
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: ignore
+          path: out/rootfs.part-02
+
+      - name: Upload rootfs part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-alt-rootfs-part03
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: ignore
+          path: out/rootfs.part-03
+
+      - name: Upload proof and manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-alt-rootfs-proof
+          retention-days: 3
+          path: |
+            out/*probe.txt
+            out/rootfs-SHA256.txt
+            out/rootfs-parts-SHA256.txt
