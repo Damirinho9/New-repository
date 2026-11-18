@@ -106,7 +106,9 @@ jobs:
             sleep 2
             test -S /tmp/.X11-unix/X105
             export DISPLAY=:105 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+            export LANG=C.UTF-8 LC_ALL=C.UTF-8
             export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+            export LD_LIBRARY_PATH=/opt/ascon/kompas3d-v25/Bin
             timeout 90s dbus-run-session -- python3 /root/probe.py | tee /root/installed-probe.txt
             grep -q "RESULT=UBUNTU_CONTAINER_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS" /root/installed-probe.txt
           '
