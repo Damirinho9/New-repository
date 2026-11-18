@@ -84,23 +84,35 @@ struct DocPart {
   IKompasDocument3DPtr doc;
   IPartPtr top;
 };
+static fs::path native_template(const std::string& ext) {
+  const fs::path dir{"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates"};
+  require(fs::exists(dir),"KOMPAS template directory missing");
+  for(const auto& e: fs::directory_iterator(dir)) {
+    if(e.is_regular_file() && e.path().extension()==ext) return e.path();
+  }
+  require(false,"native KOMPAS template missing for "+ext);
+  return {};
+}
 static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
-  log("NEW_PART_BEFORE_DOCUMENTS_ADD");
-  auto base = require_ptr(docs->Add(ksDocumentPart, true), "Documents.Add part");
-  log("NEW_PART_AFTER_DOCUMENTS_ADD");
+  // Linux ksinvisible v25 can Open native 3D documents but Documents.Add(part)
+  // returns null. Bootstrap from ASCON's own empty native M3D template instead.
+  auto tpl=native_template(".m3d");
+  log("NEW_PART_TEMPLATE="+tpl.string());
+  auto base = require_ptr(docs->Open(tpl.wstring(), true, false), "Open native part template");
   IKompasDocument3DPtr doc = base;
-  require_ptr(doc, "cast part document 3D");
-  auto top = require_ptr(doc->GetTopPart(), "part TopPart");
+  require_ptr(doc, "cast part template document 3D");
+  auto top = require_ptr(doc->GetTopPart(), "part template TopPart");
+  require(!doc->GetLastFeature(),"part template is not empty");
   top->SetName(name);
   return {base,doc,top};
 }
 static DocPart new_assembly(const IDocumentsPtr& docs, const std::wstring& name) {
-  log("NEW_ASSEMBLY_BEFORE_DOCUMENTS_ADD");
-  auto base = require_ptr(docs->Add(ksDocumentAssembly, true), "Documents.Add assembly");
-  log("NEW_ASSEMBLY_AFTER_DOCUMENTS_ADD");
+  auto tpl=native_template(".a3d");
+  log("NEW_ASSEMBLY_TEMPLATE="+tpl.string());
+  auto base = require_ptr(docs->Open(tpl.wstring(), true, false), "Open native assembly template");
   IKompasDocument3DPtr doc = base;
-  require_ptr(doc, "cast assembly document 3D");
-  auto top = require_ptr(doc->GetTopPart(), "assembly TopPart");
+  require_ptr(doc, "cast assembly template document 3D");
+  auto top = require_ptr(doc->GetTopPart(), "assembly template TopPart");
   top->SetName(name);
   return {base,doc,top};
 }
