@@ -1,0 +1,67 @@
+name: Hexlet 7344445 KOMPAS GUI Explore
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-native-recovery
+    paths:
+      - ".github/workflows/hexlet-7344445-kompas-gui-explore.yml"
+  workflow_dispatch:
+
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS GUI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb desktop-file-utils xdotool imagemagick wmctrl libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25
+          mkdir -p hexlet_7344445/native_recovery/kompas_gui_explore
+
+      - name: Launch and explore actual GUI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 -ac >hexlet_7344445/native_recovery/kompas_gui_explore/xvfb.log 2>&1 &
+          sleep 2
+          kompas-v25 >hexlet_7344445/native_recovery/kompas_gui_explore/gui.out 2>hexlet_7344445/native_recovery/kompas_gui_explore/gui.err &
+          echo $! > hexlet_7344445/native_recovery/kompas_gui_explore/pid.txt
+
+          sleep 25
+          wmctrl -l -x | tee hexlet_7344445/native_recovery/kompas_gui_explore/windows_25s.txt || true
+          xdotool search --onlyvisible --name 'КОМПАС' getwindowname %@ 2>/dev/null | tee hexlet_7344445/native_recovery/kompas_gui_explore/window_names_25s.txt || true
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_gui_explore/01_loaded.png
+
+          WID=$(xdotool search --onlyvisible --name 'КОМПАС' 2>/dev/null | tail -1 || true)
+          echo "WID=$WID" | tee hexlet_7344445/native_recovery/kompas_gui_explore/wid.txt
+          test -n "$WID"
+          xdotool windowactivate --sync "$WID"
+          xdotool key --window "$WID" ctrl+n
+          sleep 5
+          wmctrl -l -x | tee hexlet_7344445/native_recovery/kompas_gui_explore/windows_after_ctrl_n.txt || true
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null | tee hexlet_7344445/native_recovery/kompas_gui_explore/all_window_names_after_ctrl_n.txt || true
+          import -display :99 -window root hexlet_7344445/native_recovery/kompas_gui_explore/02_after_ctrl_n.png
+
+          # Capture focused-window geometry and title for deterministic UI automation.
+          FOCUS=$(xdotool getwindowfocus)
+          echo "FOCUS=$FOCUS" | tee hexlet_7344445/native_recovery/kompas_gui_explore/focus.txt
+          xdotool getwindowname "$FOCUS" | tee -a hexlet_7344445/native_recovery/kompas_gui_explore/focus.txt || true
+          xdotool getwindowgeometry --shell "$FOCUS" | tee hexlet_7344445/native_recovery/kompas_gui_explore/focus_geometry.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7344445-kompas-gui-explore
+          path: hexlet_7344445/native_recovery/kompas_gui_explore/
+          if-no-files-found: warn
