@@ -2,7 +2,7 @@ from __future__ import annotations
 import hashlib, json, os, re, sys
 from pathlib import Path
 
-from ptlab import codec
+from ptlab import codec\nfrom ptlab import lab as labfile
 
 ROOT = Path(os.environ.get("DONOR_DIR", "/tmp/donor"))
 OUT = Path(os.environ.get("OUT_DIR", "hexlet_7344445/donor_audit"))
