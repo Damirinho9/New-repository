@@ -145,9 +145,9 @@ jobs:
           # on the 1920x1080 Xvfb screen.
           import -display :99 -window root runtime_evidence/03_home_after_eula.png
           xdotool windowfocus --sync "$MAIN_WID"
-          xdotool mousemove --sync 918 205
+          xdotool mousemove --sync 919 208
           xdotool getmouselocation --shell | tee runtime_evidence/drawing-tile-mouse.txt
-          xdotool click 1
+          xdotool click --repeat 2 --delay 180 1
           sleep 12
 
           xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
@@ -160,6 +160,26 @@ jobs:
 
           import -display :99 -window root runtime_evidence/04_drawing_created.png
           test -s runtime_evidence/04_drawing_created.png
+
+          # Functional proof probe: a real unsaved drawing must react to Ctrl+S
+          # by opening the native save dialog.
+          xdotool key --window "$MAIN_WID" ctrl+s
+          sleep 4
+          SAVE_FOCUS=$(xdotool getwindowfocus)
+          echo "SAVE_FOCUS=$SAVE_FOCUS" | tee runtime_evidence/save-focus.txt
+          xdotool getwindowname "$SAVE_FOCUS" | tee -a runtime_evidence/save-focus.txt || true
+          xdotool getwindowgeometry --shell "$SAVE_FOCUS" \
+            | tee runtime_evidence/save-focus-geometry.txt || true
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-windows-after-save.txt || true
+          import -display :99 -window root runtime_evidence/05_save_dialog_probe.png
+          test -s runtime_evidence/05_save_dialog_probe.png
+
+          # Close only the save dialog if one opened; do not discard the drawing.
+          if [ "$SAVE_FOCUS" != "$MAIN_WID" ]; then
+            xdotool key --window "$SAVE_FOCUS" Escape || true
+            sleep 1
+          fi
 
           # Non-fatal API7 probe against the accepted full GUI. Historical runs
           # returned None here, so GUI creation remains authoritative.
@@ -179,8 +199,30 @@ jobs:
           test -s runtime_evidence/02a_create_tiles_exposed.png
           test -s runtime_evidence/03_home_after_eula.png
           test -s runtime_evidence/04_drawing_created.png
+          test -s runtime_evidence/05_save_dialog_probe.png
 
-          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_IN_GUI$' runtime_evidence/result.txt
+          grep -Ei 'КОМПАС-3D|Чертеж|KOMPAS' runtime_evidence/drawing-focus.txt runtime_evidence/visible-windows-after-drawing.txt
+          grep -Ei 'Сохран|Save|Файл|KOMPAS|КОМПАС' runtime_evidence/save-focus.txt runtime_evidence/visible-windows-after-save.txt
+
+          sha256sum \
+            runtime_evidence/02a_create_tiles_exposed.png \
+            runtime_evidence/03_home_after_eula.png \
+            runtime_evidence/04_drawing_created.png \
+            runtime_evidence/05_save_dialog_probe.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-real-drawing-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+
+# stage3 eula gate trigger
+ runtime_evidence/eula-window-title.txt
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
           grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_IN_GUI$' runtime_evidence/result.txt
           grep -Ei 'КОМПАС-3D|Чертеж|KOMPAS' runtime_evidence/drawing-focus.txt runtime_evidence/visible-windows-after-drawing.txt
