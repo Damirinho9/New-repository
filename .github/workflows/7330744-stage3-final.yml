@@ -2,14 +2,14 @@ name: 7330744 stage3 final native simulation
 
 on:
   push:
-    branches: [multisim-7330744-stage3-final]
+    branches: [multisim-7330744-stage3-scr-gk]
     paths:
       - ".github/workflows/7330744-stage3-final.yml"
       - "fullv6/**"
   workflow_dispatch:
 
 concurrency:
-  group: 7330744-stage3-final
+  group: 7330744-stage3-scr-gk
   cancel-in-progress: true
 
 jobs:
