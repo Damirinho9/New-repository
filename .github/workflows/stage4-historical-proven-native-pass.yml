@@ -62,7 +62,13 @@ jobs:
           log('APP='+str(app.GetApplicationName(True)));log('BUILD='+str(app.GetBuildNumber()))
           lm=req(app.GetApplicationLicenseManager(),'license manager')
           req(lm.IsKompasModuleActive(c.ksKompasModule2D),'2D inactive');log('LICENSE_2D_ACTIVE=1')
-          docs=req(app.GetDocuments(),'documents');doc=req(docs.Add(c.ksDocumentFragment,True),'Documents.Add fragment')
+          docs=req(app.GetDocuments(),'documents')
+          doc=None
+          for _ in range(60):
+              doc=docs.Add(c.ksDocumentFragment,True)
+              if doc: break
+              time.sleep(.5)
+          doc=req(doc,'Documents.Add fragment')
           d2=req(ksapi.IKompasDocument2D(doc),'2D cast');d2.SetParametricMode(True);req(d2.IsParametricMode(),'parametric mode')
           view=req(req(d2.GetViewsAndLayersManager(),'vm').GetViews().GetActiveView(),'active view')
           dc=req(ksapi.IDrawingContainer(view),'dc');sc=req(ksapi.ISymbols2DContainer(view),'sc')
@@ -111,6 +117,8 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >result/stage4-historical-2d/kompas.out 2>result/stage4-historical-2d/kompas.err &
           KP=$!
           for i in $(seq 1 50); do pgrep -x kKompas >/dev/null && break; sleep .5; done
+          for i in $(seq 1 60); do ss -ltnp 2>/dev/null | grep -q 'kKompas' && break; sleep .5; done
+          ss -ltnp 2>/dev/null | grep 'kKompas' || true
           for i in $(seq 1 60); do
             ss -ltnp > result/stage4-historical-2d/sockets.txt || true
             grep -q 'kKompas' result/stage4-historical-2d/sockets.txt && break
@@ -238,6 +246,8 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas "$SEED" -automation >result/stage4-historical-3d/kompas.out 2>result/stage4-historical-3d/kompas.err &
           KP=$!
           for i in $(seq 1 50); do pgrep -x kKompas >/dev/null && break; sleep .5; done
+          for i in $(seq 1 60); do ss -ltnp 2>/dev/null | grep -q 'kKompas' && break; sleep .5; done
+          ss -ltnp 2>/dev/null | grep 'kKompas' || true
           for i in $(seq 1 60); do
             ss -ltnp > result/stage4-historical-3d/sockets.txt || true
             grep -q 'kKompas' result/stage4-historical-3d/sockets.txt && break
