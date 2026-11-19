@@ -232,11 +232,11 @@ jobs:
           else:
               results['GetKompasInvisible']=validate('GETKOMPASINVISIBLE',inv)
 
-          for p in ports:
-              results['IApplication:'+str(p)]=validate(
-                  'IAPPLICATION_PORT_'+str(p),
-                  lambda p=p: ksapi.IApplication(p)
-              )
+          # ksapi.py defines IApplication(int) as a wrapper around an already
+          # acquired native kompasApp reference. It is NOT a TCP-port connector.
+          # Therefore the discovered real listener ports are evidence only and
+          # must not be passed as object references.
+          print('IAPPLICATION_PORT_TEST=SKIPPED_SIGNATURE_IS_NATIVE_REFERENCE_NOT_PORT',flush=True)
 
           passing=[k for k,v in results.items() if v]
           print('PASSING_METHODS='+repr(passing),flush=True)
