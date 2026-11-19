@@ -101,6 +101,9 @@ jobs:
                   PASS=1
                   break
                 fi
+                if grep -q "^RESULT=FAIL_NATIVE_WORK2_VARIANT19$" /tmp/work2_v19_native/work2.log 2>/dev/null; then
+                  break
+                fi
                 if ! kill -0 "$KP" 2>/dev/null; then break; fi
               done
 
