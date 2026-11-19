@@ -85,7 +85,6 @@ jobs:
           sleep 25
           import -display :99 -window root runtime_evidence/02_full_gui_with_eula.png
 
-          # Find the actual EULA dialog by its exact title.
           EULA_WID=""
           for i in $(seq 1 30); do
             EULA_WID=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
@@ -98,15 +97,14 @@ jobs:
 
           xdotool getwindowname "$EULA_WID" | tee runtime_evidence/eula-window-title.txt
           xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-window-geometry.txt
-          xwininfo -id "$EULA_WID" -all > runtime_evidence/eula-xwininfo.txt
+          xwininfo -id "$EULA_WID" -all > runtime_evidence/eula-xwininfo-before.txt
 
-          # Use the geometry returned by X11. No blind keyboard navigation.
           eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
           test "$WIDTH" -gt 300
           test "$HEIGHT" -gt 300
 
-          # Native ASCON EULA: "Принимаю" is the left button on the bottom row.
-          # Its center is approximately 65% across the dialog and 42 px above bottom.
+          # Measured on the real dialog: 500x650 at X=710,Y=234.
+          # "Принимаю" center: ~65% across and 42 px above the bottom edge.
           CLICK_X=$((X + WIDTH * 65 / 100))
           CLICK_Y=$((Y + HEIGHT - 42))
           printf 'CLICK_X=%s\nCLICK_Y=%s\n' "$CLICK_X" "$CLICK_Y" \
@@ -117,35 +115,50 @@ jobs:
           xdotool getmouselocation --shell | tee runtime_evidence/eula-mouse-location.txt
           import -display :99 -window root runtime_evidence/03_eula_before_accept.png
 
-          # Click the detected "Принимаю" button.
           xdotool click 1
+          sleep 2
 
-          # EULA must disappear. If it remains, fail immediately and do nothing else.
+          # First hard check: the original EULA XID must no longer be viewable.
+          if xwininfo -id "$EULA_WID" -all > runtime_evidence/eula-xwininfo-after.txt 2>&1; then
+            if grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt; then
+              import -display :99 -window root runtime_evidence/04_eula_accept_FAILED.png || true
+              echo 'RESULT=FAIL_EULA_XID_STILL_VIEWABLE' | tee runtime_evidence/result.txt
+              exit 41
+            fi
+          else
+            echo 'EULA_XID_DESTROYED=1' | tee runtime_evidence/eula-xid-destroyed.txt
+          fi
+
+          # Second hard check: no visible EULA-title window may exist.
           EULA_STILL=""
-          for i in $(seq 1 20); do
-            sleep 1
+          for i in $(seq 1 10); do
             EULA_STILL=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
             [ -z "$EULA_STILL" ] && break
+            sleep 1
           done
-
           echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
           if [ -n "$EULA_STILL" ]; then
             import -display :99 -window root runtime_evidence/04_eula_accept_FAILED.png || true
             echo 'RESULT=FAIL_EULA_STILL_VISIBLE' | tee runtime_evidence/result.txt
-            exit 41
+            exit 42
           fi
 
-          # Main KOMPAS GUI must remain alive after the dialog disappears.
           MAIN_AFTER=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
           echo "MAIN_WINDOW_AFTER_EULA=$MAIN_AFTER" | tee runtime_evidence/main-after-eula.txt
           test -n "$MAIN_AFTER"
+
+          # Force the main GUI to repaint after the modal dialog is unmapped.
+          xdotool windowraise "$MAIN_AFTER"
+          xdotool windowactivate --sync "$MAIN_AFTER"
+          sleep 5
 
           xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
             | tee runtime_evidence/visible-windows-after-eula.txt || true
           ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
             | tee runtime_evidence/processes-after-eula.txt
 
-          import -display :99 -window root runtime_evidence/04_after_eula_accept.png
+          import -display :99 -window root runtime_evidence/04_after_eula_accept_root.png
+          import -display :99 -window "$MAIN_AFTER" runtime_evidence/05_after_eula_accept_main.png
 
           echo 'RESULT=PASS_EULA_DISMISSED' | tee runtime_evidence/result.txt
 
@@ -156,18 +169,24 @@ jobs:
           test -s runtime_evidence/01_startup.png
           test -s runtime_evidence/02_full_gui_with_eula.png
           test -s runtime_evidence/03_eula_before_accept.png
-          test -s runtime_evidence/04_after_eula_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
 
           grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
           grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
           grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
 
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
           sha256sum \
             runtime_evidence/01_startup.png \
             runtime_evidence/02_full_gui_with_eula.png \
             runtime_evidence/03_eula_before_accept.png \
-            runtime_evidence/04_after_eula_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
