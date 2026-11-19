@@ -170,3 +170,5 @@ jobs:
           name: kompas3d-real-drawing-evidence
           path: runtime_evidence/
           if-no-files-found: error
+
+# stage4 real drawing trigger
