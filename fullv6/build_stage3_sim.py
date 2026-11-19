@@ -20,8 +20,9 @@ def pick(*names):
     raise KeyError("missing model: "+", ".join(names))
 
 kp501_pref=os.environ.get("KP501_MODEL","2N6659")
+photo_proxy=os.environ.get("PHOTO_PATCH","0")=="1"
 models={
- "photo":pick("PHOTO_DIODE_RATED","PHOTODIODE","DIODE_RATED"),
+ "photo":pick("1N4007","MUR1510G","1N4003G","DIODE_RATED") if photo_proxy else pick("PHOTO_DIODE_RATED","PHOTODIODE","DIODE_RATED"),
  "kp501":pick(kp501_pref,"2N6659","MTD4N20E","IRFD110"),
  "kp707":pick("IRFD110"),
  "zener12":pick("1N4742A","DIODE_RATED"),
