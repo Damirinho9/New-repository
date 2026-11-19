@@ -100,7 +100,10 @@ jobs:
           [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
 
           ln -sf "$BIN/ksinvisible" /tmp/kKompas
-          test "$(readlink -f /tmp/kKompas)" = "$BIN/ksinvisible"
+          test -x /tmp/kKompas
+          test "$(readlink /tmp/kKompas)" = "$BIN/ksinvisible"
+          echo "KOMPAS_SYMLINK_TARGET=$(readlink /tmp/kKompas)" | tee symlink.txt
+          echo "KOMPAS_RESOLVED_EXE=$(readlink -f /tmp/kKompas)" | tee -a symlink.txt
           rm -f process-ps.txt process-tree.txt kompas-sockets.txt sdk-connection.txt kompas-live.out kompas-live.err discovered-ports.txt
           unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
           export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
@@ -260,6 +263,7 @@ jobs:
           path: |
             runtime-fingerprint.txt
             ksinvisible-ldd.txt
+            symlink.txt
             process-ps.txt
             process-tree.txt
             kompas-sockets.txt
