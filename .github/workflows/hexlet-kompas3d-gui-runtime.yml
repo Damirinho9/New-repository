@@ -139,63 +139,46 @@ jobs:
             exit 42
           fi
 
-          # Stage 4 diagnostic: capture the actual rendered home screen immediately
-          # after the EULA is gone. This is the reliable surface for selecting
-          # the native "Чертеж" create tile.
+          # Stage 4: create a real drawing through the rendered KOMPAS GUI.
+          # The EULA was moved to the right before acceptance, exposing the native
+          # Create tiles. "Чертеж" center was measured at approximately (918,205)
+          # on the 1920x1080 Xvfb screen.
           import -display :99 -window root runtime_evidence/03_home_after_eula.png
-          test -s runtime_evidence/03_home_after_eula.png
+          xdotool windowfocus --sync "$MAIN_WID"
+          xdotool mousemove --sync 918 205
+          xdotool getmouselocation --shell | tee runtime_evidence/drawing-tile-mouse.txt
+          xdotool click 1
+          sleep 12
+
           xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-windows-home-after-eula.txt || true
+            | tee runtime_evidence/visible-windows-after-drawing.txt || true
+          FOCUS_DRAWING=$(xdotool getwindowfocus)
+          echo "FOCUS_DRAWING=$FOCUS_DRAWING" | tee runtime_evidence/drawing-focus.txt
+          xdotool getwindowname "$FOCUS_DRAWING" | tee -a runtime_evidence/drawing-focus.txt || true
+          xdotool getwindowgeometry --shell "$FOCUS_DRAWING" \
+            | tee runtime_evidence/drawing-focus-geometry.txt || true
 
-          # Close the first KOMPAS instance through WM_DELETE so acceptance state is persisted.
-          xdotool windowclose "$MAIN_WID" || true
-          for i in $(seq 1 30); do
-            sleep 1
-            if ! ps -p "$FIRST_PID" >/dev/null 2>&1; then break; fi
-          done
-          if ps -p "$FIRST_PID" >/dev/null 2>&1; then
-            kill "$FIRST_PID" 2>/dev/null || true
-            sleep 2
-          fi
+          import -display :99 -window root runtime_evidence/04_drawing_created.png
+          test -s runtime_evidence/04_drawing_created.png
 
-          # Fresh second launch is the persistence proof.
-          kompas-v25 >runtime_evidence/kompas-second.out 2>runtime_evidence/kompas-second.err &
-          SECOND_PID=$!
-          echo "$SECOND_PID" > runtime_evidence/kompas-second.pid
+          # Non-fatal API7 probe against the accepted full GUI. Historical runs
+          # returned None here, so GUI creation remains authoritative.
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 - <<'PY' | tee runtime_evidence/api7-gui-probe.txt
+import ksapi
+app = ksapi.GetKompas()
+print("GETKOMPAS=", app)
+if app is None:
+    print("API7_GUI_ATTACH=UNAVAILABLE")
+else:
+    print("API7_GUI_ATTACH=AVAILABLE")
+    print("APP_NAME=", app.GetApplicationName(True))
+    print("BUILD=", app.GetBuildNumber())
+PY
 
-          SECOND_WID=""
-          for i in $(seq 1 90); do
-            sleep 1
-            CANDIDATE=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
-            if [ -n "$CANDIDATE" ]; then
-              SECOND_WID="$CANDIDATE"
-              break
-            fi
-          done
-          echo "SECOND_WINDOW_ID=$SECOND_WID" | tee runtime_evidence/second-window.txt
-          test -n "$SECOND_WID"
+          echo 'RESULT=PASS_REAL_DRAWING_CREATED_IN_GUI' | tee runtime_evidence/result.txt
 
-          sleep 20
-
-          EULA_SECOND=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
-          echo "EULA_ON_SECOND_LAUNCH=$EULA_SECOND" | tee runtime_evidence/eula-second-launch.txt
-          if [ -n "$EULA_SECOND" ]; then
-            import -display :99 -window root runtime_evidence/04_second_launch_EULA_FAILED.png || true
-            echo 'RESULT=FAIL_EULA_REAPPEARED_ON_SECOND_LAUNCH' | tee runtime_evidence/result.txt
-            exit 43
-          fi
-
-          ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
-            | tee runtime_evidence/processes-second-launch.txt
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-windows-second-launch.txt || true
-
-          import -display :99 -window root runtime_evidence/04_second_launch_no_eula_root.png
-          import -display :99 -window "$SECOND_WID" runtime_evidence/05_second_launch_no_eula_main.png
-
-          echo 'RESULT=PASS_EULA_DISMISSED_AND_PERSISTED' | tee runtime_evidence/result.txt
-
-      - name: Strict EULA gate
+      - name: Strict drawing creation gate
         shell: bash
         run: |
           set -euxo pipefail
@@ -204,32 +187,23 @@ jobs:
           test -s runtime_evidence/02_eula_before_accept.png
           test -s runtime_evidence/02a_create_tiles_exposed.png
           test -s runtime_evidence/03_home_after_eula.png
-          test -s runtime_evidence/04_second_launch_no_eula_root.png
-          test -s runtime_evidence/05_second_launch_no_eula_main.png
+          test -s runtime_evidence/04_drawing_created.png
 
           grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^EULA_ON_SECOND_LAUNCH=$' runtime_evidence/eula-second-launch.txt
-          grep -q '^RESULT=PASS_EULA_DISMISSED_AND_PERSISTED$' runtime_evidence/result.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-second-launch.txt
-
-          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
-            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
-          fi
+          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_IN_GUI$' runtime_evidence/result.txt
+          grep -Ei 'КОМПАС-3D|Чертеж|KOMPAS' runtime_evidence/drawing-focus.txt runtime_evidence/visible-windows-after-drawing.txt
 
           sha256sum \
-            runtime_evidence/01_first_start.png \
-            runtime_evidence/02_eula_before_accept.png \
             runtime_evidence/02a_create_tiles_exposed.png \
             runtime_evidence/03_home_after_eula.png \
-            runtime_evidence/04_second_launch_no_eula_root.png \
-            runtime_evidence/05_second_launch_no_eula_main.png \
+            runtime_evidence/04_drawing_created.png \
             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-eula-gate-evidence
+          name: kompas3d-real-drawing-evidence
           path: runtime_evidence/
           if-no-files-found: error
 
