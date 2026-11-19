@@ -28,7 +28,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             wget ca-certificates gnupg \
-            xvfb openbox xdotool imagemagick desktop-file-utils x11-utils \
+            xvfb openbox xdotool imagemagick desktop-file-utils x11-utils x11-xserver-utils \
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
 
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
@@ -150,6 +150,7 @@ jobs:
           # Force the main GUI to repaint after the modal dialog is unmapped.
           xdotool windowraise "$MAIN_AFTER"
           xdotool windowactivate --sync "$MAIN_AFTER"
+          xrefresh -display :99
           sleep 5
 
           xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
