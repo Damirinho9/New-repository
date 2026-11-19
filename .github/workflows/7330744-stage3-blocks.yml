@@ -1,4 +1,4 @@
-name: 7330744 Stage 3 isolated native block tests
+name: 7330744 Stage 4 real I_PH load switching sweep
 
 on:
   push:
@@ -124,6 +124,7 @@ jobs:
           $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
           $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
           $env:PYTHONPATH="$env:GITHUB_WORKSPACE\fullv6;$env:GITHUB_WORKSPACE\blocks_v6"
+          $env:STAGE4_SWEEP_ONLY='1'
           python -u blocks_v6\run_blocks.py 2>&1 | Tee-Object -FilePath blocks-out\console.log
           $rc=$LASTEXITCODE
           if($rc -ne 0){exit $rc}
@@ -131,7 +132,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: 7330744-blocks-native-evidence
+          name: 7330744-stage4-real-load-switching
           path: |
             blocks-out/
             docs/7330744/V6_SOURCE_REFERENCE.md

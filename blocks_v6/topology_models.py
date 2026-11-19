@@ -31,9 +31,34 @@ def vendor_card(path,alias,expected):
     tail[ends[0]]=".ENDS "+alias
     return "\n".join([header]+[l for l in lines[:idx] if not l.strip() or l.lstrip().startswith("*")]+tail[:ends[0]+1])
 
+
+
+def _find_any_card(comp,model,xmlio):
+    ma=next((e for e in model.iter("CiaCString") if ".model" in xmlio.text(e.get("String") or "").lower() or ".subckt" in xmlio.text(e.get("String") or "").lower()),None)
+    cb=next((e for e in comp.findall("./Attributes/Item/CiaCollString/strings/Item") if ".model" in xmlio.text(e.get("Value") or "").lower() or ".subckt" in xmlio.text(e.get("Value") or "").lower()),None)
+    if ma is None or cb is None: raise RuntimeError("SPICE card not found")
+    return ma,cb
+
+def _fd320_card(old):
+    s=old.replace("\\r\\n","\\n").replace("\\r","\\n")
+    mm=re.search(r"(?i)\\.model\\s+(\\S+)",s)
+    if mm:
+        name=mm.group(1)
+        return f".MODEL {name} D(IS=2n N=1.25 RS=2 CJO=80p VJ=0.65 M=0.45 BV=30 IBV=50u TT=1u)"
+    sm=re.search(r"(?im)^\\s*\\.subckt\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)",s)
+    if not sm: raise RuntimeError("Unsupported FD320 carrier card")
+    name,p1,p2=sm.groups()
+    return "\\n".join([f".SUBCKT {name} {p1} {p2}",f"DPHOTO {p1} {p2} DFD320",".MODEL DFD320 D(IS=2n N=1.25 RS=2 CJO=80p VJ=0.65 M=0.45 BV=30 IBV=50u TT=1u)",f".ENDS {name}"])
+
+def _patch_fd320(root,xmlio,notes):
+    c=_find_component(root,xmlio,"VD1");mod=_find_model(root,c);a,b=_find_any_card(c,mod,xmlio)
+    sa=_fd320_card(xmlio.text(a.get("String") or "")); sb=_fd320_card(xmlio.text(b.get("Value") or ""))
+    a.set("String",xmlio.asc(sa));b.set("Value",xmlio.asc(sb));mod.set("ChangedByUser","1")
+    notes["VD1"]="FD320 bounded model: IS=2nA, Cj=80pF, BV=30V; external I_PH is photocurrent. Source data: dark current <=50nA at ~10-12V."
+
 def patch_models(root,xmlio,refs=None):
     notes={}
-    refs=set(refs or ("VT1","VT2","VT3","VS1","VS2","VD3","VD4","VD5"))
+    refs=set(refs or ("VT1","VT2","VT3","VS1","VS2","VD1","VD3","VD4","VD5"))
     for ref in ("VT1","VT2","VT3","VS1","VS2"):
         if ref not in refs:continue
         c=_find_component(root,xmlio,ref);m=_find_model(root,c);a,b=_cards(c,m,xmlio)
@@ -55,6 +80,7 @@ def patch_models(root,xmlio,refs=None):
             s,t=_relative(x),_relative(y)
             notes[ref]="Functional cathode-referenced NI SCR, not manufacturer T123-250"
         _validate(s);_validate(t);a.set("String",xmlio.asc(s));b.set("Value",xmlio.asc(t));m.set("ChangedByUser","1")
+    if "VD1" in refs:_patch_fd320(root,xmlio,notes)
     # MUR1510G native symbol is used only as a two-terminal carrier.
     # Its original 100 V model is unsuitable for a 220 V circuit.
     for ref in ("VD3","VD4","VD5"):
@@ -71,13 +97,17 @@ def patch_models(root,xmlio,refs=None):
     return notes
 
 def verify_saved_cards(root,xmlio,refs=None):
-    refs=set(refs or ("VT1","VT2","VT3","VS1","VS2","VD3","VD4","VD5"))
+    refs=set(refs or ("VT1","VT2","VT3","VS1","VS2","VD1","VD3","VD4","VD5"))
     for ref in ("VT1","VT2","VT3","VS1","VS2"):
         if ref not in refs:continue
         c=_find_component(root,xmlio,ref);m=_find_model(root,c);a,b=_cards(c,m,xmlio)
         for x in (xmlio.text(a.get("String")),xmlio.text(b.get("Value"))):
             _validate(x)
             if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": gate reference lost")
+    if "VD1" in refs:
+        c=_find_component(root,xmlio,"VD1");mod=_find_model(root,c);a,b=_find_any_card(c,mod,xmlio)
+        for x in (xmlio.text(a.get("String") or ""),xmlio.text(b.get("Value") or "")):
+            if "BV=30" not in x or ("IS=2n" not in x and "IS=2N" not in x.upper()): raise RuntimeError("VD1: FD320 model patch lost")
     for ref in ("VD3","VD4","VD5"):
         if ref not in refs:continue
         c=_find_component(root,xmlio,ref);m=_find_model(root,c)

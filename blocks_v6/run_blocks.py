@@ -56,7 +56,7 @@ def run(name,net,nets,dur):
         builder.build(spec,lib=LIB,allow_fallback=True,auto_repair=True,repair_budget_s=12)
         root=xmlio.load(file)
         refs={s.split()[0][1:] for s in net if s.startswith("X")}
-        refs &= {"VT1","VT2","VT3","VS1","VS2","VD3","VD4","VD5"}
+        refs &= {"VT1","VT2","VT3","VS1","VS2","VD1","VD3","VD4","VD5"}
         record["model_notes"]=patch_models(root,xmlio,refs)
         xmlio.save(root,file,compress=True);verify_saved_cards(xmlio.load(file),xmlio,refs)
         record["sha256"]=hashlib.sha256(file.read_bytes()).hexdigest()
@@ -104,6 +104,52 @@ def ordered_power(off,on):
     return pair(off,on) and load(off)<=30 and load(on)>=170
 
 def amps(a):return a.get("metrics",{}).get("drive_i",{}).get("rms")
+# Stage 4 targeted autonomous I_PH sweep using the already proven power/control configuration.
+# No diagnostic source acts on DRV, T2 or SCR gates in these runs.
+if os.environ.get("STAGE4_SWEEP_ONLY","0")=="1":
+    sweep_values=(0,0.25,0.5,1,1.5,2,2.5,3,3.5,4,5,6,8,10,12,16)
+    all_sets=[]
+    accepted=[]
+    for f1 in (False,True):
+        for f2 in (False,True):
+            net0=power("dc_tb",False)+control(False)+source()
+            rows=[]
+            for i,u in enumerate(sweep_values):
+                rr=run(f"stage4_f{int(f1)}{int(f2)}_{i:02d}_{str(u).replace('.','p')}u",net0+photo(f1,f2,u),PWR+PH+["vt3_r6"],3.0)
+                rows.append({"I_PH_uA":u,"run":rr["name"],"LOAD_RMS_V":load(rr),
+                    "SENS_mean_V":rr.get("metrics",{}).get("sens",{}).get("mean"),
+                    "T1_mean_V":rr.get("metrics",{}).get("t1",{}).get("mean"),
+                    "T2_mean_V":rr.get("metrics",{}).get("t2",{}).get("mean"),
+                    "DRV_mean_V":rr.get("metrics",{}).get("drv",{}).get("mean"),
+                    "G1K1_RMS_V":rr.get("metrics",{}).get("gk1",{}).get("rms"),
+                    "G2K2_RMS_V":rr.get("metrics",{}).get("gk2",{}).get("rms"),
+                    "SW_RMS_V":rr.get("metrics",{}).get("sw",{}).get("rms")})
+            good=[x for x in rows if x["LOAD_RMS_V"] is not None]
+            if not good:
+                rec={"f1":f1,"f2":f2,"rows":rows,"pass":False,"reason":"no numeric load"}
+            else:
+                lo=min(good,key=lambda x:x["LOAD_RMS_V"]);hi=max(good,key=lambda x:x["LOAD_RMS_V"])
+                span=hi["LOAD_RMS_V"]-lo["LOAD_RMS_V"]
+                ok=lo["LOAD_RMS_V"]<=30 and hi["LOAD_RMS_V"]>=170 and span>=140
+                rec={"f1":f1,"f2":f2,"rows":rows,"min_load":lo,"max_load":hi,"span_V":span,"pass":ok}
+                if ok:accepted.append(rec)
+            all_sets.append(rec);save("STAGE4_ALL_SWEEPS.json",all_sets)
+    result={"result":"PASS_REAL_LOAD_SWITCHING" if accepted else "FAIL_REAL_LOAD_SWITCHING",
+        "criterion":{"off_max_Vrms":30,"on_min_Vrms":170,"span_min_Vrms":140},
+        "fd320_model":{"dark_current_model_IS_A":2e-9,"dark_current_max_reference_A":50e-9,"junction_capacitance_F":80e-12,"reverse_BV_V":30},
+        "accepted":accepted,"all_sets":all_sets}
+    if accepted:
+        best=max(accepted,key=lambda x:x["span_V"])
+        result["selected"]=best
+        for label,row in (("OFF",best["min_load"]),("ON",best["max_load"])):
+            src=OUT/(row["run"]+".ms14");dst=OUT/f"7330744_STAGE4_{label}.ms14"
+            if src.exists():dst.write_bytes(src.read_bytes())
+        # Persist a flat CSV for the selected physical sweep.
+        with (OUT/"STAGE4_IPH_SWEEP.csv").open("w",newline="",encoding="utf-8") as fh:
+            cols=list(best["rows"][0]);cw=csv.DictWriter(fh,fieldnames=cols);cw.writeheader();cw.writerows(best["rows"])
+    save("STAGE4_RESULT.json",result);print(json.dumps(result,ensure_ascii=False),flush=True)
+    sys.exit(0 if accepted else 2)
+
 # Power: inject a real controlled path or bounded current into DRV, never into either SCR gate directly.
 # Both source-ambiguous bridge assignments and diode polarity are tested.
 power_pairs=[]
