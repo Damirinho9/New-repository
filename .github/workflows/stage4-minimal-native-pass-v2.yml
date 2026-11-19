@@ -21,7 +21,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: {ref: ${{ github.sha }}}
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/download-artifact@v4
         with:
           pattern: kompas-v25-runtime-*
@@ -251,7 +252,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: {ref: ${{ github.sha }}}
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/download-artifact@v4
         with:
           pattern: kompas-v25-runtime-*
