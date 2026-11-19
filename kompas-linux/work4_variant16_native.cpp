@@ -84,12 +84,27 @@ struct DocPart {
   IKompasDocument3DPtr doc;
   IPartPtr top;
 };
+static fs::path native_template(const std::string& ext) {
+  const fs::path dir{"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates"};
+  require(fs::exists(dir),"KOMPAS template directory missing");
+  for(const auto& e:fs::directory_iterator(dir))
+    if(e.is_regular_file() && e.path().extension()==ext) return e.path();
+  require(false,"native KOMPAS template missing for "+ext);
+  return {};
+}
+static IKompasDocumentPtr open_native(const IDocumentsPtr& docs,const fs::path& p) {
+  auto par=require_ptr(docs->GetOpenDocumentParam(),"GetOpenDocumentParam");
+  par->SetVisible(false);
+  par->SetReadOnly(false);
+  par->SetApplyingIndex(0);
+  auto d=docs->OpenDocument(p.wstring(),par);
+  return require_ptr(d,"OpenDocument "+p.string());
+}
 static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
-  log("NEW_PART_BEFORE_DOCUMENTS_ADD");
-  auto base = docs->Add(ksDocumentPart, true);
-  if (!base) base = docs->Add(ksDocumentPart, true);
-  base = require_ptr(base, "Documents.Add part");
-  log("NEW_PART_AFTER_DOCUMENTS_ADD");
+  auto tpl=native_template(".m3d");
+  log("NEW_PART_TEMPLATE="+tpl.string());
+  auto base=require_ptr(docs->AddNewDocumentFromTemplate(tpl.wstring(),false),"AddNewDocumentFromTemplate part");
+  log("NEW_PART_TEMPLATE_ADD_PASS");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast part document 3D");
   auto top = require_ptr(doc->GetTopPart(), "part TopPart");
@@ -97,11 +112,10 @@ static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
   return {base,doc,top};
 }
 static DocPart new_assembly(const IDocumentsPtr& docs, const std::wstring& name) {
-  log("NEW_ASSEMBLY_BEFORE_DOCUMENTS_ADD");
-  auto base = docs->Add(ksDocumentAssembly, true);
-  if (!base) base = docs->Add(ksDocumentAssembly, true);
-  base = require_ptr(base, "Documents.Add assembly");
-  log("NEW_ASSEMBLY_AFTER_DOCUMENTS_ADD");
+  auto tpl=native_template(".a3d");
+  log("NEW_ASSEMBLY_TEMPLATE="+tpl.string());
+  auto base=require_ptr(docs->AddNewDocumentFromTemplate(tpl.wstring(),false),"AddNewDocumentFromTemplate assembly");
+  log("NEW_ASSEMBLY_TEMPLATE_ADD_PASS");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast assembly document 3D");
   auto top = require_ptr(doc->GetTopPart(), "assembly TopPart");
@@ -471,7 +485,7 @@ static void build_assembly(const IDocumentsPtr& docs) {
 }
 static void acceptance(const IDocumentsPtr& docs) {
   for(auto p : {inner_path(),cup_l_path(),cup_r_path(),roller_path(),cage_path(),rivet_path()}) {
-    auto base=require_ptr(docs->Open(p.wstring(),true,false),"detail reopen "+p.string());
+    auto base=require_ptr(open_native(docs,p.wstring()),"detail reopen "+p.string());
     IKompasDocument3DPtr d=base;
     auto top=require_ptr(d->GetTopPart(),"detail reopened top");
     require(d->RebuildDocument(),"detail reopen doc rebuild");
@@ -482,7 +496,7 @@ static void acceptance(const IDocumentsPtr& docs) {
   }
   log("ALL_DETAILS_REOPEN_REBUILD_PASS");
 
-  auto base=require_ptr(docs->Open(asm_path().wstring(),true,false),"assembly reopen nominal");
+  auto base=require_ptr(open_native(docs,asm_path().wstring()),"assembly reopen nominal");
   IKompasDocument3DPtr doc=base;
   auto top=require_ptr(doc->GetTopPart(),"reopened assembly top");
   require(doc->RebuildDocument(),"nominal assembly doc rebuild");
@@ -512,7 +526,7 @@ static void acceptance(const IDocumentsPtr& docs) {
   require(base->Save(),"save changed assembly");
   close_doc(base);
 
-  auto cb=require_ptr(docs->Open(asm_path().wstring(),true,false),"assembly reopen changed");
+  auto cb=require_ptr(open_native(docs,asm_path().wstring()),"assembly reopen changed");
   IKompasDocument3DPtr cd=cb;
   auto ct=require_ptr(cd->GetTopPart(),"changed assembly top");
   require(cd->RebuildDocument(),"changed reopen doc rebuild");
@@ -534,7 +548,7 @@ static void acceptance(const IDocumentsPtr& docs) {
   require(cb->Save(),"save restored nominal");
   close_doc(cb);
 
-  auto fb=require_ptr(docs->Open(asm_path().wstring(),true,false),"final assembly reopen");
+  auto fb=require_ptr(open_native(docs,asm_path().wstring()),"final assembly reopen");
   IKompasDocument3DPtr fd=fb;
   auto ft=require_ptr(fd->GetTopPart(),"final top");
   require(fd->RebuildDocument(),"final doc rebuild");
