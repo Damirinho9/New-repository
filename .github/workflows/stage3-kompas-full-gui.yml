@@ -211,6 +211,7 @@ jobs:
             gui-binary-SHA256.txt
             gui-file.txt
             gui-ldd.txt
+            gui-compiler.txt
             gui-process.txt
             gui-sockets.txt
             gui-sockets-history.txt
