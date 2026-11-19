@@ -1,0 +1,319 @@
+name: KOMPAS Stage 4 v3 Documents.Open SDK samples native PASS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-minimal-native-pass-v3.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  RUNTIME_RUN: 44521459604
+  RUNTIME_SHA256: 9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2
+
+jobs:
+  native-2d:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: ${{ env.RUNTIME_RUN }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime and SDK samples
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          test "$(cat kompas-runtime.part-* | sha256sum | cut -d' ' -f1)" = "$RUNTIME_SHA256"
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          [ ! -d "$RUNNER_TEMP/runtime/opt/ascon/common" ] || sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p result/stage4-v3-2d
+          python3 - <<'PY'
+          import zipfile,pathlib,hashlib
+          z=pathlib.Path('/opt/ascon/kompas3d-v25/SDK/KsAPI/Samples.zip')
+          p=pathlib.Path('/tmp/Stage4_Step5.frw')
+          with zipfile.ZipFile(z) as f:p.write_bytes(f.read('Examples/Content/Step5.frw'))
+          print('STEP5_SHA256='+hashlib.sha256(p.read_bytes()).hexdigest())
+          print('STEP5_BYTES='+str(p.stat().st_size))
+          PY
+      - name: Install host libs
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xauth dbus procps libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+      - name: Native 2D open mutate save close reopen rebuild
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          export HOME="$RUNNER_TEMP/s4v3-2d" XDG_CONFIG_HOME="$HOME/.config" QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25"
+          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          cat >/tmp/s4v3_2d.py <<'PY'
+          import ksapi,time,pathlib,math,hashlib
+          from constants import constants as c
+          seed='/tmp/Stage4_Step5.frw'
+          out=pathlib.Path('result/stage4-v3-2d/Stage4_Minimal_Parametric.frw').resolve()
+          logp=pathlib.Path('result/stage4-v3-2d/native-2d.log')
+          def log(x):
+              print(x,flush=True)
+              with logp.open('a',encoding='utf-8') as f:f.write(str(x)+'\n')
+          def req(x,m):
+              if not x:raise RuntimeError(m)
+              return x
+          def err(app,label):
+              try:
+                  e=app.GetKompasError()
+                  if not e:return
+                  for n in ('GetCode','GetDescription','IsError3D'):
+                      if hasattr(e,n):
+                          try:log(label+'_'+n+'='+repr(getattr(e,n)()))
+                          except Exception as ex:log(label+'_'+n+'_EX='+repr(ex))
+              except Exception as ex:log(label+'_ERROROBJ_EX='+repr(ex))
+          app=None
+          for _ in range(80):
+              app=ksapi.GetKompas()
+              if app:break
+              time.sleep(.25)
+          req(app,'GetKompas');log('APP='+str(app.GetApplicationName(True)))
+          lm=req(app.GetApplicationLicenseManager(),'license manager');req(lm.IsKompasModuleActive(c.ksKompasModule2D),'2D inactive');log('LICENSE_2D_ACTIVE=1')
+          docs=req(app.GetDocuments(),'documents')
+          doc=None
+          for label,vis in [('OPEN_VISIBLE',True),('OPEN_INVISIBLE',False)]:
+              try:doc=docs.Open(seed,vis,False)
+              except Exception as ex:log(label+'_EXCEPTION='+repr(ex));doc=None
+              if doc:log(label+'_PASS');break
+              err(app,label)
+          if not doc:
+              try:
+                  p=docs.GetOpenDocumentParam();p.SetVisible(True);p.SetReadOnly(False);doc=docs.OpenDocument(seed,p)
+                  if doc:log('OPENDOCUMENT_PASS')
+              except Exception as ex:log('OPENDOCUMENT_EXCEPTION='+repr(ex))
+          req(doc,'official SDK FRW could not be opened')
+          try:doc.SetActive()
+          except:pass
+          d2=req(ksapi.IKompasDocument2D(doc),'IKompasDocument2D');d2.SetParametricMode(True);req(d2.IsParametricMode(),'parametric mode')
+          view=req(req(d2.GetViewsAndLayersManager(),'vm').GetViews().GetActiveView(),'active view')
+          dc=req(ksapi.IDrawingContainer(view),'drawing container');sc=req(ksapi.ISymbols2DContainer(view),'symbols container')
+          log('OPEN_NATIVE_FRW_PASS path='+str(doc.GetFullPath()))
+          line=req(dc.GetLineSegments().Add(),'line Add');line.SetX1(200);line.SetY1(200);line.SetX2(220);line.SetY2(200);line.SetStyle(c.ksCSNormal);req(line.Update(),'line Update')
+          def con(o,t,index=None,name=None,value=None):
+              q=req(o.NewConstraint(),f'NewConstraint {t}');q.SetConstraintType(t)
+              if index is not None:q.SetIndex(index)
+              if name is not None:q.SetVariable(name)
+              if value is not None:q.SetConstraintValue(float(value))
+              req(q.Create(),f'Create constraint {t}');req(q.IsValid(),f'Invalid constraint {t}');return q
+          con(line,c.ksCFixedPoint,index=0);con(line,c.ksCHorizontal)
+          dim=req(sc.GetLineDimensions().Add(),'dimension Add')
+          dim.SetX1(200);dim.SetY1(200);dim.SetX2(220);dim.SetY2(200);dim.SetX3(210);dim.SetY3(215);dim.SetOrientation(c.ksLinDParallel)
+          req(dim.Update(),'dimension Update');req(dim.Associate(),'dimension Associate');con(dim,c.ksCFixedDim);con(dim,c.ksCDimWithVariable,name='Ltest',value=20)
+          var=req(view.GetDimensionVariable(dim),'dimension variable')
+          before=(float(line.GetX1()),float(line.GetY1()),float(line.GetX2()),float(line.GetY2()))
+          var.SetExpression('35');var.SetValue(35.0);req(d2.CompleteRebuildDocument(),'rebuild 35')
+          after=(float(line.GetX1()),float(line.GetY1()),float(line.GetX2()),float(line.GetY2()));ln=math.hypot(after[2]-after[0],after[3]-after[1])
+          log('LTEST_AFTER='+str(float(var.GetValue())));log('LINE_BEFORE='+repr(before));log('LINE_AFTER='+repr(after));log('LINE_LENGTH_AFTER='+str(ln))
+          req(abs(float(var.GetValue())-35)<1e-5,'var !=35');req(abs(ln-35)<.5,'line length !=35');req(sum((after[i]-before[i])**2 for i in range(4))**.5>10,'coords did not move')
+          log('PARAMETRIC_COORDINATE_MUTATION_PASS')
+          req(doc.SaveAs(str(out)),'SaveAs');req(out.exists() and out.stat().st_size>1000,'FRW missing');log('SAVE_PASS')
+          doc.Close(c.kdDoNotSaveChanges);log('CLOSE_PASS')
+          reopened=None
+          for label,vis in [('REOPEN_VISIBLE',True),('REOPEN_INVISIBLE',False)]:
+              try:reopened=docs.Open(str(out),vis,False)
+              except Exception as ex:log(label+'_EXCEPTION='+repr(ex));reopened=None
+              if reopened:log(label+'_PASS');break
+              err(app,label)
+          req(reopened,'reopen FRW failed')
+          d2r=req(ksapi.IKompasDocument2D(reopened),'reopen IKompasDocument2D');d2r.SetParametricMode(True);req(d2r.CompleteRebuildDocument(),'reopen rebuild')
+          vr=req(d2r.GetVariableByName(False,'Ltest'),'reopen Ltest');req(abs(float(vr.GetValue())-35)<1e-5,'reopen var mismatch')
+          vrw=req(req(d2r.GetViewsAndLayersManager(),'reopen vm').GetViews().GetActiveView(),'reopen view');dcr=req(ksapi.IDrawingContainer(vrw),'reopen dc')
+          lines=req(dcr.GetLineSegments(),'reopen lines');getter=req(getattr(lines,'GetLineSegment',None),'GetLineSegment');found=False
+          for idx in list(range(int(lines.GetCount())))+list(range(1,int(lines.GetCount())+1)):
+              try:s=getter(idx)
+              except:s=None
+              if not s:continue
+              try:
+                  x1,y1,x2,y2=map(float,(s.GetX1(),s.GetY1(),s.GetX2(),s.GetY2()));ll=math.hypot(x2-x1,y2-y1)
+                  if abs(y1-200)<1 and abs(y2-200)<1 and abs(ll-35)<.5:found=True;log('REOPEN_LINE_LENGTH='+str(ll));break
+              except:pass
+          req(found,'reopen driven line missing')
+          r=reopened.Save();req(r is not False,'final Save false');reopened.Close(c.kdDoNotSaveChanges)
+          log('SHA256='+hashlib.sha256(out.read_bytes()).hexdigest());log('REOPEN_REBUILD_PASS');log('RESULT=PASS_MINIMAL_NATIVE_2D_FRW_MUTATION_REOPEN')
+          try:app.Quit()
+          except:pass
+          PY
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" dbus-run-session -- /tmp/kKompas -automation >result/stage4-v3-2d/kompas.out 2>result/stage4-v3-2d/kompas.err &
+          KP=$!
+          python3 -u /tmp/s4v3_2d.py 2>&1 | tee result/stage4-v3-2d/python.stdout
+          kill "$KP" 2>/dev/null || true;pkill -TERM -x kKompas 2>/dev/null || true
+          grep -qx 'RESULT=PASS_MINIMAL_NATIVE_2D_FRW_MUTATION_REOPEN' result/stage4-v3-2d/native-2d.log
+          sha256sum result/stage4-v3-2d/Stage4_Minimal_Parametric.frw | tee result/stage4-v3-2d/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-v3-native-2d
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-v3-2d/**
+
+  native-3d:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: ${{ env.RUNTIME_RUN }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime and SDK sample
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          test "$(cat kompas-runtime.part-* | sha256sum | cut -d' ' -f1)" = "$RUNTIME_SHA256"
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          [ ! -d "$RUNNER_TEMP/runtime/opt/ascon/common" ] || sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs";SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n'|sort -u|paste -sd: -);echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+          cd "$GITHUB_WORKSPACE";mkdir -p result/stage4-v3-3d
+          python3 - <<'PY'
+          import zipfile,pathlib,hashlib
+          z=pathlib.Path('/opt/ascon/kompas3d-v25/SDK/KsAPI/Samples.zip');p=pathlib.Path('/tmp/Stage4_Part.m3d')
+          with zipfile.ZipFile(z) as f:p.write_bytes(f.read('Examples/Content/part.m3d'))
+          print('PART_SHA256='+hashlib.sha256(p.read_bytes()).hexdigest());print('PART_BYTES='+str(p.stat().st_size))
+          PY
+      - name: Install host libs
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xauth dbus procps libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+      - name: Native 3D open sketch extrusion save close reopen rebuild
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          export HOME="$RUNNER_TEMP/s4v3-3d" XDG_CONFIG_HOME="$HOME/.config" QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25";unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          cat >/tmp/s4v3_3d.py <<'PY'
+          import ksapi,time,pathlib,hashlib
+          from constants import constants as c
+          from constants3d import constants as c3
+          seed='/tmp/Stage4_Part.m3d';out=pathlib.Path('result/stage4-v3-3d/Stage4_Minimal_Extrusion.m3d').resolve();logp=pathlib.Path('result/stage4-v3-3d/native-3d.log')
+          def log(x):
+              print(x,flush=True)
+              with logp.open('a',encoding='utf-8') as f:f.write(str(x)+'\n')
+          def req(x,m):
+              if not x:raise RuntimeError(m)
+              return x
+          def err(app,label):
+              try:
+                  e=app.GetKompasError()
+                  if not e:return
+                  for n in ('GetCode','GetDescription','IsError3D'):
+                      if hasattr(e,n):
+                          try:log(label+'_'+n+'='+repr(getattr(e,n)()))
+                          except Exception as ex:log(label+'_'+n+'_EX='+repr(ex))
+              except Exception as ex:log(label+'_ERROROBJ_EX='+repr(ex))
+          app=None
+          for _ in range(80):
+              app=ksapi.GetKompas()
+              if app:break
+              time.sleep(.25)
+          req(app,'GetKompas');log('APP='+str(app.GetApplicationName(True)))
+          lm=req(app.GetApplicationLicenseManager(),'license manager');req(lm.IsKompasModuleActive(c.ksKompasModule3D),'3D inactive');log('LICENSE_3D_ACTIVE=1')
+          docs=req(app.GetDocuments(),'documents');base=None
+          for label,vis in [('OPEN_VISIBLE',True),('OPEN_INVISIBLE',False)]:
+              try:base=docs.Open(seed,vis,False)
+              except Exception as ex:log(label+'_EXCEPTION='+repr(ex));base=None
+              if base:log(label+'_PASS');break
+              err(app,label)
+          if not base:
+              try:
+                  p=docs.GetOpenDocumentParam();p.SetVisible(True);p.SetReadOnly(False);base=docs.OpenDocument(seed,p)
+                  if base:log('OPENDOCUMENT_PASS')
+              except Exception as ex:log('OPENDOCUMENT_EXCEPTION='+repr(ex))
+          req(base,'official SDK M3D could not be opened')
+          doc3=req(ksapi.IKompasDocument3D(base),'IKompasDocument3D');top=req(doc3.GetTopPart(),'GetTopPart')
+          log('OPEN_EXISTING_M3D_PASS path='+str(base.GetFullPath()));log('TOPPART_PASS')
+          req(doc3.RebuildDocument(),'initial doc rebuild');req(top.RebuildModel(False),'initial model rebuild')
+          mass0=float(top.GetMass());density=float(top.GetDensity())
+          if density<=0:
+              top.SetMaterial('Stage4Smoke',1.0);req(top.RebuildModel(False),'material model rebuild');req(doc3.RebuildDocument(),'material doc rebuild');density=float(top.GetDensity());mass0=float(top.GetMass())
+          req(density>0,'density <=0');vol0=mass0/density;log(f'MASS_BEFORE={mass0:.12g}');log(f'DENSITY={density:.12g}');log(f'VOLUME_BEFORE_DERIVED={vol0:.12g}')
+          mc=req(top.GetModelContainer(),'model container');sk=req(req(mc.GetSketchs(),'sketches').Add(),'sketch Add');sk.SetPlane(req(top.GetDefaultObject(c3.o3d_planeXOY),'XOY'))
+          frag=req(sk.BeginEdit(False),'BeginEdit');view=req(req(frag.GetViewsAndLayersManager(),'frag vm').GetViews().GetActiveView(),'frag view');lines=req(req(ksapi.IDrawingContainer(view),'frag dc').GetLineSegments(),'frag lines')
+          for x1,y1,x2,y2 in [(-4,-3,4,-3),(4,-3,4,3),(4,3,-4,3),(-4,3,-4,-3)]:
+              s=req(lines.Add(),'line Add');s.SetX1(x1);s.SetY1(y1);s.SetX2(x2);s.SetY2(y2);s.SetStyle(c.ksCSNormal);req(s.Update(),'line Update')
+          req(sk.EndEdit(),'EndEdit');req(sk.Update(),'sketch Update');log('SKETCH_EDIT_PASS')
+          exts=req(mc.GetExtrusions(),'extrusions');op=c3.o3d_baseExtrusion if mass0<=1e-12 else c3.o3d_bossExtrusion
+          ext=req(exts.Add(op),'extrusion Add');ext.SetProfiles([sk]);req(ext.SetSideParameters(True,c3.etBlind,3.0,0.0,False,None),'side params');ok=ext.Update()
+          if not ok and op==c3.o3d_bossExtrusion:
+              try:ext.Delete()
+              except:pass
+              ext=req(exts.Add(c3.o3d_cutExtrusion),'cut extrusion Add');ext.SetProfiles([sk]);req(ext.SetSideParameters(True,c3.etBlind,3.0,0.0,False,None),'cut side params');req(ext.Update(),'cut extrusion Update');log('EXTRUSION_MODE=cut')
+          else:req(ok,'extrusion Update');log('EXTRUSION_MODE='+('base' if op==c3.o3d_baseExtrusion else 'boss'))
+          req(top.RebuildModel(False),'model rebuild');req(doc3.RebuildDocument(),'doc rebuild');log('EXTRUSION_PASS')
+          mass1=float(top.GetMass());density1=float(top.GetDensity());req(density1>0,'density after <=0');vol1=mass1/density1
+          log(f'MASS_AFTER={mass1:.12g}');log(f'VOLUME_AFTER_DERIVED={vol1:.12g}');req(mass1>0 and vol1>0,'mass/volume not positive');req(abs(mass1-mass0)>1e-10 or abs(vol1-vol0)>1e-10,'physical properties unchanged');log('PHYSICAL_MASS_VOLUME_CHANGE_PASS')
+          req(base.SaveAs(str(out)),'SaveAs');req(out.exists() and out.stat().st_size>1000,'M3D missing');log('SAVE_PASS');base.Close(c.kdDoNotSaveChanges);log('CLOSE_PASS')
+          reopened=None
+          for label,vis in [('REOPEN_VISIBLE',True),('REOPEN_INVISIBLE',False)]:
+              try:reopened=docs.Open(str(out),vis,False)
+              except Exception as ex:log(label+'_EXCEPTION='+repr(ex));reopened=None
+              if reopened:log(label+'_PASS');break
+              err(app,label)
+          req(reopened,'reopen M3D failed');d3r=req(ksapi.IKompasDocument3D(reopened),'reopen IKompasDocument3D');req(d3r.RebuildDocument(),'reopen doc rebuild');tr=req(d3r.GetTopPart(),'reopen top');req(tr.RebuildModel(False),'reopen model rebuild')
+          mass2=float(tr.GetMass());density2=float(tr.GetDensity());req(density2>0,'reopen density <=0');vol2=mass2/density2;log(f'REOPEN_MASS={mass2:.12g}');log(f'REOPEN_VOLUME_DERIVED={vol2:.12g}')
+          req(abs(mass2-mass1)<=max(1e-8,abs(mass1)*1e-5),'reopen mass mismatch');req(abs(vol2-vol1)<=max(1e-8,abs(vol1)*1e-5),'reopen volume mismatch')
+          r=reopened.Save();req(r is not False,'final Save false');reopened.Close(c.kdDoNotSaveChanges)
+          log('SHA256='+hashlib.sha256(out.read_bytes()).hexdigest());log('REOPEN_REBUILD_PASS');log('RESULT=PASS_MINIMAL_NATIVE_3D_EXTRUSION_MASS_VOLUME_REOPEN')
+          try:app.Quit()
+          except:pass
+          PY
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" dbus-run-session -- /tmp/kKompas -automation >result/stage4-v3-3d/kompas.out 2>result/stage4-v3-3d/kompas.err &
+          KP=$!
+          python3 -u /tmp/s4v3_3d.py 2>&1 | tee result/stage4-v3-3d/python.stdout
+          kill "$KP" 2>/dev/null || true;pkill -TERM -x kKompas 2>/dev/null || true
+          grep -qx 'RESULT=PASS_MINIMAL_NATIVE_3D_EXTRUSION_MASS_VOLUME_REOPEN' result/stage4-v3-3d/native-3d.log
+          sha256sum result/stage4-v3-3d/Stage4_Minimal_Extrusion.m3d | tee result/stage4-v3-3d/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-v3-native-3d
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-v3-3d/**
