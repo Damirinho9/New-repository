@@ -179,6 +179,32 @@ jobs:
 
           echo 'RESULT=PASS_EULA_DISMISSED_AND_PERSISTED' | tee runtime_evidence/result.txt
 
+      - name: Capture real File menu after EULA for deterministic drawing creation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+
+          SECOND_WID=$(sed -n 's/^SECOND_WINDOW_ID=//p' runtime_evidence/second-window.txt)
+          test -n "$SECOND_WID"
+          xdotool windowfocus --sync "$SECOND_WID"
+
+          eval "$(xdotool getwindowgeometry --shell "$SECOND_WID")"
+          FILE_X=$((X + 18))
+          FILE_Y=$((Y + 25))
+          printf 'FILE_X=%s\nFILE_Y=%s\n' "$FILE_X" "$FILE_Y" | tee runtime_evidence/file-menu-click.txt
+
+          xdotool mousemove --sync "$FILE_X" "$FILE_Y"
+          xdotool click 1
+          sleep 2
+
+          import -display :99 -window root runtime_evidence/06_file_menu_open.png
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-windows-file-menu.txt || true
+
+          test -s runtime_evidence/06_file_menu_open.png
+          echo 'RESULT=PASS_FILE_MENU_CAPTURED' | tee runtime_evidence/file-menu-result.txt
+
       - name: Strict EULA gate
         shell: bash
         run: |
@@ -204,6 +230,7 @@ jobs:
             runtime_evidence/02_eula_before_accept.png \
             runtime_evidence/04_second_launch_no_eula_root.png \
             runtime_evidence/05_second_launch_no_eula_main.png \
+            runtime_evidence/06_file_menu_open.png \
             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
