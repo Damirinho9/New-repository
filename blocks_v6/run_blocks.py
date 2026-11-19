@@ -100,6 +100,9 @@ def pair(a,b):
     if load(a) is None or load(b) is None:return False
     lo,hi=sorted([a,b],key=load)
     return load(lo)<=30 and load(hi)>=170 and load(hi)-load(lo)>=140 and min(hi.get("positive_peak_load_V",0),hi.get("negative_peak_load_V",0))>=170
+def ordered_power(off,on):
+    return pair(off,on) and load(off)<=30 and load(on)>=170
+
 def amps(a):return a.get("metrics",{}).get("drive_i",{}).get("rms")
 # Power: inject a real controlled path or bounded current into DRV, never into either SCR gate directly.
 # Both source-ambiguous bridge assignments and diode polarity are tested.
@@ -110,11 +113,11 @@ for mode in ("dc_bt","dc_tb","ac_tb","ac_rev"):
         n=power(mode,dp)
         off=run(tag+"_open",n+["RDRV drv 0 1G"],PWR,.24)
         on=run(tag+"_closed",n+["RDRV drv 0 10"],PWR,.24)
-        power_pairs.append({"mode":mode,"diode_flip":dp,"off":off["name"],"on":on["name"],"pass":pair(off,on),"injection":"10 ohm DRV-CASE closure vs 1G"})
-        if not pair(off,on):
+        power_pairs.append({"mode":mode,"diode_flip":dp,"off":off["name"],"on":on["name"],"pass":ordered_power(off,on),"injection":"10 ohm DRV-CASE closure vs 1G"})
+        if not ordered_power(off,on):
             for sign in (-1,1):
                 forced=run(tag+("_sink" if sign>0 else "_source"),n+[("IDRV drv 0 0.08" if sign>0 else "IDRV 0 drv 0.08")],PWR,.24)
-                power_pairs.append({"mode":mode,"diode_flip":dp,"off":off["name"],"on":forced["name"],"pass":pair(off,forced),"injection":"bounded 80mA diagnostic current"})
+                power_pairs.append({"mode":mode,"diode_flip":dp,"off":off["name"],"on":forced["name"],"pass":ordered_power(off,forced),"injection":"bounded 80mA diagnostic current"})
         save("power_pairs.json",power_pairs)
 passed=[r for r in power_pairs if r["pass"]]
 # If no power proof exists still obtain photo and control measurements, but never claim stage PASS.

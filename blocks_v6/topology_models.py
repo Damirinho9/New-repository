@@ -79,5 +79,6 @@ def verify_saved_cards(root,xmlio,refs=None):
             _validate(x)
             if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": gate reference lost")
     for ref in ("VD3","VD4","VD5"):
+        if ref not in refs:continue
         c=_find_component(root,xmlio,ref);m=_find_model(root,c)
         if not any("BV=1000" in xmlio.text(e.get("String") or "") for e in m.iter("CiaCString")):raise RuntimeError(ref+": 1000V model lost")
