@@ -1,46 +1,62 @@
-import os
+import os,re
 
-def _find_component(root, xmlio, ref):
-    for item in root.iter('Item'):
-        if item.get('Class') == 'CiComponent' and len(item):
-            if xmlio.text(item[0].get('LocalName') or '').strip() == ref:
-                return item[0]
-    raise RuntimeError(f'{ref}: component not found')
-
-def _find_model(root, comp):
-    mid=comp.get('Model')
-    for item in root.iter('Item'):
-        if item.get('Class')=='CiModel' and item.get('CiID')==mid and len(item):
+def _find_component(root,xmlio,ref):
+    for item in root.iter("Item"):
+        if item.get("Class")=="CiComponent" and len(item) and xmlio.text(item[0].get("LocalName") or "").strip()==ref:
             return item[0]
-    raise RuntimeError('model not found')
+    raise RuntimeError(ref+": component not found")
 
-def _replace_card(model,xmlio,factory):
-    mname=xmlio.text(model.get('LocalName') or '').strip()
-    target=next((e for e in model.iter('CiaCString') if '.SUBCKT' in xmlio.text(e.get('String') or '').upper() or '.MODEL' in xmlio.text(e.get('String') or '').upper()),None)
-    if target is None: raise RuntimeError(f'{mname}: SPICE card absent')
-    target.set('String',xmlio.asc(factory(mname))); model.set('ChangedByUser','1')
+def _find_model(root,comp):
+    for item in root.iter("Item"):
+        if item.get("Class")=="CiModel" and item.get("CiID")==comp.get("Model") and len(item):
+            return item[0]
+    raise RuntimeError("Missing model")
 
-def _zvn(m):
-    v=float(os.environ.get('KP501_VTO','1.5'))
-    body=os.environ.get('KP501_BODY_DIODE','1')=='1'
-    d='D1 3 1 DBODY\\n.MODEL DBODY D IS=1e-12 N=1.2 BV=240 IBV=1m\\n' if body else ''
-    return f'.SUBCKT {m} 1 2 3\\nRD 1 4 2\\nRS 5 3 2\\nRG 2 6 20\\nM1 4 6 5 5 MZVN\\n{d}.MODEL MZVN NMOS LEVEL=1 VTO={v:.6g} KP=0.08 LAMBDA=0.005 CGSO=35p CGDO=7p\\n.ENDS {m}'
+def _cards(comp,model,xmlio):
+    a=next(e for e in model.iter("CiaCString") if ".subckt" in xmlio.text(e.get("String") or "").lower())
+    bs=[e for e in comp.findall("./Attributes/Item/CiaCollString/strings/Item") if ".subckt" in xmlio.text(e.get("Value") or "").lower()]
+    if len(bs)!=1:raise RuntimeError("Component card count="+str(len(bs)))
+    return a,bs[0]
 
-def _kp707(m):
-    v=float(os.environ.get('KP707_VTO','3.2'))
-    return f'.SUBCKT {m} 1 2 3\nRD 1 4 0.35\nRS 5 3 0.35\nRG 2 6 10\nM1 4 6 5 5 MKP707\nD1 3 1 DBODY\n.MODEL MKP707 NMOS LEVEL=1 VTO={v:.6g} KP=0.55 LAMBDA=0.003 CGSO=600p CGDO=80p\n.MODEL DBODY D IS=1e-10 N=1.2 BV=800 IBV=1m\n.ENDS {m}'
+def _mos(name,v,kp,rd,rs,bv):
+    return "\n".join([f".SUBCKT {name} 1 2 3",f"RD 1 4 {rd}",f"RS 5 3 {rs}","RG 2 6 20","M1 4 6 5 5 MCORE W=100u L=100u","D1 3 1 DBODY",f".MODEL MCORE NMOS LEVEL=1 VTO={v} KP={kp} LAMBDA=0.005",f".MODEL DBODY D IS=1e-12 N=1.2 BV={bv} IBV=1m",f".ENDS {name}"])
 
-def _scr_vth(comp,xmlio,v):
-    p=comp.find('.//CiaParamList'); ds=p.findall('./doubles/Item'); ps=p.findall('./parameters/Item')
-    ds[1].set('Value',format(v,'.17g')); ps[1].set('Value',xmlio.asc(f'{v:g}'))
+def _relative(s):
+    # Keep the native NI latch and reset logic. Only change gate measurement reference.
+    if "EGREL GREL" in s:return s
+    s=s.replace("\r\n","\n").replace("\r","\n")
+    s,n1=re.subn(r"(?im)^(\s*xU3\.A\s+)gate(\s+)",r"\1GREL\2",s)
+    s,n2=re.subn(r"(?im)^(\s*xU2\.S\s+)gate(\s+)",r"\1GREL\2",s)
+    if (n1,n2)!=(1,1):raise RuntimeError("Unexpected NI SCR model receiver template")
+    i=s.index("\n")
+    return s[:i+1]+"EGREL GREL 0 Gate Cathode 1\n"+s[i+1:]
+
+def _validate(s):
+    if "\\n" in s or "\n" not in s or not s.lstrip().lower().startswith(".subckt"):raise RuntimeError("Invalid SPICE card")
 
 def patch_models(root,xmlio):
     notes={}
-    k=float(os.environ.get('KP501_VTO','1.5')); p=float(os.environ.get('KP707_VTO','3.2'))
-    for ref in ('VT1','VT2'):
-        c=_find_component(root,xmlio,ref); _replace_card(_find_model(root,c),xmlio,_zvn); notes[ref]=f"KP501A datasheet-fit N-MOS VTO={k:g}V body_diode={os.environ.get('KP501_BODY_DIODE','1')}"
-    c=_find_component(root,xmlio,'VT3'); _replace_card(_find_model(root,c),xmlio,_kp707); notes['VT3']=f'KP707V2 datasheet-fit N-MOS VTO={p:g}V'
-    sv=float(os.environ.get('SCR_VTH','2.5'))
-    for ref in ('VS1','VS2'):
-        c=_find_component(root,xmlio,ref); _scr_vth(c,xmlio,sv); notes[ref]=f'T123-250 -> native Multisim latching SCR, gate threshold={sv:g}V'
+    for ref in ("VT1","VT2","VT3","VS1","VS2"):
+        c=_find_component(root,xmlio,ref);m=_find_model(root,c);a,b=_cards(c,m,xmlio)
+        old=xmlio.text(a.get("String"));old2=xmlio.text(b.get("Value"))
+        if ref in ("VT1","VT2","VT3"):
+            v=float(os.environ.get("KP707_VTO","3.2") if ref=="VT3" else os.environ.get("KP501_VTO","1.5"))
+            args=(v,0.55,0.8,0.8,800) if ref=="VT3" else (v,0.08,2,2,240)
+            s=_mos(old.split()[1],*args);t=_mos(old2.split()[1],*args)
+            notes[ref]="Approximate N-MOS model, not manufacturer-exact; D/G/S order; body diode retained"
+        else:
+            s=_relative(old);t=_relative(old2)
+            v=float(os.environ.get("SCR_VTH","2.5"))
+            q=c.find(".//CiaParamList");ds=q.findall("./doubles/Item");ps=q.findall("./parameters/Item")
+            ds[1].set("Value",format(v,".17g"));ps[1].set("Value",xmlio.asc(f"{v:g}"))
+            notes[ref]="NI functional latching SCR, cathode-referenced detector; not exact T123-250"
+        _validate(s);_validate(t);a.set("String",xmlio.asc(s));b.set("Value",xmlio.asc(t));m.set("ChangedByUser","1")
     return notes
+
+def verify_saved_cards(root,xmlio):
+    for ref in ("VT1","VT2","VT3","VS1","VS2"):
+        c=_find_component(root,xmlio,ref);m=_find_model(root,c);a,b=_cards(c,m,xmlio)
+        for x in (xmlio.text(a.get("String")),xmlio.text(b.get("Value"))):
+            _validate(x)
+            if ref.startswith("VT") and ("MCORE" not in x or "DBODY" not in x):raise RuntimeError(ref+": model patch not retained")
+            if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": SCR patch not retained")

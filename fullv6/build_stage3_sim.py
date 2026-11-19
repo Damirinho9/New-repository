@@ -71,14 +71,14 @@ net=[
  named("VD3",models["rectifier"],A="led_r",K="led_a"),
  "RU1 drv 0 10meg",
  "R7 led_r l 58k",
- named("VS1",models["scr"],A="sw",K="0",G="g18"),
- "R8 g18 0 56",
+ named("VS1",models["scr"],A="sw",K="n_int",G="g18"),
+ "R8 g18 n_int 56",
 ]
 # Position 20 polarity is not explicitly marked in the source. Default is anti-parallel gate protection.
 if vd20_swap:
-    net.append(named("VD4",models["rectifier"],A="g18",K="0"))
+    net.append(named("VD4",models["rectifier"],A="g18",K="n_int"))
 else:
-    net.append(named("VD4",models["rectifier"],A="0",K="g18"))
+    net.append(named("VD4",models["rectifier"],A="n_int",K="g18"))
 net.append(xline("FU1",["drv","br_top"],models["fuse"]))
 
 # Source graph: bridge top=BR_TOP, bottom=common; left/right go to the two thyristor gate networks.
@@ -114,13 +114,13 @@ else:
 net += [
  named("VD5",models["rectifier"],A="sw",K="g25"),
  "R9 g25 sw 56",
- named("VS2",models["scr"],A="0",K="sw",G="g25"),
- "C3 l 0 47n CAPACITOR_VIRTUAL",
- xline("FU2",["0","n"],models["fuse"]),
+ named("VS2",models["scr"],A="n_int",K="sw",G="g25"),
+ "C3 l n_int 47n CAPACITOR_VIRTUAL",
+ xline("FU2",["n_int","n"],models["fuse"]),
 ]
 hp=set(lib.index[models["header5"]]["pins"])
 if {"P1","P2","P3","P4","P5"}<=hp:
-    net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n",P5="0"))
+    net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n",P5="nc_xp1"))
 else:
     net.append(named("XP1",models["header5"],P1="sw",P2="l",P3="l",P4="n"))
 
@@ -131,7 +131,7 @@ if transient_photo:
     net += ["VPH phdrv 0 PULSE(12 -12 50m 30m 30m 70m 200m)", f"RPH sens phdrv {rph:.12g}"]
 else:
     net += [f"I1 sens 0 {iph:.12g}"] if photo_dir >= 0 else [f"I1 0 sens {iph:.12g}"]
-net += ["V1 ac_src n SIN(0 311.1269837 50)","RLINE ac_src l 10","RLOAD l sw 1k"]
+net += ["V1 ac_src n SIN(0 311.1269837 50)","RLINE ac_src l 10","RLOAD l sw 1k","RREF n_int 0 1G"]
 
 control_supply=os.environ.get("CTRL_SUPPLY","0")=="1"
 add_scope=os.environ.get("ADD_SCOPE","0")=="1"
@@ -143,7 +143,7 @@ if control_supply:
     net += ["V2 vctrl 0 12","RCTRL vctrl u_ctrl 100"]
 if force_gate_ma:
     a=force_gate_ma*1e-3
-    net += [f"IG1 0 g18 {a:.12g}", f"IG2 sw g25 {a:.12g}"]
+    net += [f"IG1 n_int g18 {a:.12g}", f"IG2 sw g25 {a:.12g}"]
 if force_bridge_ma:
     a=force_bridge_ma*1e-3
     net += [f"IBCTRL br_top 0 {a:.12g}"]
@@ -165,7 +165,7 @@ layout={
  "XVD6":[1197,342],"XVD5":[1323,198],"R9":[1323,270],
  "XVS2":[1404,342,90],"C3":[1512,450,90],"XFU2":[1512,576],
  "XXP1":[1908,306,90],
-"I1":[270,486,90],"VPH":[270,486,90],"RPH":[360,486],"V1":[1908,648,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],
+"I1":[270,486,90],"VPH":[270,486,90],"RPH":[360,486],"V1":[1908,648,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],"RREF":[1656,756,90],
  "IG1":[1116,558,90],"IG2":[1368,234,90],"IBCTRL":[1062,756,90],"VT2TEST":[684,756,90],"VSENSTEST":[360,756,90],
  "GND":[[72,144],[252,558],[432,558],[666,558],[900,558],[1080,558],[1233,558],[1404,648],[1512,648],[270,558],[900,810]],
 }
@@ -211,9 +211,9 @@ labels={
  "C1":"K50-35 | SIM-only 0.47 uF",
  "C2":"K73 | SIM-only 0.1 uF",
  "C3":"K73 | SIM-only 47 nF",
- "VT1":"KP501A -> ZVN2120 datasheet-fit SIM model",
- "VT2":"KP501A -> ZVN2120 datasheet-fit SIM model",
- "VT3":"KP707V2 -> datasheet-fit SIM model",
+ "VT1":"KP501A -> approximate N-MOS SIM model",
+ "VT2":"KP501A -> approximate N-MOS SIM model",
+ "VT3":"KP707V2 -> approximate N-MOS SIM model",
  "VD2":f"KS512A -> {models['zener12']}",
  "VD3":f"KD243Zh -> {models['rectifier']}",
  "VD4":f"KD243Zh -> {models['rectifier']}",
@@ -227,6 +227,7 @@ labels={
  "RCTRL":"SIM CTRL SUPPLY: 100 Ohm",
  "RLINE":"TEST BENCH: source R=10 Ohm",
  "RLOAD":"TEST LOAD: 1 kOhm",
+ "RREF":"SIM-only numerical reference 1 GOhm",
  "VPH":"SIM LIGHT RAMP: 12V -> -12V",
  "RPH":"SIM LIGHT DRIVE RESISTOR",
  "IG1":"DIAGNOSTIC ONLY: VS1 gate current",
@@ -243,6 +244,8 @@ for item in root.iter("Item"):
         for el in sym.findall(".//CIITSymTextCompValue"):
             el.set("Output",xmlio.uni(labels[ref])); el.set("Hidden","0"); el.set("Font-Height","-10")
 xmlio.save(root,TARGET,compress=True)
+from stage3_model_patch import verify_saved_cards
+verify_saved_cards(xmlio.load(TARGET),xmlio)
 
 report=check.check_file(TARGET)
 manifest={
@@ -255,11 +258,13 @@ manifest={
  "scope":add_scope,"Rline_Ohm":10,"Rload_Ohm":1000},
  "models":models,
  "model_patch_notes":model_patch_notes,
- "source_rails":{"common":"0","mains_return_through_FU2":"0","separated":False},"source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap,"photo_dir":photo_dir},
+ "source_rails":{"case":"0","mains_return_through_FU2":"n_int","separated":True,"numerical_reference_Ohm":1e9},"source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap,"photo_dir":photo_dir},
  "check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
 (OUT/f"{TARGET.stem}_netlist.txt").write_text(spec["netlist"],encoding="utf-8")
-# Geometry issues are recorded in the manifest but do not block native simulation.
+if report.get("problems") and os.environ.get("STRICT_GEOMETRY","0")=="1":
+    raise SystemExit("STRUCTURE_FAIL: "+str(report["problems"]))
+# Diagnostics with geometry errors are not accepted as final.
 # Multisim electrical nodes remain explicit CiNode objects. Final selected states are checked again after simulation.
 print(json.dumps(manifest,ensure_ascii=False,indent=2))

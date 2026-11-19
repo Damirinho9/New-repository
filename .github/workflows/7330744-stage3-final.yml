@@ -15,9 +15,15 @@ concurrency:
 jobs:
   final:
     runs-on: windows-latest
-    timeout-minutes: 70
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
+
+      - name: Python preflight before NI install
+        shell: powershell
+        run: |
+          python -m py_compile fullv6/build_stage3_sim.py fullv6/stage3_model_patch.py fullv6/finalize_stage3.py fullv6/native_verify_stage3.py
+          if($LASTEXITCODE -ne 0){throw "Python preflight failed"}
 
       - name: Download harvested Multisim library
         uses: actions/download-artifact@v4
@@ -117,6 +123,7 @@ jobs:
             $f="$env:GITHUB_WORKSPACE\stage3-final\7330744_PhotoRelay_V6_$s.ms14"
             python -m multisimforge check "$f" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\stage3-final\check_$s.json"
             "check_exit=$LASTEXITCODE" | Add-Content "$env:GITHUB_WORKSPACE\stage3-final\check_$s.txt"
+            if($LASTEXITCODE -ne 0){throw "$s structural check failed"}
             python -m multisimforge inspect "$f" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\stage3-final\inspect_$s.json"
           }
 
