@@ -1,0 +1,270 @@
+name: KOMPAS Stage 2 SDK connection proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage2-kompas-sdk-connection.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  connect:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Restore frozen runtime only
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Verify and mount frozen runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          test "$(cat kompas-runtime.part-00 kompas-runtime.part-01 kompas-runtime.part-02 kompas-runtime.part-03 | sha256sum | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          cat kompas-runtime.part-00 kompas-runtime.part-01 kompas-runtime.part-02 kompas-runtime.part-03 > "$RUNNER_TEMP/kompas-v25-portable-runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/kompas-runtime"
+          tar --zstd -xf "$RUNNER_TEMP/kompas-v25-portable-runtime.tar.zst" -C "$RUNNER_TEMP/kompas-runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/kompas-runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/kompas-runtime/opt/ascon/common" ]; then
+            sudo ln -s "$RUNNER_TEMP/kompas-runtime/opt/ascon/common" /opt/ascon/common
+          fi
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          test -x "$BIN/ksinvisible"
+          test -f "$BIN/ksapi.py"
+          test -f "$BIN/libksAPI.so"
+          SYSROOT="$RUNNER_TEMP/kompas-runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+          {
+            echo "RUNTIME_ARCHIVE_SHA256=9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+            file "$BIN/ksinvisible"
+            sha256sum "$BIN/ksinvisible" "$BIN/ksapi.py" "$BIN/libksAPI.so"
+          } | tee "$GITHUB_WORKSPACE/runtime-fingerprint.txt"
+
+      - name: Install only host libraries required by preserved runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          need=()
+          command -v Xvfb >/dev/null || need+=(xvfb)
+          command -v xvfb-run >/dev/null || need+=(xvfb)
+          command -v dbus-run-session >/dev/null || need+=(dbus)
+          command -v ss >/dev/null || need+=(iproute2)
+          command -v pgrep >/dev/null || need+=(procps)
+          for p in libxcb-res0 libxcb-dri2-0 libxcb-xkb1; do
+            dpkg -s "$p" >/dev/null 2>&1 || need+=("$p")
+          done
+          if [ "${#need[@]}" -gt 0 ]; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need[@]}"
+          fi
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD" ldd "$BIN/ksinvisible" | tee ksinvisible-ldd.txt
+          if grep -q 'not found' ksinvisible-ldd.txt; then
+            grep 'not found' ksinvisible-ldd.txt
+            exit 42
+          fi
+
+      - name: Reproduce historical kKompas launch and compare SDK connection methods
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          export HOME="$RUNNER_TEMP/kompas-sdk-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25"
+          if [ -d "$RUNNER_TEMP/kompas-runtime/etc/ascon/KOMPAS-3D/25" ]; then
+            cp -a "$RUNNER_TEMP/kompas-runtime/etc/ascon/KOMPAS-3D/25/." "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/" || true
+            cp -a "$RUNNER_TEMP/kompas-runtime/etc/ascon/KOMPAS-3D/25/." "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/" || true
+          fi
+          RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          test "$(readlink -f /tmp/kKompas)" = "$BIN/ksinvisible"
+          rm -f process-ps.txt process-tree.txt kompas-sockets.txt sdk-connection.txt kompas-live.out kompas-live.err discovered-ports.txt
+          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"             dbus-run-session -- /tmp/kKompas -automation >kompas-live.out 2>kompas-live.err &
+          WRAPPER_PID=$!
+          echo "WRAPPER_PID=$WRAPPER_PID" | tee process-ps.txt
+
+          KP=""
+          for i in $(seq 1 50); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          echo "KOMPAS_PID=$KP" | tee -a process-ps.txt
+          if [ -z "$KP" ]; then
+            ps -ef | grep -E 'kKompas|ksinvisible|Xvfb|dbus' | tee process-tree.txt || true
+            cat kompas-live.err
+            exit 50
+          fi
+
+          {
+            ps -o pid,ppid,comm,lstart,args -p "$KP"
+            echo "EXE=$(readlink -f /proc/$KP/exe)"
+            printf 'CMDLINE='
+            tr '\0' ' ' <"/proc/$KP/cmdline"
+            echo
+          } | tee -a process-ps.txt
+
+          {
+            echo "=== PROCESS TREE ==="
+            ps -ef --forest | grep -E 'kKompas|ksinvisible|Xvfb|dbus' || true
+            echo "=== CHILD PIDS ==="
+            pgrep -P "$KP" || true
+          } | tee process-tree.txt
+
+          # Wait for the vendor SDK listener. Record every snapshot, but only
+          # ports owned by the real kKompas PID are eligible for IApplication().
+          : > kompas-sockets-history.txt
+          for i in $(seq 1 60); do
+            ss -ltnpH | tee kompas-sockets.txt >/dev/null || true
+            {
+              echo "SNAPSHOT=$i"
+              grep -E "pid=$KP[,)]|\(\(\"kKompas\"" kompas-sockets.txt || true
+            } >> kompas-sockets-history.txt
+            if grep -E "pid=$KP[,)]|\(\(\"kKompas\"" kompas-sockets.txt >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          cat kompas-sockets.txt
+          python3 - "$KP" <<'PY' | tee discovered-ports.txt
+          import re,subprocess,sys
+          pid=sys.argv[1]
+          s=subprocess.check_output(['ss','-ltnpH'],text=True,errors='replace')
+          ports=[]
+          for line in s.splitlines():
+              if f'pid={pid},' not in line and '"kKompas"' not in line:
+                  continue
+              cols=line.split()
+              if len(cols)<4: continue
+              local=cols[3]
+              m=re.search(r':(\d+)$',local)
+              if m:
+                  p=int(m.group(1))
+                  if 1 <= p <= 65535: ports.append(p)
+          ports=sorted(set(ports))
+          print('KOMPAS_PID='+pid)
+          for p in ports: print('PORT='+str(p))
+          if not ports: print('NO_KOMPAS_LISTEN_PORT')
+          PY
+
+          export KOMPAS_PID="$KP"
+          python3 - <<'PY' | tee sdk-connection.txt
+          import os,re,traceback
+          import ksapi
+
+          ports=[]
+          for line in open('discovered-ports.txt',encoding='utf-8',errors='replace'):
+              m=re.fullmatch(r'PORT=(\d+)\s*',line)
+              if m: ports.append(int(m.group(1)))
+
+          print('KSAPI_FILE='+str(ksapi.__file__),flush=True)
+          print('KOMPAS_PID='+os.environ['KOMPAS_PID'],flush=True)
+          print('DISCOVERED_PORTS='+repr(ports),flush=True)
+
+          def validate(label, factory):
+              print('BEGIN '+label,flush=True)
+              try:
+                  app=factory()
+                  print(label+'_OBJECT='+repr(app),flush=True)
+                  if app is None:
+                      print(label+'_NULL',flush=True)
+                      return False
+                  try:
+                      name=app.GetApplicationName(True)
+                  except Exception as e:
+                      print(label+'_APP_NAME_EXCEPTION='+repr(e),flush=True)
+                      return False
+                  try:
+                      docs=app.GetDocuments()
+                  except Exception as e:
+                      print(label+'_GETDOCUMENTS_EXCEPTION='+repr(e),flush=True)
+                      return False
+                  print(label+'_APP_NAME='+str(name),flush=True)
+                  print(label+'_DOCUMENTS_OBJECT='+repr(docs),flush=True)
+                  if docs is None:
+                      print(label+'_DOCUMENTS_NULL',flush=True)
+                      return False
+                  try:
+                      count=docs.GetCount()
+                  except Exception as e:
+                      print(label+'_COUNT_EXCEPTION='+repr(e),flush=True)
+                      return False
+                  print(label+'_DOCUMENT_COUNT='+str(count),flush=True)
+                  print(label+'_PASS',flush=True)
+                  return True
+              except BaseException as e:
+                  print(label+'_EXCEPTION='+repr(e),flush=True)
+                  traceback.print_exc()
+                  return False
+
+          results={}
+          results['GetKompas']=validate('GETKOMPAS',ksapi.GetKompas)
+          inv=getattr(ksapi,'GetKompasInvisible',None)
+          if inv is None:
+              print('GETKOMPASINVISIBLE_UNAVAILABLE',flush=True)
+              results['GetKompasInvisible']=False
+          else:
+              results['GetKompasInvisible']=validate('GETKOMPASINVISIBLE',inv)
+
+          for p in ports:
+              results['IApplication:'+str(p)]=validate(
+                  'IAPPLICATION_PORT_'+str(p),
+                  lambda p=p: ksapi.IApplication(p)
+              )
+
+          passing=[k for k,v in results.items() if v]
+          print('PASSING_METHODS='+repr(passing),flush=True)
+          if not passing:
+              print('RESULT=FAIL_KOMPAS_SDK_CONNECTION',flush=True)
+              raise SystemExit(60)
+          print('RESULT=PASS_KOMPAS_SDK_CONNECTION_AND_DOCUMENTS',flush=True)
+          PY
+
+          grep -q '^RESULT=PASS_KOMPAS_SDK_CONNECTION_AND_DOCUMENTS$' sdk-connection.txt
+          kill "$WRAPPER_PID" 2>/dev/null || true
+          pkill -TERM -x kKompas 2>/dev/null || true
+
+      - name: Upload Stage 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-stage2-sdk-connection
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            runtime-fingerprint.txt
+            ksinvisible-ldd.txt
+            process-ps.txt
+            process-tree.txt
+            kompas-sockets.txt
+            kompas-sockets-history.txt
+            discovered-ports.txt
+            sdk-connection.txt
+            kompas-live.out
+            kompas-live.err
