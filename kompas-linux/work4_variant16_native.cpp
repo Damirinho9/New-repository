@@ -124,7 +124,7 @@ static bool direct_add_mode() {
   const char* v=std::getenv("KOMPAS_USE_DIRECT_ADD");
   return v && std::string(v)=="1";
 }
-static IKompasDocumentPtr new_native_doc(const IDocumentsPtr& docs, ksDocumentTypeEnum type,
+static IKompasDocumentPtr new_native_doc(const IDocumentsPtr& docs, DocumentTypeEnum type,
                                          const char* seedName, const fs::path& seedTmp,
                                          const char* tag) {
   if (direct_add_mode()) {
