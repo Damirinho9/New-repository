@@ -212,3 +212,5 @@ jobs:
           name: kompas3d-eula-gate-evidence
           path: runtime_evidence/
           if-no-files-found: error
+
+# stage3 eula gate trigger
