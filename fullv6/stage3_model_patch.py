@@ -20,14 +20,6 @@ def _replace_card(model,xmlio,factory):
     if target is None: raise RuntimeError(f'{mname}: SPICE card absent')
     target.set('String',xmlio.asc(factory(mname))); model.set('ChangedByUser','1')
 
-def _fd320_dark(m):
-    return (
-        f'.SUBCKT {m} A K\n'
-        'DPH A K DFD320\n'
-        '.MODEL DFD320 D(IS=1e-12 N=1.4 RS=5 CJO=10p BV=50 IBV=10u)\n'
-        f'.ENDS {m}'
-    )
-
 def _zvn(m):
     v=float(os.environ.get('KP501_VTO','1.5'))
     return f'.SUBCKT {m} 1 2 3\nRD 1 4 2\nRS 5 3 2\nRG 2 6 20\nM1 4 6 5 5 MZVN\nD1 3 1 DBODY\n.MODEL MZVN NMOS LEVEL=1 VTO={v:.6g} KP=0.08 LAMBDA=0.005 CGSO=35p CGDO=7p\n.MODEL DBODY D IS=1e-12 N=1.2 BV=240 IBV=1m\n.ENDS {m}'
@@ -42,10 +34,6 @@ def _scr_vth(comp,xmlio,v):
 
 def patch_models(root,xmlio):
     notes={}
-    if os.environ.get('PHOTO_PATCH','0')=='1':
-        c=_find_component(root,xmlio,'VD1')
-        _replace_card(_find_model(root,c),xmlio,_fd320_dark)
-        notes['VD1']='FD320 native symbol with dark-diode model; illumination from explicit SIM photocurrent'
     k=float(os.environ.get('KP501_VTO','1.5')); p=float(os.environ.get('KP707_VTO','3.2'))
     for ref in ('VT1','VT2'):
         c=_find_component(root,xmlio,ref); _replace_card(_find_model(root,c),xmlio,_zvn); notes[ref]=f'KP501A datasheet-fit N-MOS VTO={k:g}V'
