@@ -1,0 +1,7 @@
+# Stage 2 verification references and constraints
+- Original source: docs/7330744/V6_SOURCE_REFERENCE.md (printed pp. 49-50). Native graph uses distinct 0/CASE and n_int; RREF=1G is a numerical test component, not original part.
+- KP501A electrical proxy: ZVN2120 family, 200V and 10 ohm, https://www.ecworld.ru/support/ssf/kp5xx.htm ; official ZVN2120G card https://www.diodes.com/spice/download/2030/ZVN2120G.spice.txt ; https://www.diodes.com/part/view/ZVN2120G . Package differs; not physical footprint equivalence.
+- KP707V2: related 2P707V2 reference 800V, 4.1A, 3 ohm, threshold 1.5-6V https://optochip.org/series/card/132090 ; candidate IRFBE30 electrical analog 800V 4.1A 3 ohm https://www.vishay.com/en/product/91118/tab/designtools-ppg/ ; vendor card https://www.vishay.com/docs/90336/sihfbe30.lib . Model import requires explicit confirmed pin order; otherwise approximation is retained and flagged.
+- KD243Zh 1000V 1A: https://static.chipdip.ru/lib/251/DOC000251028.pdf ; original 100V MUR1510G simulation card is replaced by an explicitly approximate 1kV rectifier model; not a proven manufacturer curve.
+- RB154 400V 1.5A: https://www.digikey.com/en/products/detail/micro-commercial-co/RB154/260871 ; MDA2504 is a proxy, not exact pinout/ratings. dc_bt is a source-compatible hypothesis, not proven functional. 30A fuse is not a 32A fuse validation. 
+- Model/graph audit offline only; no claims of native GUI reopen or functional switching. This isolated branch does not cancel the existing Windows run.

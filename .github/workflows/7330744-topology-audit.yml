@@ -1,0 +1,82 @@
+name: 7330744 stage 2 independent native-format topology audit
+on:
+  push:
+    branches: [multisim-7330744-stage2-topology-audit]
+    paths: ['topology_v6/**', '.github/workflows/7330744-topology-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  topology:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: 7330744-full-v6-discovery
+          path: dep-library
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43835690292
+      - uses: actions/download-artifact@v4
+        with:
+          name: 7330744-stage3-native-final
+          path: dep-circuits
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 44485499970
+      - name: Install pinned offline builder and harvest native components
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/AmaneSuzuha000/MultisimForge.git /tmp/MultisimForge
+          git -C /tmp/MultisimForge checkout c2eec0d354944cec4edec4e71b65b5eb6c52913c
+          python -m pip install -e /tmp/MultisimForge
+          mkdir -p fullv6-lib stage3-out vendor
+          python - <<'PY'
+          import zipfile,pathlib
+          d=pathlib.Path('fullv6-lib')
+          with zipfile.ZipFile('dep-library/parts-library.zip') as z:
+              for n in z.namelist():
+                  if n.endswith('/') or n.endswith('\\'):continue
+                  p=d / n.replace('\\','/')
+                  p.parent.mkdir(parents=True,exist_ok=True)
+                  p.write_bytes(z.read(n))
+          PY
+          export MULTISIMFORGE_LIBRARY_DIR="$PWD/fullv6-lib"
+          p="$(find dep-circuits -name '*pm_1p5_3p2_d.ms14' | head -1)"
+          if [ -z "$p" ]; then p="$(find dep-circuits -name '*diag_gate_2p5.ms14' | head -1)"; fi
+          if [ -z "$p" ]; then p="$(find dep-circuits -name '*.ms14' | head -1)"; fi
+          test -n "$p"
+          python -m multisimforge parts harvest "$p" > stage3-out/harvest.json
+          python -m py_compile topology_v6/*.py
+      - name: Retrieve official vendor model files
+        shell: bash
+        run: |
+          curl --fail --location --max-time 35 'https://www.diodes.com/spice/download/2030/ZVN2120G.spice.txt' -o vendor/ZVN2120G.txt || true
+          curl --fail --location --max-time 35 'https://www.vishay.com/docs/90336/sihfbe30.lib' -o vendor/SIHFBE30.lib || true
+          sha256sum vendor/* > stage3-out/vendor_sha256.txt || true
+      - name: Build native-format candidate and independently audit saved graph
+        shell: bash
+        env:
+          KP501_FLIP: '0'
+          VT3_FLIP: '0'
+          BRIDGE_MODE: 'dc_bt'
+          VD20_SWAP: '0'
+          PHOTO_DIR: '1'
+          STRICT_GEOMETRY: '0'
+        run: |
+          export MULTISIMFORGE_LIBRARY_DIR="$PWD/fullv6-lib"
+          export PYTHONPATH="$PWD/fullv6:$PWD/topology_v6"
+          python topology_v6/build_topology.py TOPOLOGY 0 | tee stage3-out/build.log
+        # This job validates file format and graph, not live Multisim functional PASS.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-stage2-topology-candidate
+          path: |
+            stage3-out/
+            vendor/
+            docs/7330744/V6_SOURCE_REFERENCE.md
+          if-no-files-found: warn
+          retention-days: 14
