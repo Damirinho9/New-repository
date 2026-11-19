@@ -195,7 +195,18 @@ jobs:
           got=hashlib.sha256(seed.read_bytes()).hexdigest()
           req(got=='0898524f47f3659ed4767feccf3052820222ecb9da8d862670a5e4ce064513b6','verified seed hash mismatch')
           log('SEED_NATIVE_M3D_VERIFIED='+got)
-          base=req(docs.Open(str(seed),True,False),'Open existing M3D');d3=req(ksapi.IKompasDocument3D(base),'3D cast');top=req(d3.GetTopPart(),'TopPart')
+          base=None
+          for _ in range(80):
+              base=app.GetActiveDocument()
+              if base:
+                  try:
+                      fp=pathlib.Path(base.GetFullPath()).resolve()
+                      if fp==seed: break
+                  except Exception: pass
+              time.sleep(.25)
+          req(base,'Active existing M3D')
+          log('ACTIVE_PATH='+str(base.GetFullPath()))
+          d3=req(ksapi.IKompasDocument3D(base),'3D cast');top=req(d3.GetTopPart(),'TopPart')
           log('OPEN_EXISTING_M3D_PASS');log('TOPPART_PASS');req(d3.RebuildDocument(),'initial doc rebuild');req(top.RebuildModel(False),'initial model rebuild')
           mass0,density0,vol0=metrics(top);log(f'MASS_BEFORE={mass0:.12g}');log(f'VOLUME_BEFORE={vol0:.12g}')
           mc=req(top.GetModelContainer(),'model container');sk=req(req(mc.GetSketchs(),'sketches').Add(),'sketch Add');sk.SetPlane(req(top.GetDefaultObject(c3.o3d_planeXOY),'XOY'))
@@ -216,7 +227,8 @@ jobs:
           try:app.Quit()
           except:pass
           PY
-          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >result/stage4-historical-3d/kompas.out 2>result/stage4-historical-3d/kompas.err &
+          SEED="$(realpath result/stage4-historical-3d/seed/BlankPart.m3d)"
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas "$SEED" -automation >result/stage4-historical-3d/kompas.out 2>result/stage4-historical-3d/kompas.err &
           KP=$!
           for i in $(seq 1 50); do pgrep -x kKompas >/dev/null && break; sleep .5; done
           python3 -u /tmp/historical3d.py 2>&1 | tee result/stage4-historical-3d/python.stdout
