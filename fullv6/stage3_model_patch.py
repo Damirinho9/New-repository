@@ -28,6 +28,18 @@ def _kp707(m):
     v=float(os.environ.get('KP707_VTO','3.2'))
     return f'.SUBCKT {m} 1 2 3\nRD 1 4 0.35\nRS 5 3 0.35\nRG 2 6 10\nM1 4 6 5 5 MKP707\nD1 3 1 DBODY\n.MODEL MKP707 NMOS LEVEL=1 VTO={v:.6g} KP=0.55 LAMBDA=0.003 CGSO=600p CGDO=80p\n.MODEL DBODY D IS=1e-10 N=1.2 BV=800 IBV=1m\n.ENDS {m}'
 
+def _scr_gk(m):
+    v=float(os.environ.get('SCR_VTH','2.5'))
+    return (
+        f'.SUBCKT {m} Anode Cathode Gate PARAMS: Vth={v:.6g} Ih=0 Vfscr=1 Ron=10m Roff=100meg\\n'
+        'SMAIN Anode X Gate Cathode SW_T123\\n'
+        'DMAIN X Cathode D_T123\\n'
+        'RGK Gate Cathode 100k\\n'
+        f'.MODEL SW_T123 SW(Ron=0.01 Roff=100meg Vt={v:.6g} Vh=0.10)\\n'
+        '.MODEL D_T123 D(IS=1e-10 N=1 RS=0.01 BV=1200 IBV=1m)\\n'
+        f'.ENDS {m}'
+    )
+
 def _scr_vth(comp,xmlio,v):
     p=comp.find('.//CiaParamList'); ds=p.findall('./doubles/Item'); ps=p.findall('./parameters/Item')
     ds[1].set('Value',format(v,'.17g')); ps[1].set('Value',xmlio.asc(f'{v:g}'))
@@ -39,5 +51,8 @@ def patch_models(root,xmlio):
     c=_find_component(root,xmlio,'VT3'); _replace_card(_find_model(root,c),xmlio,_kp707); notes['VT3']=f'KP707V2 datasheet-fit N-MOS VTO={p:g}V'
     sv=float(os.environ.get('SCR_VTH','2.5'))
     for ref in ('VS1','VS2'):
-        c=_find_component(root,xmlio,ref); _scr_vth(c,xmlio,sv); notes[ref]=f'T123-250 -> native Multisim latching SCR, gate threshold={sv:g}V'
+        c=_find_component(root,xmlio,ref)
+        _replace_card(_find_model(root,c),xmlio,_scr_gk)
+        _scr_vth(c,xmlio,sv)
+        notes[ref]=f'T123-250 -> native SCR symbol/pins with functional Gate-Cathode switch model, VGT={sv:g}V'
     return notes
