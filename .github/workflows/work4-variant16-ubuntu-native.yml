@@ -95,10 +95,15 @@ jobs:
               export DISPLAY=:106 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
               unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
-              KEXEC="$BIN/kKompas"
-              if [ ! -x "$KEXEC" ] && [ -x "$BIN/ksinvisible" ]; then
-                ln -sf "$BIN/ksinvisible" /tmp/kKompas
-                KEXEC=/tmp/kKompas
+              if command -v kompas-v25 >/dev/null 2>&1; then
+                KEXEC="$(command -v kompas-v25)"
+                echo "KOMPAS_LAUNCHER=$(readlink -f "$KEXEC" 2>/dev/null || echo "$KEXEC")"
+              else
+                KEXEC="$BIN/kKompas"
+                if [ ! -x "$KEXEC" ] && [ -x "$BIN/ksinvisible" ]; then
+                  ln -sf "$BIN/ksinvisible" /tmp/kKompas
+                  KEXEC=/tmp/kKompas
+                fi
               fi
               test -x "$KEXEC"
               echo "KEXEC=$KEXEC"
