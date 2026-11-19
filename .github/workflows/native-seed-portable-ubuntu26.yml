@@ -7,6 +7,8 @@ on:
     paths:
       - '.github/workflows/native-seed-portable-ubuntu26.yml'
       - 'kompas-linux/bootstrap_variant06_poll.cpp'
+      - 'kompas-linux/work2_variant19_native.cpp'
+      - 'kompas-linux/work4_variant16_native.cpp'
 
 jobs:
   native:
