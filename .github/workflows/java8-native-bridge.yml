@@ -1,0 +1,31 @@
+name: java8-native-bridge
+on:
+  push:
+    branches: [openoffice-native-417]
+  workflow_dispatch:
+
+jobs:
+  fetch-java8:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+          java-package: jdk
+      - name: Pack Java 8 runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+          tar -C "$JAVA_HOME" -czf temurin8-jdk-linux-x64.tar.gz .
+          sha256sum temurin8-jdk-linux-x64.tar.gz > temurin8-jdk-linux-x64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: temurin8-jdk-linux-x64
+          path: |
+            temurin8-jdk-linux-x64.tar.gz
+            temurin8-jdk-linux-x64.tar.gz.sha256
+          compression-level: 0
+          retention-days: 1
