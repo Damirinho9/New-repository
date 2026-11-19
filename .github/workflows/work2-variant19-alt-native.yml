@@ -1,0 +1,240 @@
+name: KOMPAS hosted ALT Work 2 variant 19 native top-down
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/work2-variant19-alt-native.yml'
+      - 'kompas-linux/work2_variant19_native.cpp'
+      - 'kompas-linux/bootstrap_variant06_qt.cpp'
+      - 'work2-variant19/calculation.csv'
+      - 'work2-variant19/calculation.md'
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Prepare compiler and Work 2 payload
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y aria2 rpm2cpio cpio clang libc++-dev libc++abi-dev qt6-base-dev pkg-config xvfb xauth
+          mkdir -p fastbuild sdkroot gfxroot result
+          GFX_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          D3_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas3d-v25-25.0.5.2780-0.x86_64.rpm'
+          SDK_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
+          aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o graphic.rpm "$GFX_URL"
+          aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o kompas3d.rpm "$D3_URL"
+          aria2c --allow-overwrite=true --auto-file-renaming=false -x 8 -s 8 -k 2M -d fastbuild -o sdk.rpm "$SDK_URL"
+          (cd sdkroot && rpm2cpio ../fastbuild/sdk.rpm | cpio -idm --quiet)
+          (cd gfxroot && rpm2cpio ../fastbuild/graphic.rpm | cpio -idm --quiet './opt/ascon/kompas3d-v25/Bin/libksAPI.so')
+          INC="$PWD/sdkroot/opt/ascon/kompas3d-v25/SDK/KsAPI/Include"
+          LIB="$PWD/gfxroot/opt/ascon/kompas3d-v25/Bin"
+          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread \
+            -I"$INC" kompas-linux/work2_variant19_native.cpp \
+            -L"$LIB" -Wl,-rpath,/opt/ascon/kompas3d-v25/Bin -lksAPI -lc++abi \
+            -o fastbuild/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread \
+            kompas-linux/bootstrap_variant06_qt.cpp \
+            $(pkg-config --cflags --libs Qt6Core) -ldl \
+            -o fastbuild/bootstrap_variant06_qt.so
+          file fastbuild/*.so
+
+      - name: Run official KOMPAS v25 and build plus verify Work 2
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo mkdir -p /tmp/.X11-unix
+          sudo chmod 1777 /tmp/.X11-unix
+          sudo rm -f /tmp/.X11-unix/X102
+          Xvfb :102 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/host-xvfb.out 2>/tmp/host-xvfb.err &
+          HOST_XVFB_PID=$!
+          trap 'kill "$HOST_XVFB_PID" 2>/dev/null || true' EXIT
+          sleep 2
+          test -S /tmp/.X11-unix/X102
+          DISPLAY=:102 xdpyinfo >/tmp/host-xdpyinfo.txt 2>&1 || true
+
+          docker run --rm -e DISPLAY=:102 -v /tmp/.X11-unix:/tmp/.X11-unix -v "$PWD:/work" alt:p11 bash -lc '
+            set -euxo pipefail
+            find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i \
+              -e "s#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g" \
+              -e "s#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g" \
+              -e "s#http://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g" \
+              -e "s#https://ftp.altlinux.org#http://mirror.yandex.ru/altlinux#g"
+            find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
+            rewrite_alt_sources() {
+              local mirror="$1"
+              for src in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+                [ -f "$src" ] || continue
+                sed -i -E \
+                  -e "s#https?://mirror\.yandex\.ru/altlinux#${mirror}#g" \
+                  -e "s#https?://mirror\.truenetwork\.ru/altlinux#${mirror}#g" \
+                  -e "s#https?://ftp\.altlinux\.org/pub/distributions/ALTLinux#${mirror}#g" \
+                  -e "s#https?://ftp\.altlinux\.org#${mirror}#g" "$src"
+                sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/" "$src"
+              done
+            }
+            clear_alt_metadata() {
+              rm -rf /var/lib/apt/lists/*
+              mkdir -p /var/lib/apt/lists/partial
+              apt-get clean
+            }
+            apt_update_resilient() {
+              local mirror attempt
+              for mirror in \
+                "http://mirror.yandex.ru/altlinux" \
+                "http://mirror.truenetwork.ru/altlinux" \
+                "http://ftp.altlinux.org/pub/distributions/ALTLinux"; do
+                rewrite_alt_sources "$mirror"
+                for attempt in 1 2 3; do
+                  clear_alt_metadata
+                  echo "ALT_UPDATE mirror=$mirror attempt=$attempt"
+                  if apt-get -o Acquire::Retries=2 -o Acquire::http::No-Cache=true -o Acquire::https::No-Cache=true update; then
+                    echo "ALT_UPDATE_PASS mirror=$mirror attempt=$attempt"
+                    return 0
+                  fi
+                  sleep $((attempt * 5))
+                done
+              done
+              return 1
+            }
+            apt_update_resilient
+            apt-get install -y wget ca-certificates dbus procps glibc-i18ndata fontconfig
+            apt-get install -y libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
+            wget -O /tmp/ascon-stable-alt.sh https://repo.ascon.ru/scripts/ascon-stable-alt.sh
+            sed -i -E "/^[[:space:]]*apt-get[[:space:]]+update[[:space:]]*$/d" /tmp/ascon-stable-alt.sh
+            bash /tmp/ascon-stable-alt.sh
+            find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i \
+              -e "s#http://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g" \
+              -e "s#https://ftp.altlinux.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"
+            find /etc/apt -type f -maxdepth 4 -print0 2>/dev/null | xargs -0 -r sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/"
+            apt_update_resilient
+
+            mkdir -p /var/cache/apt/archives
+            cp /work/fastbuild/graphic.rpm /var/cache/apt/archives/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm
+            cp /work/fastbuild/kompas3d.rpm /var/cache/apt/archives/ascon-kompas3d-v25-25.0.5.2780-0.x86_64.rpm
+            apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-v25
+            rpm -qa | grep -E "^ascon-kompas" | sort || true
+
+            export HOME=/root XDG_CONFIG_HOME=/root/.config
+            CFG=/root/.config/ascon/KOMPAS-3D/25
+            BIN=/opt/ascon/kompas3d-v25/Bin
+            mkdir -p "$CFG"
+            if [ -d /etc/ascon/KOMPAS-3D/25 ]; then
+              cp -a /etc/ascon/KOMPAS-3D/25/. "$CFG/" || true
+            fi
+            RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+            [ -z "$RES" ] || cp -f "$RES" "$CFG/QtResources.bin"
+
+            KEXEC="$BIN/kKompas"
+            if [ ! -x "$KEXEC" ] && [ -x "$BIN/ksinvisible" ]; then
+              ln -sf "$BIN/ksinvisible" /tmp/kKompas
+              KEXEC=/tmp/kKompas
+            fi
+            test -x "$KEXEC"
+            echo "KEXEC=$KEXEC"
+            test -S /tmp/.X11-unix/X102
+            export DISPLAY=:102 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+            timeout 25s dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config DISPLAY=:102 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 "$KEXEC" -automation >/tmp/kompas-init.out 2>/tmp/kompas-init.err || true
+            pkill -x kKompas 2>/dev/null || true
+            pkill -x ksinvisible 2>/dev/null || true
+
+            cp /work/fastbuild/writer_variant06.so /tmp/writer_variant06.so
+            cp /work/fastbuild/bootstrap_variant06_qt.so /tmp/bootstrap_variant06_qt.so
+            rm -rf /tmp/work2_v19_native
+            rm -f /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
+            export LANG=C.UTF-8 LC_ALL=C.UTF-8 QT_QPA_PLATFORM=xcb LD_LIBRARY_PATH="$BIN" DISPLAY=:102 LIBGL_ALWAYS_SOFTWARE=1
+            unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+            dbus-run-session -- env DISPLAY=:102 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$KEXEC" -automation >/tmp/kompas-proof.out 2>/tmp/kompas-proof.err &
+            KP=$!
+            PASS=0
+            for i in $(seq 1 140); do
+              sleep 2
+              if grep -q "^RESULT=PASS_NATIVE_WORK2_VARIANT19$" /tmp/work2_v19_native/work2.log 2>/dev/null; then
+                PASS=1
+                break
+              fi
+              if grep -q "^RESULT=FAIL_NATIVE_WORK2_VARIANT19$" /tmp/work2_v19_native/work2.log 2>/dev/null; then
+                break
+              fi
+              if ! kill -0 "$KP" 2>/dev/null; then break; fi
+            done
+            cat /tmp/work1_bootstrap.log 2>/dev/null || true
+            cat /tmp/work2_v19_native/work2.log 2>/dev/null || true
+            tail -200 /tmp/kompas-proof.err 2>/dev/null || true
+
+            if [ "$PASS" = "1" ] && [ -s /tmp/work2_v19_native/Work2_V19_TopDown.a3d ]; then
+              rm -rf /work/result/work2-native
+              mkdir -p /work/result/work2-native
+              cp -a /tmp/work2_v19_native/. /work/result/work2-native/
+              cp /tmp/work1_bootstrap.log /work/result/work2-native/ || true
+              sha256sum /tmp/work2_v19_native/*.m3d /tmp/work2_v19_native/*.a3d | tee /work/result/work2-native/SHA256.txt
+              printf "%s\n" \
+                "ASSEMBLY_FIRST_PASS" \
+                "TOP_DOWN_MOLD_CAVITY_DEPENDENCY_PASS" \
+                "OPEN_REBUILD_SAVE_CLOSE_REOPEN_REBUILD_PASS" \
+                "FINAL_NOMINAL_REOPEN_PASS" \
+                "RESULT=PASS_NATIVE_WORK2_VARIANT19" > /work/result/work2-native/ACCEPTANCE.txt
+              exit 0
+            fi
+
+            mkdir -p /work/result/work2-diagnostics
+            cp /tmp/work2_v19_native/work2.log /work/result/work2-diagnostics/ 2>/dev/null || true
+            cp /tmp/kompas-proof.err /work/result/work2-diagnostics/ 2>/dev/null || true
+            cp /tmp/work1_bootstrap.log /work/result/work2-diagnostics/ 2>/dev/null || true
+            exit 30
+          '
+
+      - name: Verify complete native Work 2 package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          D=result/work2-native
+          test -s "$D/Work2_V19_Workpiece.m3d"
+          test -s "$D/Work2_V19_FormCutter.m3d"
+          test -s "$D/Work2_V19_TopDown.a3d"
+          grep -q '^RESULT=PASS_NATIVE_WORK2_VARIANT19_REOPEN_REBUILD_DEPENDENCY$' "$D/work2.log"
+          grep -q '^RESULT=PASS_NATIVE_WORK2_VARIANT19$' "$D/work2.log"
+          grep -q '^TOP_DOWN_DEPENDENCY_PHYSICAL_CHANGE_PASS$' "$D/work2.log"
+          grep -q '^FINAL_NOMINAL_REOPEN_PASS$' "$D/work2.log"
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib,json
+          d=pathlib.Path("result/work2-native")
+          names=["Work2_V19_Workpiece.m3d","Work2_V19_FormCutter.m3d","Work2_V19_TopDown.a3d"]
+          for name in names:
+              p=d/name
+              assert p.stat().st_size>1024,name
+              assert zipfile.is_zipfile(p),name
+              with zipfile.ZipFile(p) as z:
+                  assert {"Contents","FileInfo"}.issubset(set(z.namelist())),name
+              print(name,p.stat().st_size,hashlib.sha256(p.read_bytes()).hexdigest())
+          m=json.loads((d/"native-manifest.json").read_text())
+          assert m["variant"]==19 and m["architecture"]=="top-down"
+          assert m["dependency"].startswith("MoldCavity")
+          print("NATIVE_WORK2_PACKAGE_PASS")
+          PY
+          cp work2-variant19/calculation.csv "$D/"
+          cp work2-variant19/calculation.md "$D/"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-work2-variant19-native-topdown
+          if-no-files-found: ignore
+          path: result/work2-native/**
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work2-variant19-alt-diagnostics
+          if-no-files-found: ignore
+          path: result/work2-diagnostics/**
