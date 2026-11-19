@@ -44,7 +44,7 @@ kp501_flip=os.environ.get("KP501_FLIP","0")=="1"
 vt3_flip=os.environ.get("VT3_FLIP","0")=="1"
 bridge_swap=os.environ.get("BRIDGE_SWAP","0")=="1"
 bridge_mode=os.environ.get("BRIDGE_MODE","dc_bt")
-vd20_swap=os.environ.get("VD20_SWAP","0")=="1"
+vd20_swap=os.environ.get("VD20_SWAP","0")=="1"\nphoto_dir=int(os.environ.get("PHOTO_DIR","1"))
 
 vt1_pins={"D":"sens","S":"t1"} if kp501_flip else {"D":"t1","S":"sens"}
 vt2_pins={"D":"t1","S":"t2"} if kp501_flip else {"D":"t2","S":"t1"}
@@ -128,7 +128,7 @@ if transient_photo:
     rph=float(os.environ.get("PHOTO_PULSE_R_OHM","4700000"))
     net += ["VPH phdrv 0 PULSE(12 -12 50m 30m 30m 70m 200m)", f"RPH sens phdrv {rph:.12g}"]
 else:
-    net += [f"I1 sens 0 {iph:.12g}"]
+    net += [f"I1 sens 0 {iph:.12g}"] if photo_dir >= 0 else [f"I1 0 sens {iph:.12g}"]
 net += ["V1 ac_src n SIN(0 311.1269837 50)","RLINE ac_src l 10","RLOAD l sw 1k"]
 
 control_supply=os.environ.get("CTRL_SUPPLY","0")=="1"
@@ -247,7 +247,7 @@ manifest={
  "scope":add_scope,"Rline_Ohm":10,"Rload_Ohm":1000},
  "models":models,
  "model_patch_notes":model_patch_notes,
- "source_rails":{"common":"0","mains_return_through_FU2":"0","separated":False},"source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap},
+ "source_rails":{"common":"0","mains_return_through_FU2":"0","separated":False},"source_ambiguous_assignments":{"kp501_flip":kp501_flip,"vt3_flip":vt3_flip,"bridge_mode":bridge_mode,"bridge_swap":bridge_swap,"vd20_swap":vd20_swap,"photo_dir":photo_dir},
  "check":report,"sha256":hashlib.sha256(TARGET.read_bytes()).hexdigest(),"size":TARGET.stat().st_size
 }
 (OUT/f"{TARGET.stem}_manifest.json").write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding="utf-8")
