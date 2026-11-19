@@ -106,9 +106,9 @@ jobs:
           test "$HEIGHT" -gt 300
 
           # Native ASCON EULA: "Принимаю" is the left button on the bottom row.
-          # Its center is approximately 65% across the dialog and 24 px above bottom.
+          # Its center is approximately 65% across the dialog and 42 px above bottom.
           CLICK_X=$((X + WIDTH * 65 / 100))
-          CLICK_Y=$((Y + HEIGHT - 24))
+          CLICK_Y=$((Y + HEIGHT - 42))
           printf 'CLICK_X=%s\nCLICK_Y=%s\n' "$CLICK_X" "$CLICK_Y" \
             | tee runtime_evidence/eula-click-target.txt
 
