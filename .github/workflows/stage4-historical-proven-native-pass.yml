@@ -1,0 +1,226 @@
+name: KOMPAS Stage 4 historical proven direct-install native PASS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-historical-proven-native-pass.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-2d:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Reproduce historical proven KOMPAS backend
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-graphic-v25=25.0.5.2780 ascon-kompas3d-v25=25.0.5.2780 ascon-kompas-sdk-v25=25.0.5.2780
+          dpkg -l 'ascon-kompas*' | tee installed-2d.txt
+          cat /etc/os-release | tee os-2d.txt
+      - name: Run strict minimal native 2D gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          mkdir -p result/stage4-historical-2d
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          cat >/tmp/historical2d.py <<'PY'
+          import pathlib,time,math,hashlib,ksapi
+          from constants import constants as c
+          out=pathlib.Path('result/stage4-historical-2d/Stage4_Minimal_Parametric.frw').resolve()
+          logp=pathlib.Path('result/stage4-historical-2d/native-2d.log')
+          def log(x):
+              print(x,flush=True)
+              with logp.open('a',encoding='utf-8') as f:f.write(str(x)+'\n')
+          def req(x,m):
+              if not x: raise RuntimeError(m)
+              return x
+          app=None
+          for _ in range(80):
+              app=ksapi.GetKompas()
+              if app:break
+              time.sleep(.25)
+          req(app,'GetKompas')
+          log('APP='+str(app.GetApplicationName(True)));log('BUILD='+str(app.GetBuildNumber()))
+          lm=req(app.GetApplicationLicenseManager(),'license manager')
+          req(lm.IsKompasModuleActive(c.ksKompasModule2D),'2D inactive');log('LICENSE_2D_ACTIVE=1')
+          docs=req(app.GetDocuments(),'documents');doc=req(docs.Add(c.ksDocumentFragment,True),'Documents.Add fragment')
+          d2=req(ksapi.IKompasDocument2D(doc),'2D cast');d2.SetParametricMode(True);req(d2.IsParametricMode(),'parametric mode')
+          view=req(req(d2.GetViewsAndLayersManager(),'vm').GetViews().GetActiveView(),'active view')
+          dc=req(ksapi.IDrawingContainer(view),'dc');sc=req(ksapi.ISymbols2DContainer(view),'sc')
+          line=req(dc.GetLineSegments().Add(),'line Add');line.SetX1(100);line.SetY1(100);line.SetX2(120);line.SetY2(100);line.SetStyle(c.ksCSNormal);req(line.Update(),'line Update')
+          def con(o,t,index=None,name=None,value=None):
+              q=req(o.NewConstraint(),f'NewConstraint {t}');q.SetConstraintType(t)
+              if index is not None:q.SetIndex(index)
+              if name is not None:q.SetVariable(name)
+              if value is not None:q.SetConstraintValue(float(value))
+              req(q.Create(),f'Create constraint {t}');req(q.IsValid(),f'Invalid constraint {t}');return q
+          con(line,c.ksCFixedPoint,index=0);con(line,c.ksCHorizontal)
+          dim=req(sc.GetLineDimensions().Add(),'dimension Add')
+          dim.SetX1(100);dim.SetY1(100);dim.SetX2(120);dim.SetY2(100);dim.SetX3(110);dim.SetY3(115);dim.SetOrientation(c.ksLinDParallel)
+          req(dim.Update(),'dimension Update');req(dim.Associate(),'dimension Associate')
+          con(dim,c.ksCFixedDim);con(dim,c.ksCDimWithVariable,name='Ltest',value=20)
+          var=req(view.GetDimensionVariable(dim),'GetDimensionVariable')
+          before=(float(line.GetX1()),float(line.GetY1()),float(line.GetX2()),float(line.GetY2()))
+          log('LTEST_BEFORE='+str(float(var.GetValue())))
+          var.SetExpression('35');var.SetValue(35.0);req(d2.CompleteRebuildDocument(),'rebuild 35')
+          after=(float(line.GetX1()),float(line.GetY1()),float(line.GetX2()),float(line.GetY2()))
+          length=math.hypot(after[2]-after[0],after[3]-after[1])
+          log('LTEST_AFTER='+str(float(var.GetValue())));log('LINE_BEFORE='+repr(before));log('LINE_AFTER='+repr(after));log('LINE_LENGTH_AFTER='+str(length))
+          req(abs(float(var.GetValue())-35)<1e-5,'Ltest !=35');req(abs(length-35)<.5,'line length !=35');req(math.dist(before,after)>10,'coordinates unchanged')
+          log('PARAMETRIC_COORDINATE_MUTATION_PASS')
+          req(doc.SaveAs(str(out)),'SaveAs');req(out.exists() and out.stat().st_size>1024,'FRW missing/small');log('SAVE_PASS')
+          req(doc.Close(c.kdDoNotSaveChanges),'Close');log('CLOSE_PASS')
+          reopened=req(docs.Open(str(out),True,False),'Reopen FRW')
+          d2r=req(ksapi.IKompasDocument2D(reopened),'reopen 2D');d2r.SetParametricMode(True);req(d2r.CompleteRebuildDocument(),'reopen rebuild')
+          vr=req(d2r.GetVariableByName(False,'Ltest'),'reopen Ltest');req(abs(float(vr.GetValue())-35)<1e-5,'reopen variable mismatch')
+          viewr=req(req(d2r.GetViewsAndLayersManager(),'reopen vm').GetViews().GetActiveView(),'reopen view');dcr=req(ksapi.IDrawingContainer(viewr),'reopen dc')
+          lines=req(dcr.GetLineSegments(),'reopen lines');getter=req(getattr(lines,'GetLineSegment',None),'GetLineSegment');found=False
+          for i in list(range(int(lines.GetCount())))+list(range(1,int(lines.GetCount())+1)):
+              try:s=getter(i)
+              except:s=None
+              if not s:continue
+              try:
+                  x1,y1,x2,y2=map(float,(s.GetX1(),s.GetY1(),s.GetX2(),s.GetY2()));ln=math.hypot(x2-x1,y2-y1)
+                  if abs(y1-100)<1 and abs(y2-100)<1 and abs(ln-35)<.5:found=True;log('REOPEN_LINE_LENGTH='+str(ln));break
+              except:pass
+          req(found,'driven line missing after reopen')
+          r=reopened.Save();req(r is not False,'final Save false');req(reopened.Close(c.kdDoNotSaveChanges),'final Close')
+          log('SHA256='+hashlib.sha256(out.read_bytes()).hexdigest());log('REOPEN_REBUILD_PASS');log('RESULT=PASS_MINIMAL_NATIVE_2D_FRW_MUTATION_REOPEN')
+          try:app.Quit()
+          except:pass
+          PY
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >result/stage4-historical-2d/kompas.out 2>result/stage4-historical-2d/kompas.err &
+          KP=$!
+          for i in $(seq 1 50); do pgrep -x kKompas >/dev/null && break; sleep .5; done
+          python3 -u /tmp/historical2d.py 2>&1 | tee result/stage4-historical-2d/python.stdout
+          kill "$KP" 2>/dev/null || true;pkill -TERM -x kKompas 2>/dev/null || true
+          grep -qx 'RESULT=PASS_MINIMAL_NATIVE_2D_FRW_MUTATION_REOPEN' result/stage4-historical-2d/native-2d.log
+          sha256sum result/stage4-historical-2d/Stage4_Minimal_Parametric.frw | tee result/stage4-historical-2d/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-historical-native-2d
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            installed-2d.txt
+            os-2d.txt
+            result/stage4-historical-2d/**
+
+  native-3d:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Reproduce historical proven KOMPAS backend
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2 libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-graphic-v25=25.0.5.2780 ascon-kompas3d-v25=25.0.5.2780 ascon-kompas-sdk-v25=25.0.5.2780
+          dpkg -l 'ascon-kompas*' | tee installed-3d.txt
+          cat /etc/os-release | tee os-3d.txt
+      - name: Run strict minimal native 3D gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          mkdir -p result/stage4-historical-3d
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          cat >/tmp/historical3d.py <<'PY'
+          import pathlib,time,hashlib,ksapi
+          from constants import constants as c
+          from constants3d import constants as c3
+          seed=pathlib.Path('/tmp/Stage4_Existing_Seed.m3d');out=pathlib.Path('result/stage4-historical-3d/Stage4_Minimal_Extrusion.m3d').resolve()
+          logp=pathlib.Path('result/stage4-historical-3d/native-3d.log')
+          def log(x):
+              print(x,flush=True)
+              with logp.open('a',encoding='utf-8') as f:f.write(str(x)+'\n')
+          def req(x,m):
+              if not x:raise RuntimeError(m)
+              return x
+          def metrics(top):
+              density=float(top.GetDensity())
+              if density<=0:
+                  top.SetMaterial('Stage4Smoke',1.0)
+                  density=float(top.GetDensity())
+              req(density>0,'density <=0')
+              mass=float(top.GetMass());return mass,density,mass/density
+          app=None
+          for _ in range(80):
+              app=ksapi.GetKompas()
+              if app:break
+              time.sleep(.25)
+          req(app,'GetKompas');log('APP='+str(app.GetApplicationName(True)));log('BUILD='+str(app.GetBuildNumber()))
+          lm=req(app.GetApplicationLicenseManager(),'license manager');req(lm.IsKompasModuleActive(c.ksKompasModule3D),'3D inactive');log('LICENSE_3D_ACTIVE=1')
+          docs=req(app.GetDocuments(),'documents')
+          dtype=getattr(c,'ksDocumentPart',1)
+          created=req(docs.Add(dtype,True),'Documents.Add part')
+          req(created.SaveAs(str(seed)),'Save seed M3D');req(seed.exists() and seed.stat().st_size>1024,'seed M3D missing');req(created.Close(c.kdDoNotSaveChanges),'close seed')
+          log('SEED_NATIVE_M3D_CREATED')
+          base=req(docs.Open(str(seed),True,False),'Open existing M3D');d3=req(ksapi.IKompasDocument3D(base),'3D cast');top=req(d3.GetTopPart(),'TopPart')
+          log('OPEN_EXISTING_M3D_PASS');log('TOPPART_PASS');req(d3.RebuildDocument(),'initial doc rebuild');req(top.RebuildModel(False),'initial model rebuild')
+          mass0,density0,vol0=metrics(top);log(f'MASS_BEFORE={mass0:.12g}');log(f'VOLUME_BEFORE={vol0:.12g}')
+          mc=req(top.GetModelContainer(),'model container');sk=req(req(mc.GetSketchs(),'sketches').Add(),'sketch Add');sk.SetPlane(req(top.GetDefaultObject(c3.o3d_planeXOY),'XOY'))
+          frag=req(sk.BeginEdit(False),'BeginEdit');view=req(req(frag.GetViewsAndLayersManager(),'vm').GetViews().GetActiveView(),'view');lines=req(req(ksapi.IDrawingContainer(view),'dc').GetLineSegments(),'lines')
+          for x1,y1,x2,y2 in [(-4,-3,4,-3),(4,-3,4,3),(4,3,-4,3),(-4,3,-4,-3)]:
+              s=req(lines.Add(),'sketch line Add');s.SetX1(x1);s.SetY1(y1);s.SetX2(x2);s.SetY2(y2);s.SetStyle(c.ksCSNormal);req(s.Update(),'sketch line Update')
+          req(sk.EndEdit(),'EndEdit');req(sk.Update(),'sketch Update');log('SKETCH_EDIT_PASS')
+          ext=req(req(mc.GetExtrusions(),'extrusions').Add(c3.o3d_baseExtrusion),'base extrusion Add');ext.SetProfiles([sk]);req(ext.SetSideParameters(True,c3.etBlind,10.0,0.0,False,None),'side params');req(ext.Update(),'extrusion Update')
+          req(top.RebuildModel(False),'model rebuild');req(d3.RebuildDocument(),'doc rebuild');log('EXTRUSION_PASS')
+          mass1,density1,vol1=metrics(top);log(f'MASS_AFTER={mass1:.12g}');log(f'VOLUME_AFTER={vol1:.12g}')
+          req(mass1>0 and vol1>0,'mass/volume nonpositive');req(abs(mass1-mass0)>1e-10 or abs(vol1-vol0)>1e-10,'physical properties unchanged');log('PHYSICAL_MASS_VOLUME_CHANGE_PASS')
+          req(base.SaveAs(str(out)),'SaveAs final M3D');req(out.exists() and out.stat().st_size>1024,'final M3D missing');req(base.Close(c.kdDoNotSaveChanges),'Close final');log('SAVE_CLOSE_PASS')
+          b2=req(docs.Open(str(out),True,False),'Reopen final M3D');d32=req(ksapi.IKompasDocument3D(b2),'reopen 3D');req(d32.RebuildDocument(),'reopen doc rebuild');t2=req(d32.GetTopPart(),'reopen top');req(t2.RebuildModel(False),'reopen model rebuild')
+          mass2,density2,vol2=metrics(t2);log(f'REOPEN_MASS={mass2:.12g}');log(f'REOPEN_VOLUME={vol2:.12g}')
+          req(abs(mass2-mass1)<=max(1e-8,abs(mass1)*1e-5),'reopen mass mismatch');req(abs(vol2-vol1)<=max(1e-8,abs(vol1)*1e-5),'reopen volume mismatch')
+          r=b2.Save();req(r is not False,'final Save false');req(b2.Close(c.kdDoNotSaveChanges),'final Close')
+          log('SHA256='+hashlib.sha256(out.read_bytes()).hexdigest());log('REOPEN_REBUILD_PASS');log('RESULT=PASS_MINIMAL_NATIVE_3D_EXTRUSION_MASS_VOLUME_REOPEN')
+          try:app.Quit()
+          except:pass
+          PY
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >result/stage4-historical-3d/kompas.out 2>result/stage4-historical-3d/kompas.err &
+          KP=$!
+          for i in $(seq 1 50); do pgrep -x kKompas >/dev/null && break; sleep .5; done
+          python3 -u /tmp/historical3d.py 2>&1 | tee result/stage4-historical-3d/python.stdout
+          kill "$KP" 2>/dev/null || true;pkill -TERM -x kKompas 2>/dev/null || true
+          grep -qx 'RESULT=PASS_MINIMAL_NATIVE_3D_EXTRUSION_MASS_VOLUME_REOPEN' result/stage4-historical-3d/native-3d.log
+          sha256sum result/stage4-historical-3d/Stage4_Minimal_Extrusion.m3d | tee result/stage4-historical-3d/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-historical-native-3d
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            installed-3d.txt
+            os-3d.txt
+            result/stage4-historical-3d/**
