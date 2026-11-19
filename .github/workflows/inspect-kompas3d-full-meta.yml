@@ -1,0 +1,34 @@
+name: Inspect KOMPAS v25 full 3D metapackage
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/inspect-kompas3d-full-meta.yml'
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Inspect ASCON package metadata
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq wget ca-certificates gnupg
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update -qq
+          apt-cache show ascon-kompas3d-v25-full | tee full-meta.txt
+          apt-cache depends ascon-kompas3d-v25-full | tee full-depends.txt
+          apt-cache show ascon-kompas-v25 | tee config-meta.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas3d-v25-full-meta
+          path: |
+            full-meta.txt
+            full-depends.txt
+            config-meta.txt
