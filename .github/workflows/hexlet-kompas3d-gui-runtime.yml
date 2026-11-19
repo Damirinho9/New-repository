@@ -147,7 +147,11 @@ jobs:
           echo "MAIN_WINDOW_AFTER_EULA=$MAIN_AFTER" | tee runtime_evidence/main-after-eula.txt
           test -n "$MAIN_AFTER"
 
-          # Force the main GUI to repaint after the modal dialog is unmapped.
+          # Force a real remap/repaint after the modal dialog is gone.
+          # This changes only X11 window visibility, not KOMPAS document state.
+          xdotool windowminimize --sync "$MAIN_AFTER"
+          sleep 2
+          xdotool windowmap --sync "$MAIN_AFTER"
           xdotool windowraise "$MAIN_AFTER"
           xdotool windowactivate --sync "$MAIN_AFTER"
           xrefresh -display :99
