@@ -56,11 +56,35 @@ def _fd320_card(old):
         f".ENDS {name}",
     ])
 
+def _embedded_spice(comp,xmlio):
+    out=[]
+    for e in comp.iter():
+        for attr in ("Value","String"):
+            raw=xmlio.text(e.get(attr) or "")
+            if ".model" in raw.lower() or ".subckt" in raw.lower():
+                out.append((e,attr,raw))
+    if not out:
+        raise RuntimeError("VD1 embedded SPICE card not found")
+    return out
+
 def _patch_fd320(root,xmlio,notes):
-    c=_find_component(root,xmlio,"VD1");mod=_find_model(root,c);a,b=_find_any_card(c,mod,xmlio)
-    sa=_fd320_card(xmlio.text(a.get("String") or "")); sb=_fd320_card(xmlio.text(b.get("Value") or ""))
-    a.set("String",xmlio.asc(sa));b.set("Value",xmlio.asc(sb));mod.set("ChangedByUser","1")
-    notes["VD1"]="FD320 bounded model: IS=2nA, Cj=80pF, BV=30V; external I_PH is photocurrent. Source data: dark current <=50nA at ~10-12V."
+    c=_find_component(root,xmlio,"VD1")
+    patched=0
+    try:
+        mod=_find_model(root,c)
+    except RuntimeError:
+        mod=None
+    if mod is not None:
+        for e in mod.iter("CiaCString"):
+            raw=xmlio.text(e.get("String") or "")
+            if ".model" in raw.lower() or ".subckt" in raw.lower():
+                e.set("String",xmlio.asc(_fd320_card(raw))); patched+=1
+        mod.set("ChangedByUser","1")
+    for e,attr,raw in _embedded_spice(c,xmlio):
+        e.set(attr,xmlio.asc(_fd320_card(raw)));patched+=1
+    if patched<1:
+        raise RuntimeError("VD1 SPICE patch count=0")
+    notes["VD1"]=f"FD320 bounded embedded model patched copies={patched}: IS=2nA, Cj=80pF, BV=30V; external I_PH is photocurrent."
 
 def patch_models(root,xmlio,refs=None):
     notes={}
@@ -111,9 +135,15 @@ def verify_saved_cards(root,xmlio,refs=None):
             _validate(x)
             if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": gate reference lost")
     if "VD1" in refs:
-        c=_find_component(root,xmlio,"VD1");mod=_find_model(root,c);a,b=_find_any_card(c,mod,xmlio)
-        for x in (xmlio.text(a.get("String") or ""),xmlio.text(b.get("Value") or "")):
-            if "BV=30" not in x or ("IS=2n" not in x and "IS=2N" not in x.upper()): raise RuntimeError("VD1: FD320 model patch lost")
+        c=_find_component(root,xmlio,"VD1")
+        cards=[raw for _,_,raw in _embedded_spice(c,xmlio)]
+        try:
+            mod=_find_model(root,c)
+            cards += [xmlio.text(e.get("String") or "") for e in mod.iter("CiaCString") if ".model" in xmlio.text(e.get("String") or "").lower() or ".subckt" in xmlio.text(e.get("String") or "").lower()]
+        except RuntimeError:
+            pass
+        if not cards or not all("BV=30" in x and "IS=2n" in x for x in cards):
+            raise RuntimeError("VD1: FD320 model patch lost")
     for ref in ("VD3","VD4","VD5"):
         if ref not in refs:continue
         c=_find_component(root,xmlio,ref);m=_find_model(root,c)
