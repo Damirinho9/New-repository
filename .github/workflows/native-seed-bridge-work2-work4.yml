@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: kompas-7335493-native-work1
+          ref: ${{ github.sha }}
 
       - name: Restore KOMPAS ALT RPM cache
         id: rpm-cache
@@ -151,7 +151,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: kompas-7335493-native-work1
+          ref: ${{ github.sha }}
 
       - uses: actions/download-artifact@v4
         with:
