@@ -1,0 +1,66 @@
+name: Probe full GUI post-add 3D activation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/probe-fullgui-postadd.yml'
+      - 'kompas-linux/probe_fullgui_postadd.cpp'
+      - 'kompas-linux/bootstrap_variant06_qt.cpp'
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+      - name: Run post-add activation probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb xauth dbus procps qt6-base-dev pkg-config clang g++ libc++-dev libc++abi-dev             libxcb-res0 libxcb-dri2-0 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0             libxcb-render-util0 libunwind8 libxcb-xkb1 libxkbcommon-x11-0 libxcb-util1 libxcb-shape0 libxcb-xinerama0             libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-glx0 libxcb-present0 libxcb-dri3-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC"             kompas-linux/probe_fullgui_postadd.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread kompas-linux/bootstrap_variant06_qt.cpp             $(pkg-config --cflags --libs Qt6Core) -ldl -o /tmp/bootstrap_variant06_qt.so
+
+          export HOME=/root XDG_CONFIG_HOME=/root/.config
+          mkdir -p /root/.config/ascon/KOMPAS-3D/25
+          if [ -d /etc/ascon/KOMPAS-3D/25 ]; then sudo cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/KOMPAS-3D/25/ || true; fi
+          rm -f /tmp/fullgui_postadd_probe.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
+          sudo mkdir -p /tmp/.X11-unix; sudo chmod 1777 /tmp/.X11-unix; sudo rm -f /tmp/.X11-unix/X109 /tmp/.X109-lock
+          Xvfb :109 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
+          XV=$!; trap 'kill "$XV" 2>/dev/null || true' EXIT; sleep 2
+
+          export DISPLAY=:109 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
+          dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config DISPLAY=:109 QT_QPA_PLATFORM=xcb             LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN" LD_PRELOAD=/tmp/bootstrap_variant06_qt.so             /usr/bin/kompas-v25 -automation >/tmp/kompas.out 2>/tmp/kompas.err &
+          KP=$!
+          PASS=0
+          for i in $(seq 1 45); do
+            sleep 2
+            if grep -q '^RESULT=FULLGUI_POSTADD_BEGINEDIT_PASS$' /tmp/fullgui_postadd_probe.log 2>/dev/null; then PASS=1; break; fi
+            if grep -q '^FAIL ' /tmp/fullgui_postadd_probe.log 2>/dev/null; then break; fi
+            if ! kill -0 "$KP" 2>/dev/null; then break; fi
+          done
+          cat /tmp/work1_bootstrap.log 2>/dev/null || true
+          cat /tmp/fullgui_postadd_probe.log 2>/dev/null || true
+          tail -120 /tmp/kompas.err 2>/dev/null || true
+          test "$PASS" = 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fullgui-postadd-probe
+          if-no-files-found: ignore
+          path: |
+            /tmp/fullgui_postadd_probe.log
+            /tmp/work1_bootstrap.log
