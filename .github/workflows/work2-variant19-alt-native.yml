@@ -20,6 +20,13 @@ jobs:
         with:
           ref: kompas-7335493-native-work1
 
+      - name: Restore KOMPAS v25 RPM cache
+        id: rpm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: fastbuild/*.rpm
+          key: kompas-v25-alt-rpms-25.0.5.2780
+
       - name: Prepare compiler and Work 2 payload
         shell: bash
         run: |
@@ -30,9 +37,9 @@ jobs:
           GFX_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
           D3_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas3d-v25-25.0.5.2780-0.x86_64.rpm'
           SDK_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
-          aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o graphic.rpm "$GFX_URL"
-          aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o kompas3d.rpm "$D3_URL"
-          aria2c --allow-overwrite=true --auto-file-renaming=false -x 8 -s 8 -k 2M -d fastbuild -o sdk.rpm "$SDK_URL"
+          test -s fastbuild/graphic.rpm || aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o graphic.rpm "$GFX_URL"
+          test -s fastbuild/kompas3d.rpm || aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o kompas3d.rpm "$D3_URL"
+          test -s fastbuild/sdk.rpm || aria2c --allow-overwrite=true --auto-file-renaming=false -x 8 -s 8 -k 2M -d fastbuild -o sdk.rpm "$SDK_URL"
           (cd sdkroot && rpm2cpio ../fastbuild/sdk.rpm | cpio -idm --quiet)
           (cd gfxroot && rpm2cpio ../fastbuild/graphic.rpm | cpio -idm --quiet './opt/ascon/kompas3d-v25/Bin/libksAPI.so')
           INC="$PWD/sdkroot/opt/ascon/kompas3d-v25/SDK/KsAPI/Include"
@@ -46,6 +53,13 @@ jobs:
             $(pkg-config --cflags --libs Qt6Core) -ldl \
             -o fastbuild/bootstrap_variant06_qt.so
           file fastbuild/*.so
+
+      - name: Save KOMPAS v25 RPM cache
+        if: steps.rpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: fastbuild/*.rpm
+          key: kompas-v25-alt-rpms-25.0.5.2780
 
       - name: Run official KOMPAS v25 and build plus verify Work 2
         shell: bash
