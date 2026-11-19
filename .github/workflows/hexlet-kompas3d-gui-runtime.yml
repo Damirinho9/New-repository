@@ -29,7 +29,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             wget ca-certificates gnupg \
-            xvfb openbox xdotool imagemagick \
+            xvfb openbox xdotool imagemagick desktop-file-utils \
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
 
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
