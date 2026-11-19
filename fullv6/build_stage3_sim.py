@@ -9,7 +9,8 @@ OUT=ROOT/"stage3-out"
 OUT.mkdir(parents=True,exist_ok=True)
 state=sys.argv[1] if len(sys.argv)>1 else "probe"
 iph=float(sys.argv[2]) if len(sys.argv)>2 else 1e-6
-TARGET=OUT/f"7330744_PhotoRelay_V6_SIM_{state}.ms14"
+safe_state=re.sub(r"[^A-Za-z0-9_-]+","p",state).strip("p") or "probe"
+TARGET=OUT/f"7330744_PhotoRelay_V6_SIM_{safe_state}.ms14"
 
 lib=Library()
 def pick(*names):
