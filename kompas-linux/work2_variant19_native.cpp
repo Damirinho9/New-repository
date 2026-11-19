@@ -242,9 +242,18 @@ static fs::path native_template(const std::string& ext){
   throw std::runtime_error("native KOMPAS template missing: "+ext);
 }
 static IKompasDocumentPtr open_native(const IDocumentsPtr& docs,const fs::path& p){
+  log("OPEN_SIMPLE_ATTEMPT="+p.string());
+  auto simple=docs->Open(p.wstring(),false,false);
+  if(simple){
+    log("OPEN_SIMPLE_PASS="+p.string());
+    return simple;
+  }
+  log("OPEN_SIMPLE_NULL_FALLBACK="+p.string());
   auto par=req(docs->GetOpenDocumentParam(),"GetOpenDocumentParam");
   par->SetVisible(false); par->SetReadOnly(false); par->SetApplyingIndex(0);
-  return req(docs->OpenDocument(p.wstring(),par),"OpenDocument "+p.string());
+  auto d=docs->OpenDocument(p.wstring(),par);
+  if(d) log("OPEN_DOCUMENT_PARAM_PASS="+p.string());
+  return req(d,"OpenDocument "+p.string());
 }
 
 static fs::path seed_file(const char* name){
