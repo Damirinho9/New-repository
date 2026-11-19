@@ -92,6 +92,14 @@ jobs:
           xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-window-geometry.txt
           xwininfo -id "$EULA_WID" -all > runtime_evidence/eula-xwininfo-before.txt
 
+          # Move the real EULA window aside before accepting it. This exposes
+          # the native Create tiles and avoids stale framebuffer pixels hiding them.
+          xdotool windowmove "$EULA_WID" 1320 260
+          sleep 1
+          import -display :99 -window root runtime_evidence/02a_create_tiles_exposed.png
+          xdotool getwindowgeometry --shell "$EULA_WID" \
+            | tee runtime_evidence/eula-window-geometry-moved.txt
+
           eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
           test "$WIDTH" -gt 300
           test "$HEIGHT" -gt 300
@@ -194,6 +202,7 @@ jobs:
 
           test -s runtime_evidence/01_first_start.png
           test -s runtime_evidence/02_eula_before_accept.png
+          test -s runtime_evidence/02a_create_tiles_exposed.png
           test -s runtime_evidence/03_home_after_eula.png
           test -s runtime_evidence/04_second_launch_no_eula_root.png
           test -s runtime_evidence/05_second_launch_no_eula_main.png
@@ -211,6 +220,7 @@ jobs:
           sha256sum \
             runtime_evidence/01_first_start.png \
             runtime_evidence/02_eula_before_accept.png \
+            runtime_evidence/02a_create_tiles_exposed.png \
             runtime_evidence/03_home_after_eula.png \
             runtime_evidence/04_second_launch_no_eula_root.png \
             runtime_evidence/05_second_launch_no_eula_main.png \
