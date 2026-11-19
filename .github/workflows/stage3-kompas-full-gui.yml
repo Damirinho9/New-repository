@@ -130,12 +130,23 @@ jobs:
               if(!docs){log("FAIL GetDocuments");return 2;}
               log("DOCUMENT_COUNT="+std::to_string(docs->GetCount()));
               auto lm=app.GetApplicationLicenseManager();
-              if(lm){
-                log("KOMPAS_VARIANT="+std::to_string((int)lm->GetKompasVariant()));
-                log(std::string("LICENSE_2D_ACTIVE=")+(lm->IsKompasModuleActive(ksKompasModule2D)?"1":"0"));
-                log(std::string("LICENSE_3D_ACTIVE=")+(lm->IsKompasModuleActive(ksKompasModule3D)?"1":"0"));
-              }else log("LICENSE_MANAGER_NULL");
-              log("RESULT=PASS_FULL_LINUX_GUI_INPROCESS_API_AND_DOCUMENTS");
+              if(!lm){log("LICENSE_MANAGER_NULL");return 2;}
+              log("KOMPAS_VARIANT="+std::to_string((int)lm->GetKompasVariant()));
+              bool a2=lm->IsKompasModuleActive(ksKompasModule2D);
+              bool a3=lm->IsKompasModuleActive(ksKompasModule3D);
+              log(std::string("LICENSE_2D_ACTIVE_BEFORE=")+(a2?"1":"0"));
+              log(std::string("LICENSE_3D_ACTIVE_BEFORE=")+(a3?"1":"0"));
+              if(!a2) lm->SetKompasModuleActive(ksKompasModule2D,true);
+              if(!a3) lm->SetKompasModuleActive(ksKompasModule3D,true);
+              a2=lm->IsKompasModuleActive(ksKompasModule2D);
+              a3=lm->IsKompasModuleActive(ksKompasModule3D);
+              log(std::string("LICENSE_2D_ACTIVE_AFTER=")+(a2?"1":"0"));
+              log(std::string("LICENSE_3D_ACTIVE_AFTER=")+(a3?"1":"0"));
+              if(!a2 || !a3){
+                log("RESULT=FULL_GUI_API_PASS_LICENSE_INACTIVE");
+                done=true; return 3;
+              }
+              log("RESULT=PASS_FULL_LINUX_GUI_LICENSED_INPROCESS_API_AND_DOCUMENTS");
               done=true; return 0;
             }catch(const std::exception&e){log(std::string("EXCEPTION=")+e.what());}
              catch(...){log("EXCEPTION=unknown");}
@@ -196,7 +207,7 @@ jobs:
           PASS=0
           for i in $(seq 1 100); do
             sleep 1
-            if grep -q '^RESULT=PASS_FULL_LINUX_GUI_INPROCESS_API_AND_DOCUMENTS$' /tmp/stage3_gui_probe.log 2>/dev/null; then PASS=1; break; fi
+            if grep -q '^RESULT=PASS_FULL_LINUX_GUI_LICENSED_INPROCESS_API_AND_DOCUMENTS$' /tmp/stage3_gui_probe.log 2>/dev/null; then PASS=1; break; fi
             if grep -Eq '^FAIL |^EXCEPTION=' /tmp/stage3_gui_probe.log 2>/dev/null; then break; fi
             if ! kill -0 "$KP" 2>/dev/null; then break; fi
           done
@@ -209,7 +220,7 @@ jobs:
           tail -120 kompas-gui.err 2>/dev/null || true
 
           test "$PASS" = 1
-          grep -q '^RESULT=PASS_FULL_LINUX_GUI_INPROCESS_API_AND_DOCUMENTS$' gui-inprocess-api.txt
+          grep -q '^RESULT=PASS_FULL_LINUX_GUI_LICENSED_INPROCESS_API_AND_DOCUMENTS$' gui-inprocess-api.txt
           kill "$WRAPPER_PID" 2>/dev/null || true
           pkill -TERM -x kKompas 2>/dev/null || true
 
