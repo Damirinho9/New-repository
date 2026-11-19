@@ -242,9 +242,9 @@ static void build_top_down(const IDocumentsPtr& docs){
   // Create the assembly first through the native API. This path is proven
   // to return a live 3D document in hosted KOMPAS v25; template Open is not used.
   log("ASSEMBLY_BEFORE_DOCUMENTS_ADD");
-  auto base=docs->AddWithDefaultSettings(ksDocumentAssembly,true);
+  auto base=docs->Add(ksDocumentAssembly,true);
   if(!base) base=docs->Add(ksDocumentAssembly,true);
-  base=req(base,"Documents.AddWithDefaultSettings/Add assembly");
+  base=req(base,"Documents.Add assembly");
   log("ASSEMBLY_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr asmDoc=base;
   auto top=req(asmDoc->GetTopPart(),"assembly top");
@@ -257,9 +257,9 @@ static void build_top_down(const IDocumentsPtr& docs){
 
   // Workpiece is created only after the assembly exists on disk.
   log("WORKPIECE_BEFORE_DOCUMENTS_ADD");
-  auto wb=docs->AddWithDefaultSettings(ksDocumentPart,true);
+  auto wb=docs->Add(ksDocumentPart,true);
   if(!wb) wb=docs->Add(ksDocumentPart,true);
-  wb=req(wb,"Documents.AddWithDefaultSettings/Add workpiece");
+  wb=req(wb,"Documents.Add workpiece");
   log("WORKPIECE_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr wdoc=wb;
   auto wtop=req(wdoc->GetTopPart(),"workpiece top");
@@ -273,9 +273,9 @@ static void build_top_down(const IDocumentsPtr& docs){
   // Cutter is also created after the assembly, then inserted and made dependent
   // on the already inserted workpiece through a real MoldCavity operation.
   log("CUTTER_BEFORE_DOCUMENTS_ADD");
-  auto cb=docs->AddWithDefaultSettings(ksDocumentPart,true);
+  auto cb=docs->Add(ksDocumentPart,true);
   if(!cb) cb=docs->Add(ksDocumentPart,true);
-  cb=req(cb,"Documents.AddWithDefaultSettings/Add cutter");
+  cb=req(cb,"Documents.Add cutter");
   log("CUTTER_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr cdoc=cb;
   auto ctop=req(cdoc->GetTopPart(),"cutter top");
