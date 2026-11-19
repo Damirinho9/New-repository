@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -246,13 +247,26 @@ static IKompasDocumentPtr open_native(const IDocumentsPtr& docs,const fs::path& 
   return req(docs->OpenDocument(p.wstring(),par),"OpenDocument "+p.string());
 }
 
+static fs::path seed_file(const char* name){
+  const char* dir=std::getenv("KOMPAS_NATIVE_SEED_DIR");
+  require(dir&&*dir,"KOMPAS_NATIVE_SEED_DIR missing");
+  fs::path p=fs::path(dir)/name;
+  require(fs::exists(p)&&fs::file_size(p)>1024,std::string("seed missing ")+p.string());
+  return p;
+}
+static IKompasDocumentPtr open_seed_copy(const IDocumentsPtr& docs,const char* seedName,const fs::path& tmp){
+  fs::create_directories(tmp.parent_path());
+  fs::copy_file(seed_file(seedName),tmp,fs::copy_options::overwrite_existing);
+  log(std::string("SEED_COPY_PASS ")+seedName+" -> "+tmp.string());
+  return open_native(docs,tmp);
+}
+
 static void build_top_down(const IDocumentsPtr& docs){
   // Create the assembly first through the native API. This path is proven
   // to return a live 3D document in hosted KOMPAS v25; template Open is not used.
-  auto atpl=native_template(".a3d");
-  log("ASSEMBLY_TEMPLATE="+atpl.string());
-  auto base=req(docs->AddNewDocumentFromTemplate(atpl.wstring(),false),"AddNewDocumentFromTemplate assembly");
-  log("ASSEMBLY_TEMPLATE_ADD_PASS");
+  fs::path seedTmp="/tmp/work2_seed_work/assembly_seed.a3d";
+  auto base=req(open_seed_copy(docs,"BlankAssembly.a3d",seedTmp),"Open seed assembly");
+  log("ASSEMBLY_SEED_OPEN_PASS");
   IKompasDocument3DPtr asmDoc=base;
   auto top=req(asmDoc->GetTopPart(),"assembly top");
   top->SetName(L"WORK2_V19_TOP_DOWN");
@@ -260,10 +274,8 @@ static void build_top_down(const IDocumentsPtr& docs){
   log("ASSEMBLY_FIRST_PASS");
 
   // Workpiece is created only after the assembly exists on disk.
-  auto mtpl=native_template(".m3d");
-  log("WORKPIECE_TEMPLATE="+mtpl.string());
-  auto wb=req(docs->AddNewDocumentFromTemplate(mtpl.wstring(),false),"AddNewDocumentFromTemplate workpiece");
-  log("WORKPIECE_TEMPLATE_ADD_PASS");
+  auto wb=req(open_seed_copy(docs,"BlankPart.m3d","/tmp/work2_seed_work/workpiece_seed.m3d"),"Open seed workpiece");
+  log("WORKPIECE_SEED_OPEN_PASS");
   IKompasDocument3DPtr wdoc=wb;
   auto wtop=req(wdoc->GetTopPart(),"workpiece top");
   wtop->SetName(L"WORKPIECE_V19");
@@ -275,9 +287,8 @@ static void build_top_down(const IDocumentsPtr& docs){
 
   // Cutter is also created after the assembly, then inserted and made dependent
   // on the already inserted workpiece through a real MoldCavity operation.
-  log("CUTTER_TEMPLATE="+mtpl.string());
-  auto cb=req(docs->AddNewDocumentFromTemplate(mtpl.wstring(),false),"AddNewDocumentFromTemplate cutter");
-  log("CUTTER_TEMPLATE_ADD_PASS");
+  auto cb=req(open_seed_copy(docs,"BlankPart.m3d","/tmp/work2_seed_work/cutter_seed.m3d"),"Open seed cutter");
+  log("CUTTER_SEED_OPEN_PASS");
   IKompasDocument3DPtr cdoc=cb;
   auto ctop=req(cdoc->GetTopPart(),"cutter top");
   ctop->SetName(L"FORM_CUTTER_V19");
