@@ -101,11 +101,11 @@ static IKompasDocumentPtr open_native(const IDocumentsPtr& docs,const fs::path& 
     return simple;
   }
   log("OPEN_SIMPLE_NULL_FALLBACK="+p.string());
-  auto par=req(docs->GetOpenDocumentParam(),"GetOpenDocumentParam");
+  auto par=require_ptr(docs->GetOpenDocumentParam(),"GetOpenDocumentParam");
   par->SetVisible(false); par->SetReadOnly(false); par->SetApplyingIndex(0);
   auto d=docs->OpenDocument(p.wstring(),par);
   if(d) log("OPEN_DOCUMENT_PARAM_PASS="+p.string());
-  return req(d,"OpenDocument "+p.string());
+  return require_ptr(d,"OpenDocument "+p.string());
 }
 static fs::path seed_file(const char* name) {
   const char* dir=std::getenv("KOMPAS_NATIVE_SEED_DIR");
