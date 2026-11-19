@@ -109,7 +109,16 @@ jobs:
           def drawing(doc):
               d2=req(ksapi.IKompasDocument2D(doc),'2D cast');d2.SetParametricMode(True)
               req(d2.IsParametricMode(),'parametric mode')
-              view=req(req(d2.GetViewsAndLayersManager(),'vm').GetViews().GetActiveView(),'active view')
+              views=req(req(d2.GetViewsAndLayersManager(),'vm').GetViews(),'views')
+              view=views.GetActiveView()
+              if not view:
+                  for idx in list(range(int(views.GetCount())))+list(range(1,int(views.GetCount())+1)):
+                      try:view=views.GetView(idx)
+                      except:view=None
+                      if view:break
+              req(view,'any view')
+              try:view.SetCurrent(True)
+              except:pass
               return d2,view,req(ksapi.IDrawingContainer(view),'drawing container'),req(ksapi.ISymbols2DContainer(view),'symbols')
           mode=os.environ['STAGE4_MODE']
           target=seed if mode=='mutate' else out
