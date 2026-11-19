@@ -73,6 +73,9 @@ jobs:
           test -e /usr/include/c++/v1/memory || need+=(libc++-dev libc++abi-dev)
           command -v clang++ >/dev/null || need+=(clang)
           command -v g++ >/dev/null || need+=(g++)
+          dpkg -s libxcb-res0 >/dev/null 2>&1 || need+=(libxcb-res0)
+          dpkg -s libxcb-dri2-0 >/dev/null 2>&1 || need+=(libxcb-dri2-0)
+          dpkg -s libxcb-xkb1 >/dev/null 2>&1 || need+=(libxcb-xkb1)
           if [ "${#need[@]}" -gt 0 ]; then
             sudo apt-get update
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need[@]}"
