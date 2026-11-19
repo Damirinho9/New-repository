@@ -227,14 +227,17 @@ static void physical_var_probe(const IPartPtr& top,const IKompasDocument3DPtr& d
 static double build_annulus(const IDocumentsPtr& docs,const fs::path& path,const std::wstring& name,
                             double od,double id,double width) {
   auto d=new_part(docs,name);
-  auto W=add_var(d.top,L"W",width,L"",true,L"axial width");
-  add_var(d.top,L"D_OUT",od,L"",true,L"outer diameter");
-  add_var(d.top,L"D_IN",id,L"",true,L"inner diameter");
   IFragmentDocumentPtr frag;
   auto sk=new_sketch(d.top,name+L"_PROFILE",frag);
   add_circle(frag,0,0,od/2); add_circle(frag,0,0,id/2);
   finish_sketch(sk);
-  make_extrusion(d.top,d.doc,sk,width,name+L"_EXTRUSION",0.0,L"W");
+  auto ext=make_extrusion(d.top,d.doc,sk,width,name+L"_EXTRUSION");
+  auto W=add_var(d.top,L"W",width,L"",true,L"axial width");
+  IFeaturePtr extFeat=ext;
+  require_ptr(extFeat,"annulus extrusion feature QI");
+  bind_feature_value(extFeat,width,L"W");
+  require(d.top->RebuildModel(false),"annulus rebuild after W bind");
+  require(d.doc->RebuildDocument(),"annulus doc rebuild after W bind");
   d.top->SetMaterial(L"ШХ15",0.00785);
   physical_var_probe(d.top,d.doc,W,width,width+2.0,"ANNULUS");
   double m=mass(d.top);
@@ -244,14 +247,17 @@ static double build_annulus(const IDocumentsPtr& docs,const fs::path& path,const
 }
 static double build_roller(const IDocumentsPtr& docs) {
   auto d=new_part(docs,L"TAPER_ROLLER_V16");
-  auto W=add_var(d.top,L"W",P.brol,L"",true,L"roller axial length");
-  add_var(d.top,L"DR",P.drol,L"",true,L"roller nominal diameter");
-  add_var(d.top,L"DRAFT",P.rollerDraft,L"",true,L"taper draft");
   IFragmentDocumentPtr frag;
   auto sk=new_sketch(d.top,L"ROLLER_PROFILE",frag);
   add_circle(frag,0,0,P.drol/2);
   finish_sketch(sk);
-  make_extrusion(d.top,d.doc,sk,P.brol,L"ROLLER_TAPER",P.rollerDraft,L"W");
+  auto ext=make_extrusion(d.top,d.doc,sk,P.brol,L"ROLLER_TAPER",P.rollerDraft);
+  auto W=add_var(d.top,L"W",P.brol,L"",true,L"roller axial length");
+  IFeaturePtr extFeat=ext;
+  require_ptr(extFeat,"roller extrusion feature QI");
+  bind_feature_value(extFeat,P.brol,L"W");
+  require(d.top->RebuildModel(false),"roller rebuild after W bind");
+  require(d.doc->RebuildDocument(),"roller doc rebuild after W bind");
   d.top->SetMaterial(L"ШХ15",0.00785);
   physical_var_probe(d.top,d.doc,W,P.brol,P.brol+2.0,"ROLLER");
   double m=mass(d.top);
@@ -261,16 +267,17 @@ static double build_roller(const IDocumentsPtr& docs) {
 }
 static double build_cage(const IDocumentsPtr& docs) {
   auto d=new_part(docs,L"CAGE_HALF_V16");
-  auto H=add_var(d.top,L"H",P.cageH,L"",true,L"half-cage axial depth");
-  add_var(d.top,L"S",P.S,L"",true,L"backing thickness");
-  add_var(d.top,L"D1",P.D1,L"",true,L"cage outer diameter");
-  add_var(d.top,L"D2",P.D2,L"",true,L"cage inner diameter");
-  add_var(d.top,L"N_ROL",P.n,L"",true,L"roller cells");
   IFragmentDocumentPtr frag;
   auto sk=new_sketch(d.top,L"CAGE_BASE_PROFILE",frag);
   add_circle(frag,0,0,P.D1/2); add_circle(frag,0,0,P.D2/2);
   finish_sketch(sk);
-  make_extrusion(d.top,d.doc,sk,P.cageH,L"CAGE_BASE",0.0,L"H");
+  auto baseExt=make_extrusion(d.top,d.doc,sk,P.cageH,L"CAGE_BASE");
+  auto H=add_var(d.top,L"H",P.cageH,L"",true,L"half-cage axial depth");
+  IFeaturePtr baseFeat=baseExt;
+  require_ptr(baseFeat,"cage base extrusion feature QI");
+  bind_feature_value(baseFeat,P.cageH,L"H");
+  require(d.top->RebuildModel(false),"cage rebuild after H bind");
+  require(d.doc->RebuildDocument(),"cage doc rebuild after H bind");
 
   IFragmentDocumentPtr pfrag;
   auto psk=new_sketch(d.top,L"CAGE_CELLS_13",pfrag);
@@ -290,13 +297,17 @@ static double build_cage(const IDocumentsPtr& docs) {
 static double build_rivet(const IDocumentsPtr& docs) {
   const double L=2*P.S+1.0;
   auto d=new_part(docs,L"RIVET_V16");
-  auto W=add_var(d.top,L"W",L,L"",true,L"rivet length");
-  add_var(d.top,L"DRIVET",P.rivetD,L"",true,L"rivet diameter");
   IFragmentDocumentPtr frag;
   auto sk=new_sketch(d.top,L"RIVET_PROFILE",frag);
   add_circle(frag,0,0,P.rivetD/2);
   finish_sketch(sk);
-  make_extrusion(d.top,d.doc,sk,L,L"RIVET_SHAFT",0.0,L"W");
+  auto ext=make_extrusion(d.top,d.doc,sk,L,L"RIVET_SHAFT");
+  auto W=add_var(d.top,L"W",L,L"",true,L"rivet length");
+  IFeaturePtr extFeat=ext;
+  require_ptr(extFeat,"rivet extrusion feature QI");
+  bind_feature_value(extFeat,L,L"W");
+  require(d.top->RebuildModel(false),"rivet rebuild after W bind");
+  require(d.doc->RebuildDocument(),"rivet doc rebuild after W bind");
   d.top->SetMaterial(L"Сталь 20",0.00785);
   physical_var_probe(d.top,d.doc,W,L,L+1.0,"RIVET");
   double m=mass(d.top);
@@ -317,25 +328,9 @@ static void build_master(const IPartPtr& top) {
   finish_sketch(sk);
 }
 static void assembly_vars(const IPartPtr& top) {
-  add_var(top,L"D",P.D);
-  add_var(top,L"d",P.d);
   add_var(top,L"T",P.T);
   add_var(top,L"C",P.C,L"T");
   add_var(top,L"B",P.B,L"T/2");
-  add_var(top,L"R",P.R);
-  add_var(top,L"b_rol",P.brol);
-  add_var(top,L"d_rol",P.drol);
-  add_var(top,L"N_rol",P.n);
-  add_var(top,L"S",P.S);
-  add_var(top,L"z",P.z,L"(d+D)/4");
-  add_var(top,L"alpha",P.alpha);
-  add_var(top,L"D1",P.D1,L"ROUND((d+D)/2+0.6*d_rol)");
-  add_var(top,L"D2",P.D2,L"ROUND((d+D)/2-0.3*d_rol)");
-  add_var(top,L"cage_h",P.cageH,L"S+b_rol/2");
-  add_var(top,L"cage_cell_d",P.cellD,L"d_rol+2*S");
-  add_var(top,L"rivet_pitch_d",P.rivetPitch,L"(D1+D2)/2");
-  add_var(top,L"rivet_angle_offset",P.rivetOffset,L"360/(2*N_rol)");
-  add_var(top,L"rivet_d",P.rivetD,L"ROUND((ROUND(D1)-ROUND(D2))/6)*0.8");
   require(top->RebuildModel(false),"assembly variable RebuildModel");
 }
 static void set_place(const IPartPtr& comp,double ox,double oy,double oz,
@@ -430,11 +425,11 @@ static void write_manifest(const std::string& stage) {
 static void build_assembly(const IDocumentsPtr& docs) {
   auto a=new_assembly(docs,L"BEARING_V16");
   build_master(a.top);
-  assembly_vars(a.top);
   auto parts=require_ptr(a.top->GetParts(),"assembly parts");
 
   auto inner=add_component(parts,inner_path(),L"INNER_DOUBLE_RING");
   set_place(inner,0,0,-P.T/2);
+  assembly_vars(a.top);
   link_component(inner,L"W",L"T");
 
   auto cl=add_component(parts,cup_l_path(),L"OUTER_CUP_L");
