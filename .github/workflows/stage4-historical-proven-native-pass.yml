@@ -111,6 +111,13 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas -automation >result/stage4-historical-2d/kompas.out 2>result/stage4-historical-2d/kompas.err &
           KP=$!
           for i in $(seq 1 50); do pgrep -x kKompas >/dev/null && break; sleep .5; done
+          for i in $(seq 1 60); do
+            ss -ltnp > result/stage4-historical-2d/sockets.txt || true
+            grep -q 'kKompas' result/stage4-historical-2d/sockets.txt && break
+            sleep 1
+          done
+          cat result/stage4-historical-2d/sockets.txt
+          grep -q 'kKompas' result/stage4-historical-2d/sockets.txt
           python3 -u /tmp/historical2d.py 2>&1 | tee result/stage4-historical-2d/python.stdout
           kill "$KP" 2>/dev/null || true;pkill -TERM -x kKompas 2>/dev/null || true
           grep -qx 'RESULT=PASS_MINIMAL_NATIVE_2D_FRW_MUTATION_REOPEN' result/stage4-historical-2d/native-2d.log
@@ -231,6 +238,13 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" /tmp/kKompas "$SEED" -automation >result/stage4-historical-3d/kompas.out 2>result/stage4-historical-3d/kompas.err &
           KP=$!
           for i in $(seq 1 50); do pgrep -x kKompas >/dev/null && break; sleep .5; done
+          for i in $(seq 1 60); do
+            ss -ltnp > result/stage4-historical-3d/sockets.txt || true
+            grep -q 'kKompas' result/stage4-historical-3d/sockets.txt && break
+            sleep 1
+          done
+          cat result/stage4-historical-3d/sockets.txt
+          grep -q 'kKompas' result/stage4-historical-3d/sockets.txt
           python3 -u /tmp/historical3d.py 2>&1 | tee result/stage4-historical-3d/python.stdout
           kill "$KP" 2>/dev/null || true;pkill -TERM -x kKompas 2>/dev/null || true
           grep -qx 'RESULT=PASS_MINIMAL_NATIVE_3D_EXTRUSION_MASS_VOLUME_REOPEN' result/stage4-historical-3d/native-3d.log
