@@ -120,11 +120,31 @@ static IKompasDocumentPtr open_seed_copy(const IDocumentsPtr& docs,const char* s
   log(std::string("SEED_COPY_PASS ")+seedName+" -> "+tmp.string());
   return open_native(docs,tmp);
 }
+static bool direct_add_mode() {
+  const char* v=std::getenv("KOMPAS_USE_DIRECT_ADD");
+  return v && std::string(v)=="1";
+}
+static IKompasDocumentPtr new_native_doc(const IDocumentsPtr& docs, ksDocumentTypeEnum type,
+                                         const char* seedName, const fs::path& seedTmp,
+                                         const char* tag) {
+  if (direct_add_mode()) {
+    log(std::string(tag)+"_DIRECT_ADD_ATTEMPT");
+    auto d=docs->Add(type,true);
+    if (d) {
+      log(std::string(tag)+"_DIRECT_ADD_PASS");
+      return d;
+    }
+    log(std::string(tag)+"_DIRECT_ADD_NULL_FALLBACK_SEED");
+  }
+  auto d=open_seed_copy(docs,seedName,seedTmp);
+  if (d) log(std::string(tag)+"_SEED_OPEN_PASS");
+  return d;
+}
 static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
   static int n=0;
   fs::path tmp=fs::path("/tmp/work4_seed_work")/("part_"+std::to_string(++n)+".m3d");
-  auto base=require_ptr(open_seed_copy(docs,"BlankPart.m3d",tmp),"Open seed part");
-  log("NEW_PART_SEED_OPEN_PASS");
+  auto base=require_ptr(new_native_doc(docs,ksDocumentPart,"BlankPart.m3d",tmp,"NEW_PART"),
+                        "Create/open part");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast part document 3D");
   auto top = require_ptr(doc->GetTopPart(), "part TopPart");
@@ -133,8 +153,8 @@ static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
 }
 static DocPart new_assembly(const IDocumentsPtr& docs, const std::wstring& name) {
   fs::path tmp="/tmp/work4_seed_work/assembly_seed.a3d";
-  auto base=require_ptr(open_seed_copy(docs,"BlankAssembly.a3d",tmp),"Open seed assembly");
-  log("NEW_ASSEMBLY_SEED_OPEN_PASS");
+  auto base=require_ptr(new_native_doc(docs,ksDocumentAssembly,"BlankAssembly.a3d",tmp,"NEW_ASSEMBLY"),
+                        "Create/open assembly");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast assembly document 3D");
   auto top = require_ptr(doc->GetTopPart(), "assembly TopPart");
