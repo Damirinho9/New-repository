@@ -145,6 +145,16 @@ jobs:
 
           test -x /usr/bin/clang++
           CXXV1=$(find /usr/include /usr/lib/llvm-* -path '*/c++/v1/cstddef' -print -quit 2>/dev/null || true)
+          if [ -z "$CXXV1" ]; then
+            for v in 22 21 20 19 18; do
+              if apt-cache show "libc++-$v-dev" >/dev/null 2>&1 && apt-cache show "libc++abi-$v-dev" >/dev/null 2>&1; then
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libc++-$v-dev" "libc++abi-$v-dev"
+                echo "LIBCXX_DEV_VERSION=$v" | tee gui-libcxx-package.txt
+                break
+              fi
+            done
+            CXXV1=$(find /usr/include /usr/lib/llvm-* -path '*/c++/v1/cstddef' -print -quit 2>/dev/null || true)
+          fi
           test -n "$CXXV1"
           CXXV1=$(dirname "$CXXV1")
           echo "LIBCXX_INCLUDE=$CXXV1" | tee gui-compiler.txt
@@ -218,6 +228,7 @@ jobs:
             gui-file.txt
             gui-ldd.txt
             gui-compiler.txt
+            gui-libcxx-package.txt
             gui-process.txt
             gui-sockets.txt
             gui-sockets-history.txt
