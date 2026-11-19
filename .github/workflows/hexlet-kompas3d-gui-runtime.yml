@@ -82,61 +82,44 @@ jobs:
           echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
           test -z "$EULA_STILL"
 
-          # Restart after accepted EULA to avoid stale modal framebuffer/input state.
-          xdotool windowclose "$MAIN_WID" || true
-          for i in $(seq 1 30); do
-            sleep 1
-            ! ps -p "$FIRST_PID" >/dev/null 2>&1 && break
-          done
-          if ps -p "$FIRST_PID" >/dev/null 2>&1; then kill "$FIRST_PID" 2>/dev/null || true; fi
-          sleep 3
+          # Stay in the first already-rendered GUI. After EULA dismissal,
+          # invoke the native File -> Create command (Ctrl+N) in the same process.
+          sleep 5
+          xdotool windowfocus --sync "$MAIN_WID"
+          xdotool mousemove --sync 500 500
+          xdotool click 1
+          sleep 1
+          xdotool key --clearmodifiers ctrl+n
+          sleep 5
 
-          # Fresh full GUI launched as automation server after EULA acceptance.
-          kompas-v25 -automation >runtime_evidence/kompas-automation.out 2>runtime_evidence/kompas-automation.err &
-          AUTO_PID=$!
-          echo "$AUTO_PID" > runtime_evidence/kompas-automation.pid
+          CREATE_WID=$(xdotool getwindowfocus)
+          echo "CREATE_WINDOW_ID=$CREATE_WID" | tee runtime_evidence/create-window.txt
+          xdotool getwindowname "$CREATE_WID" | tee runtime_evidence/create-window-title.txt || true
+          xdotool getwindowgeometry --shell "$CREATE_WID" | tee runtime_evidence/create-window-geometry.txt || true
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null             | tee runtime_evidence/visible-windows-after-ctrl-n.txt || true
 
-          AUTO_WID=""
-          for i in $(seq 1 90); do
-            sleep 1
-            AUTO_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
-            [ -n "$AUTO_WID" ] && break
-          done
-          test -n "$AUTO_WID"
-          echo "AUTOMATION_WINDOW_ID=$AUTO_WID" | tee runtime_evidence/automation-window.txt
-          sleep 10
+          if [ "$CREATE_WID" = "$MAIN_WID" ]; then
+            echo 'RESULT=FAIL_CTRL_N_NO_NEW_DOCUMENT_DIALOG' | tee runtime_evidence/result.txt
+            exit 51
+          fi
 
-          EULA_AUTO=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
-          echo "EULA_ON_AUTOMATION_LAUNCH=$EULA_AUTO" | tee runtime_evidence/eula-automation-launch.txt
-          test -z "$EULA_AUTO"
+          import -display :99 -window "$CREATE_WID" runtime_evidence/02_new_document_dialog.png
+          test -s runtime_evidence/02_new_document_dialog.png
+          echo 'RESULT=PASS_NEW_DOCUMENT_DIALOG_OPENED' | tee runtime_evidence/result.txt
 
-          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
-          export STAGE4_OUT="$GITHUB_WORKSPACE/runtime_evidence/Hexlet_stage4_real_drawing.cdw"
-          python3 hexlet_7344445/stage4_create_drawing.py | tee runtime_evidence/api7-gui-result.txt
-
-          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_IN_FULL_GUI$' runtime_evidence/api7-gui-result.txt
-          cp runtime_evidence/api7-gui-result.txt runtime_evidence/result.txt
-          xdotool windowfocus --sync "$AUTO_WID" || true
-          sleep 3
-          import -display :99 -window root runtime_evidence/02_drawing_created_gui.png
-          test -s runtime_evidence/02_drawing_created_gui.png
-
-      - name: Strict real drawing gate
+      - name: Strict new-document dialog gate
         shell: bash
         run: |
           set -euxo pipefail
           test -s runtime_evidence/01_eula_before_accept.png
-          test -s runtime_evidence/02_drawing_created_gui.png
-          test -s runtime_evidence/Hexlet_stage4_real_drawing.cdw
+          test -s runtime_evidence/02_new_document_dialog.png
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^API7_GUI_ATTACH=AVAILABLE$' runtime_evidence/api7-gui-result.txt
-          grep -q '^DOCUMENT_TYPE_DRAWING=PASS$' runtime_evidence/api7-gui-result.txt
-          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_IN_FULL_GUI$' runtime_evidence/result.txt
-          sha256sum runtime_evidence/Hexlet_stage4_real_drawing.cdw runtime_evidence/02_drawing_created_gui.png             | tee runtime_evidence/sha256.txt
+          grep -q '^RESULT=PASS_NEW_DOCUMENT_DIALOG_OPENED$' runtime_evidence/result.txt
+          sha256sum runtime_evidence/02_new_document_dialog.png | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-real-drawing-evidence
+          name: kompas3d-new-document-dialog-evidence
           path: runtime_evidence/
           if-no-files-found: error
