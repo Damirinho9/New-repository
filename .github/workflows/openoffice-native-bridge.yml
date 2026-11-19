@@ -1,0 +1,25 @@
+name: openoffice-native-bridge
+on:
+  push:
+    branches: [openoffice-native-417]
+  workflow_dispatch:
+
+jobs:
+  fetch-openoffice:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Apache OpenOffice 4.1.17
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL="https://archive.apache.org/dist/openoffice/4.1.17/binaries/en-US/Apache_OpenOffice_4.1.17_Linux_x86-64_install-deb_en-US.tar.gz"
+          curl -fL --retry 5 --retry-delay 3 "$URL" -o Apache_OpenOffice_4.1.17_Linux_x86-64_install-deb_en-US.tar.gz
+          echo "10f80a09aa3e9ab2b5bf0d8cdb82b019fb8fda4127445ad079081f0ce2cabfa3  Apache_OpenOffice_4.1.17_Linux_x86-64_install-deb_en-US.tar.gz" | sha256sum -c -
+          ls -lh Apache_OpenOffice_4.1.17_Linux_x86-64_install-deb_en-US.tar.gz
+      - name: Upload verified runtime archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: apache-openoffice-4.1.17-linux-x86_64
+          path: Apache_OpenOffice_4.1.17_Linux_x86-64_install-deb_en-US.tar.gz
+          compression-level: 0
+          retention-days: 1
