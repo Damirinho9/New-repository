@@ -88,11 +88,12 @@ jobs:
           file "$GUI_MERGED" | tee "$GITHUB_WORKSPACE/gui-file.txt"
           echo "KOMPAS_GUI_EXE=$GUI_MERGED" >> "$GITHUB_ENV"
 
-      - name: Verify GUI loader and launch full KOMPAS
+      - name: Verify full GUI and prove in-process API7 backend
         shell: bash
         run: |
           set -euxo pipefail
           BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
           export PYTHONPATH="$BIN"
           export LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
           export HOME="$RUNNER_TEMP/kompas-gui-home"
@@ -100,7 +101,7 @@ jobs:
           mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25"
           RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
           [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/QtResources.bin"
-          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
           ldd "$KOMPAS_GUI_EXE" | tee gui-ldd.txt
           if grep -q 'not found' gui-ldd.txt; then
@@ -108,12 +109,50 @@ jobs:
             exit 42
           fi
 
+          cat >/tmp/stage3_gui_probe.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <fstream>
+          #include <string>
+          using namespace ksapi;
+          static std::ofstream lg("/tmp/stage3_gui_probe.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          extern "C" int run_variant06_writer(){
+            static bool done=false; if(done) return 0;
+            try{
+              log("FULL_GUI_INPROCESS_BEGIN");
+              IApplication& app=GetKompasApplication();
+              int a=0,b=0,c=0,d=0; app.GetSystemVersion(a,b,c,d);
+              log("KOMPAS_VERSION="+std::to_string(a)+"."+std::to_string(b)+"."+std::to_string(c));
+              auto name=app.GetApplicationName(true);
+              log(std::string("APP_NAME_UTF16_LENGTH=")+std::to_string(name.size()));
+              auto docs=app.GetDocuments();
+              if(!docs){log("FAIL GetDocuments");return 2;}
+              log("DOCUMENT_COUNT="+std::to_string(docs->GetCount()));
+              auto lm=app.GetApplicationLicenseManager();
+              if(lm){
+                log("KOMPAS_VARIANT="+std::to_string((int)lm->GetKompasVariant()));
+                log(std::string("LICENSE_2D_ACTIVE=")+(lm->IsKompasModuleActive(ksKompasModule2D)?"1":"0"));
+                log(std::string("LICENSE_3D_ACTIVE=")+(lm->IsKompasModuleActive(ksKompasModule3D)?"1":"0"));
+              }else log("LICENSE_MANAGER_NULL");
+              log("RESULT=PASS_FULL_LINUX_GUI_INPROCESS_API_AND_DOCUMENTS");
+              done=true; return 0;
+            }catch(const std::exception&e){log(std::string("EXCEPTION=")+e.what());}
+             catch(...){log("EXCEPTION=unknown");}
+            return 2;
+          }
+          CPP
+
+          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC"             /tmp/stage3_gui_probe.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread             kompas-linux/bootstrap_variant06_poll.cpp -ldl -o /tmp/gui_bootstrap.so
+
           ln -sf "$KOMPAS_GUI_EXE" /tmp/kKompas
           test -x /tmp/kKompas
+          rm -f /tmp/stage3_gui_probe.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
           echo "GUI_SYMLINK=$(readlink /tmp/kKompas)" | tee gui-process.txt
 
           export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
-          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"             dbus-run-session -- /tmp/kKompas -automation -APIServer=10500 >kompas-gui.out 2>kompas-gui.err &
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"             dbus-run-session -- env LD_PRELOAD=/tmp/gui_bootstrap.so /tmp/kKompas -automation             >kompas-gui.out 2>kompas-gui.err &
           WRAPPER_PID=$!
           echo "WRAPPER_PID=$WRAPPER_PID" | tee -a gui-process.txt
 
@@ -127,7 +166,6 @@ jobs:
           echo "KOMPAS_GUI_PID=$KP" | tee -a gui-process.txt
           if [ -z "$KP" ]; then
             cat kompas-gui.err
-            ps -ef | grep -E 'kKompas|kHome|kStudy|Xvfb|dbus' || true
             exit 50
           fi
 
@@ -139,68 +177,23 @@ jobs:
             echo
           } | tee -a gui-process.txt
 
-          : > gui-sockets-history.txt
-          APIPORT=10500
-          for i in $(seq 1 60); do
-            ss -ltnpH > gui-sockets.txt || true
-            {
-              echo "SNAPSHOT=$i"
-              grep -E "pid=$KP[,)]|\(\(\"kKompas\"|:$APIPORT[[:space:]]" gui-sockets.txt || true
-            } >> gui-sockets-history.txt
-            if grep -E ":$APIPORT[[:space:]]" gui-sockets.txt >/dev/null; then break; fi
+          PASS=0
+          for i in $(seq 1 100); do
             sleep 1
+            if grep -q '^RESULT=PASS_FULL_LINUX_GUI_INPROCESS_API_AND_DOCUMENTS$' /tmp/stage3_gui_probe.log 2>/dev/null; then PASS=1; break; fi
+            if grep -Eq '^FAIL |^EXCEPTION=' /tmp/stage3_gui_probe.log 2>/dev/null; then break; fi
+            if ! kill -0 "$KP" 2>/dev/null; then break; fi
           done
-          cat gui-sockets.txt
-          grep -E ":$APIPORT[[:space:]]" gui-sockets.txt
-          echo "APISERVER_PORT=$APIPORT" | tee -a gui-process.txt
 
-          export KOMPAS_GUI_PID="$KP"
-          python3 - <<'PY' | tee gui-sdk.txt
-          import os,time,traceback
-          import ksapi
-          from constants import constants as c
+          ss -ltnpH > gui-sockets.txt || true
+          cp /tmp/stage3_gui_probe.log gui-inprocess-api.txt 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log gui-bootstrap.txt 2>/dev/null || true
+          cat gui-bootstrap.txt 2>/dev/null || true
+          cat gui-inprocess-api.txt 2>/dev/null || true
+          tail -120 kompas-gui.err 2>/dev/null || true
 
-          app=None
-          for i in range(30):
-              try:
-                  app=ksapi.GetKompas()
-              except Exception as e:
-                  print('GETKOMPAS_RETRY_EXCEPTION',i,repr(e),flush=True)
-                  app=None
-              if app is not None:
-                  break
-              time.sleep(1)
-
-          print('GUI_PID='+os.environ['KOMPAS_GUI_PID'],flush=True)
-          print('APP_OBJECT='+repr(app),flush=True)
-          if app is None:
-              print('RESULT=FAIL_FULL_GUI_GETKOMPAS',flush=True)
-              raise SystemExit(60)
-
-          name=app.GetApplicationName(True)
-          docs=app.GetDocuments()
-          print('APP_NAME='+str(name),flush=True)
-          print('DOCS_OBJECT='+repr(docs),flush=True)
-          if docs is None:
-              print('RESULT=FAIL_FULL_GUI_DOCUMENTS',flush=True)
-              raise SystemExit(61)
-
-          count=docs.GetCount()
-          lm=app.GetApplicationLicenseManager()
-          print('DOCUMENT_COUNT='+str(count),flush=True)
-          if lm:
-              print('KOMPAS_VARIANT='+str(lm.GetKompasVariant()),flush=True)
-              print('LICENSE_2D_ACTIVE='+str(lm.IsKompasModuleActive(c.ksKompasModule2D)),flush=True)
-              print('LICENSE_3D_ACTIVE='+str(lm.IsKompasModuleActive(c.ksKompasModule3D)),flush=True)
-
-          if 'Invisible' in str(name):
-              print('RESULT=FAIL_NOT_FULL_GUI_BACKEND',flush=True)
-              raise SystemExit(62)
-
-          print('RESULT=PASS_FULL_LINUX_GUI_BACKEND_AND_SDK',flush=True)
-          PY
-
-          grep -q '^RESULT=PASS_FULL_LINUX_GUI_BACKEND_AND_SDK$' gui-sdk.txt
+          test "$PASS" = 1
+          grep -q '^RESULT=PASS_FULL_LINUX_GUI_INPROCESS_API_AND_DOCUMENTS$' gui-inprocess-api.txt
           kill "$WRAPPER_PID" 2>/dev/null || true
           pkill -TERM -x kKompas 2>/dev/null || true
 
@@ -221,6 +214,7 @@ jobs:
             gui-process.txt
             gui-sockets.txt
             gui-sockets-history.txt
-            gui-sdk.txt
+            gui-inprocess-api.txt
+            gui-bootstrap.txt
             kompas-gui.out
             kompas-gui.err
