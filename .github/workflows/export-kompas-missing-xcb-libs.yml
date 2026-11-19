@@ -1,0 +1,32 @@
+name: Export KOMPAS missing XCB libs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/export-kompas-missing-xcb-libs.yml'
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Export exact runtime libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libxcb-res0 libxcb-dri2-0
+          mkdir -p out
+          cp -L /usr/lib/x86_64-linux-gnu/libxcb-res.so.0 out/
+          cp -L /usr/lib/x86_64-linux-gnu/libxcb-dri2.so.0 out/
+          sha256sum out/* | tee out/SHA256.txt
+          file out/*.so.0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-missing-xcb-libs
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+          path: out/**
