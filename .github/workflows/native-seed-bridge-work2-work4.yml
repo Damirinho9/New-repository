@@ -69,7 +69,49 @@ jobs:
             set -euxo pipefail
             rewrite_alt_sources() {
               local mirror="$1"
-              apt_update_resilient
+              for src in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+                [ -f "$src" ] || continue
+                sed -i -E \
+                  -e "s#https?://mirror\\.yandex\\.ru/altlinux#${mirror}#g" \
+                  -e "s#https?://mirror\\.truenetwork\\.ru/altlinux#${mirror}#g" \
+                  -e "s#https?://ftp\\.altlinux\\.org/pub/distributions/ALTLinux#${mirror}#g" \
+                  -e "s#https?://ftp\\.altlinux\\.org#${mirror}#g" "$src"
+                sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/" "$src"
+              done
+            }
+            clear_alt_metadata() {
+              rm -rf /var/lib/apt/lists/*
+              mkdir -p /var/lib/apt/lists/partial
+              apt-get clean
+            }
+            apt_update_resilient() {
+              local mirror attempt
+              for mirror in \
+                "http://mirror.yandex.ru/altlinux" \
+                "http://mirror.truenetwork.ru/altlinux" \
+                "http://ftp.altlinux.org/pub/distributions/ALTLinux"; do
+                rewrite_alt_sources "$mirror"
+                for attempt in 1 2 3; do
+                  clear_alt_metadata
+                  echo "ALT_UPDATE mirror=$mirror attempt=$attempt"
+                  if apt-get -o Acquire::Retries=2 -o Acquire::http::No-Cache=true -o Acquire::https::No-Cache=true update; then
+                    echo "ALT_UPDATE_PASS mirror=$mirror attempt=$attempt"
+                    return 0
+                  fi
+                  sleep $((attempt * 5))
+                done
+              done
+              return 1
+            }
+
+            apt_update_resilient
+            apt-get install -y wget ca-certificates dbus procps glibc-i18ndata fontconfig
+            apt-get install -y libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
+            wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-alt.sh
+            sed -i -E "/^[[:space:]]*apt-get[[:space:]]+update[[:space:]]*$/d" /tmp/ascon.sh
+            bash /tmp/ascon.sh
+            apt_update_resilient
+
             mkdir -p /var/cache/apt/archives
             cp /work/fastbuild/graphic.rpm /var/cache/apt/archives/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm
             cp /work/fastbuild/kompas3d.rpm /var/cache/apt/archives/ascon-kompas3d-v25-25.0.5.2780-0.x86_64.rpm
