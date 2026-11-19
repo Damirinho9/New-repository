@@ -143,7 +143,13 @@ jobs:
           }
           CPP
 
-          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC"             /tmp/stage3_gui_probe.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/writer_variant06.so
+          test -x /usr/bin/clang++
+          CXXV1=$(find /usr/include /usr/lib/llvm-* -path '*/c++/v1/cstddef' -print -quit 2>/dev/null || true)
+          test -n "$CXXV1"
+          CXXV1=$(dirname "$CXXV1")
+          echo "LIBCXX_INCLUDE=$CXXV1" | tee gui-compiler.txt
+          /usr/bin/clang++ --version | head -1 | tee -a gui-compiler.txt
+          /usr/bin/clang++ -std=c++20 -stdlib=libc++ -nostdinc++ -I"$CXXV1" -O2 -fPIC -shared -pthread -I"$INC" /tmp/stage3_gui_probe.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/writer_variant06.so
           g++ -std=c++20 -O2 -fPIC -shared -pthread             kompas-linux/bootstrap_variant06_poll.cpp -ldl -o /tmp/gui_bootstrap.so
 
           ln -sf "$KOMPAS_GUI_EXE" /tmp/kKompas
