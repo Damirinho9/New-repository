@@ -119,11 +119,12 @@ jobs:
           sleep 2
           import -display :99 -window root runtime_evidence/02_file_menu_open.png
 
-          # "Создать" is the first command in File menu. Select it explicitly.
-          xdotool key Home
+          # Invoke the same File -> Create command using KOMPAS' documented Ctrl+N shortcut.
+          # The File menu was explicitly opened above; Ctrl+N is the native "Создать новый документ" command.
+          xdotool key Escape
           sleep 1
-          xdotool key Return
-          sleep 4
+          xdotool key --clearmodifiers ctrl+n
+          sleep 5
 
           CREATE_FOCUS=$(xdotool getwindowfocus)
           echo "CREATE_FOCUS=$CREATE_FOCUS" | tee runtime_evidence/create-focus.txt
