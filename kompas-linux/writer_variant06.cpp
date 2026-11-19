@@ -171,6 +171,12 @@ static bool build(){
   log("version="+std::to_string(ma)+"."+std::to_string(mi)+" build="+std::to_string(bu));
   app.SetHideMessage(ksHideMessageYes);
 
+  auto lm=app.GetApplicationLicenseManager();
+  if(!lm){log("FAIL license manager");return false;}
+  bool lic2=lm->IsKompasModuleActive(ksKompasModule2D);
+  log(std::string("LICENSE_2D_ACTIVE=")+(lic2?"1":"0"));
+  if(!lic2){log("FAIL 2D license inactive");return false;}
+
   auto docs=app.GetDocuments(); if(!docs){log("FAIL docs");return false;}
 
   // Existing native FRW mutation audit. The workflow starts KOMPAS
@@ -234,15 +240,65 @@ static bool build(){
               return false;
             }
             log("EXISTING_FRW_PARAMETRIC_MUTATION_PASS moved="+std::to_string(moved));
-            probeVar->SetValue(20.0);
-            edoc->UpdateVariables();
-            edoc->CompleteRebuildDocument();
+            // Keep the mutated driving value in the saved file so reopen can
+            // prove persistence and rebuild of the parametric state.
+            probeVar->SetValue(30.0);
+            if(!edoc->UpdateVariables() || !edoc->CompleteRebuildDocument()){
+              log("EXISTING_FRW_FINAL_30_REBUILD_FAIL");
+              return false;
+            }
             const std::wstring out=L"/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw";
             if(!existing->SaveAs(out)){
               log("EXISTING_FRW_PARAMETRIC_SAVE_FAIL");
               return false;
             }
             log("EXISTING_FRW_PARAMETRIC_SAVE_PASS");
+            if(!existing->Close(kdDoNotSaveChanges)){
+              log("EXISTING_FRW_CLOSE_FAIL");
+              return false;
+            }
+            log("EXISTING_FRW_CLOSE_PASS");
+
+            IKompasDocumentPtr reopened{};
+            for(int attempt=0; attempt<20 && !reopened; ++attempt){
+              reopened=docs->Open(out,true,false);
+              if(!reopened) std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+            if(!reopened){
+              log("EXISTING_FRW_REOPEN_FAIL");
+              return false;
+            }
+            IKompasDocument2DPtr redoc=reopened;
+            if(!redoc){
+              log("EXISTING_FRW_REOPEN_2D_CAST_FAIL");
+              return false;
+            }
+            redoc->SetParametricMode(true);
+            auto rvar=redoc->GetVariableByName(false,L"probe_len");
+            if(!rvar){
+              log("EXISTING_FRW_REOPEN_VARIABLE_FAIL");
+              return false;
+            }
+            double rval=rvar->GetValue();
+            log("EXISTING_FRW_REOPEN_PROBE_LEN="+std::to_string(rval));
+            if(std::abs(rval-30.0)>1e-6){
+              log("EXISTING_FRW_REOPEN_VARIABLE_VALUE_FAIL");
+              return false;
+            }
+            if(!redoc->CompleteRebuildDocument()){
+              log("EXISTING_FRW_REOPEN_REBUILD_FAIL");
+              return false;
+            }
+            log("EXISTING_FRW_REOPEN_REBUILD_PASS");
+            if(!reopened->Save()){
+              log("EXISTING_FRW_REOPEN_SAVE_FAIL");
+              return false;
+            }
+            if(!reopened->Close(kdDoNotSaveChanges)){
+              log("EXISTING_FRW_REOPEN_CLOSE_FAIL");
+              return false;
+            }
+            log("RESULT=PASS_MINIMAL_NATIVE_2D_FRW_MUTATION_REOPEN");
             log("RESULT=EXISTING_FRW_PARAMETRIC_MUTATION_PASS");
             return true;
           }
