@@ -52,17 +52,23 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xauth dbus procps libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xauth dbus procps \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-util1 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-glx0 libxcb-present0 \
+            libxcb-dri3-0 libxkbcommon-x11-0
           BIN=/opt/ascon/kompas3d-v25/Bin
-          LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD" ldd "$BIN/ksinvisible" | tee stage4-openinv-2d-ldd.txt
+          LD_LIBRARY_PATH="$BIN" ldd "$BIN/ksinvisible" | tee stage4-openinv-2d-ldd.txt
           ! grep -q 'not found' stage4-openinv-2d-ldd.txt
       - name: Create mutate save close reopen native FRW
         shell: bash
         run: |
           set -euxo pipefail
           BIN=/opt/ascon/kompas3d-v25/Bin
-          export PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
-          export HOME="$RUNNER_TEMP/openinv-2d" XDG_CONFIG_HOME="$HOME/.config" QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          export PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN"
+          export HOME="$RUNNER_TEMP/openinv-2d"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
           mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25" result/stage4-openinv-2d
           unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
           cat >/tmp/openinv2d.py <<'PY'
@@ -198,14 +204,20 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xauth dbus procps libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xauth dbus procps \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-util1 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-glx0 libxcb-present0 \
+            libxcb-dri3-0 libxkbcommon-x11-0
       - name: Open sketch extrude mass volume save close reopen rebuild
         shell: bash
         run: |
           set -euxo pipefail
           BIN=/opt/ascon/kompas3d-v25/Bin
-          export PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
-          export HOME="$RUNNER_TEMP/openinv-3d" XDG_CONFIG_HOME="$HOME/.config" QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          export PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN"
+          export HOME="$RUNNER_TEMP/openinv-3d"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
           mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25"
           unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
           cat >/tmp/openinv3d.py <<'PY'
