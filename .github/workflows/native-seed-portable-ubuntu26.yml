@@ -57,8 +57,10 @@ jobs:
           BIN=/opt/ascon/kompas3d-v25/Bin
           test -x "$BIN/ksinvisible"
           file "$BIN/ksinvisible"
-          ldd "$BIN/ksinvisible" | tee /tmp/ksinvisible-ldd.txt
-          ! grep -q "not found" /tmp/ksinvisible-ldd.txt
+          SYSROOT="$RUNNER_TEMP/kompas-runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+          LD_LIBRARY_PATH="$BIN:$SYS_LD" ldd "$BIN/ksinvisible" | tee /tmp/ksinvisible-ldd-pre.txt || true
 
       - name: Install only build and X11 prerequisites if missing
         shell: bash
@@ -78,12 +80,20 @@ jobs:
           fi
           pkg-config --modversion Qt6Core
           clang++ --version | head -1
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD" ldd "$BIN/ksinvisible" | tee /tmp/ksinvisible-ldd.txt
+          if grep -q "not found" /tmp/ksinvisible-ldd.txt; then
+            echo "UNRESOLVED_RUNTIME_LIBS"
+            grep "not found" /tmp/ksinvisible-ldd.txt
+            exit 42
+          fi
 
       - name: Compile Work 2 and Work 4 native writers
         shell: bash
         run: |
           set -euxo pipefail
           BIN=/opt/ascon/kompas3d-v25/Bin
+          export LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
           INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
           test -d "$INC"
           clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC"             kompas-linux/work2_variant19_native.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/work2.so
@@ -110,7 +120,7 @@ jobs:
           sleep 2
           test -S /tmp/.X11-unix/X114
 
-          export DISPLAY=:114 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
+          export DISPLAY=:114 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
           export KOMPAS_NATIVE_SEED_DIR="$GITHUB_WORKSPACE/result/native-seed"
           unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
           rm -rf result/portable-native
