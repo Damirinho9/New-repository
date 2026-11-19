@@ -164,17 +164,8 @@ jobs:
           # Non-fatal API7 probe against the accepted full GUI. Historical runs
           # returned None here, so GUI creation remains authoritative.
           export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
-          python3 - <<'PY' | tee runtime_evidence/api7-gui-probe.txt
-import ksapi
-app = ksapi.GetKompas()
-print("GETKOMPAS=", app)
-if app is None:
-    print("API7_GUI_ATTACH=UNAVAILABLE")
-else:
-    print("API7_GUI_ATTACH=AVAILABLE")
-    print("APP_NAME=", app.GetApplicationName(True))
-    print("BUILD=", app.GetBuildNumber())
-PY
+          python3 -c 'import ksapi; app=ksapi.GetKompas(); print("GETKOMPAS=", app); print("API7_GUI_ATTACH=AVAILABLE" if app is not None else "API7_GUI_ATTACH=UNAVAILABLE"); print("APP_NAME=", app.GetApplicationName(True)) if app is not None else None; print("BUILD=", app.GetBuildNumber()) if app is not None else None' \
+            | tee runtime_evidence/api7-gui-probe.txt
 
           echo 'RESULT=PASS_REAL_DRAWING_CREATED_IN_GUI' | tee runtime_evidence/result.txt
 
