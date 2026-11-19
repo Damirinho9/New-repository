@@ -1,4 +1,5 @@
 name: Hexlet KOMPAS-3D GUI Runtime
+# clean branch runtime trigger
 
 on:
   push:
