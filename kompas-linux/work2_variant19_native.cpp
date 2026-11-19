@@ -135,8 +135,6 @@ static double mass(const IPartPtr& p){
 static void native_file(const fs::path& p){ require(fs::exists(p)&&fs::file_size(p)>1024,"native file missing/small "+p.string()); }
 
 static void build_workpiece(const IPartPtr& top,const IKompasDocument3DPtr& doc){
-  var(top,L"D1",P.D1); var(top,L"D2",P.D2); var(top,L"D3",P.D3);
-  var(top,L"L",P.L); var(top,L"R",P.R);
   double x0=-P.L,x1=x0+P.l1,x2=x0+P.l2,x3=x2+P.l3,x4=-P.l4,x5=0;
   double r1=P.D1/2,r2=P.D2/2,r3=P.D3/2;
   IFragmentDocumentPtr f;
@@ -157,8 +155,6 @@ static void build_workpiece(const IPartPtr& top,const IKompasDocument3DPtr& doc)
   log("WORKPIECE_PROFILE_D1_D2_D3_R21_PASS");
 }
 static void build_cutter(const IPartPtr& top,const IKompasDocument3DPtr& doc){
-  var(top,L"d",P.d); var(top,L"d_a",P.da); var(top,L"L0",P.L0);
-  var(top,L"flange_d",P.flangeD); var(top,L"rifling_z",P.rifling);
   double rin=P.d/2,rout=P.da/2,rf=P.flangeD/2,rr=P.recessD/2,rt=P.techD/2;
   double left=-P.L0,recessEnd=left+P.recessL,mainRight=-P.flangeW,techStart=mainRight-15.0;
   IFragmentDocumentPtr f;
@@ -249,9 +245,6 @@ static void build_top_down(const IDocumentsPtr& docs){
   IKompasDocument3DPtr asmDoc=base;
   auto top=req(asmDoc->GetTopPart(),"assembly top");
   top->SetName(L"WORK2_V19_TOP_DOWN");
-  var(top,L"AXIS_Y",P.axisY,L"calculated cutter axis horizontal distance");
-  var(top,L"AXIS_Z",P.axisZ,L"calculated cutter axis vertical offset");
-  var(top,L"ALPHA",P.alpha); var(top,L"GAMMA",P.gamma);
   require(base->SaveAs(ASSEMBLY.wstring()),"initial A3D SaveAs");
   log("ASSEMBLY_FIRST_PASS");
 
