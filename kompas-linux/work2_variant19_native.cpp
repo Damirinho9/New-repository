@@ -233,15 +233,26 @@ static std::vector<IPartPtr> parts_by_file(const IPartPtr& top,const fs::path& f
   return v;
 }
 static void close_doc(const IKompasDocumentPtr& d){ try{d->Close(kdDoNotSaveChanges);}catch(...){} }
+static fs::path native_template(const std::string& ext){
+  const fs::path dir{"/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates"};
+  req(fs::exists(dir),"KOMPAS template directory");
+  for(const auto& e:fs::directory_iterator(dir))
+    if(e.is_regular_file() && e.path().extension()==ext) return e.path();
+  throw std::runtime_error("native KOMPAS template missing: "+ext);
+}
+static IKompasDocumentPtr open_native(const IDocumentsPtr& docs,const fs::path& p){
+  auto par=req(docs->GetOpenDocumentParam(),"GetOpenDocumentParam");
+  par->SetVisible(false); par->SetReadOnly(false); par->SetApplyingIndex(0);
+  return req(docs->OpenDocument(p.wstring(),par),"OpenDocument "+p.string());
+}
 
 static void build_top_down(const IDocumentsPtr& docs){
   // Create the assembly first through the native API. This path is proven
   // to return a live 3D document in hosted KOMPAS v25; template Open is not used.
-  log("ASSEMBLY_BEFORE_DOCUMENTS_ADD");
-  auto base=docs->Add(ksDocumentAssembly,true);
-  if(!base) base=docs->Add(ksDocumentAssembly,true);
-  base=req(base,"Documents.Add assembly");
-  log("ASSEMBLY_AFTER_DOCUMENTS_ADD");
+  auto atpl=native_template(".a3d");
+  log("ASSEMBLY_TEMPLATE="+atpl.string());
+  auto base=req(docs->AddNewDocumentFromTemplate(atpl.wstring(),false),"AddNewDocumentFromTemplate assembly");
+  log("ASSEMBLY_TEMPLATE_ADD_PASS");
   IKompasDocument3DPtr asmDoc=base;
   auto top=req(asmDoc->GetTopPart(),"assembly top");
   top->SetName(L"WORK2_V19_TOP_DOWN");
@@ -249,11 +260,10 @@ static void build_top_down(const IDocumentsPtr& docs){
   log("ASSEMBLY_FIRST_PASS");
 
   // Workpiece is created only after the assembly exists on disk.
-  log("WORKPIECE_BEFORE_DOCUMENTS_ADD");
-  auto wb=docs->Add(ksDocumentPart,true);
-  if(!wb) wb=docs->Add(ksDocumentPart,true);
-  wb=req(wb,"Documents.Add workpiece");
-  log("WORKPIECE_AFTER_DOCUMENTS_ADD");
+  auto mtpl=native_template(".m3d");
+  log("WORKPIECE_TEMPLATE="+mtpl.string());
+  auto wb=req(docs->AddNewDocumentFromTemplate(mtpl.wstring(),false),"AddNewDocumentFromTemplate workpiece");
+  log("WORKPIECE_TEMPLATE_ADD_PASS");
   IKompasDocument3DPtr wdoc=wb;
   auto wtop=req(wdoc->GetTopPart(),"workpiece top");
   wtop->SetName(L"WORKPIECE_V19");
@@ -265,11 +275,9 @@ static void build_top_down(const IDocumentsPtr& docs){
 
   // Cutter is also created after the assembly, then inserted and made dependent
   // on the already inserted workpiece through a real MoldCavity operation.
-  log("CUTTER_BEFORE_DOCUMENTS_ADD");
-  auto cb=docs->Add(ksDocumentPart,true);
-  if(!cb) cb=docs->Add(ksDocumentPart,true);
-  cb=req(cb,"Documents.Add cutter");
-  log("CUTTER_AFTER_DOCUMENTS_ADD");
+  log("CUTTER_TEMPLATE="+mtpl.string());
+  auto cb=req(docs->AddNewDocumentFromTemplate(mtpl.wstring(),false),"AddNewDocumentFromTemplate cutter");
+  log("CUTTER_TEMPLATE_ADD_PASS");
   IKompasDocument3DPtr cdoc=cb;
   auto ctop=req(cdoc->GetTopPart(),"cutter top");
   ctop->SetName(L"FORM_CUTTER_V19");
@@ -294,7 +302,7 @@ static void build_top_down(const IDocumentsPtr& docs){
 }
 
 static void reopen_detail(const IDocumentsPtr& docs,const fs::path& p){
-  auto base=req(docs->Open(p.wstring(),true,false),"detail Open "+p.string());
+  auto base=req(open_native(docs,p.wstring()),"detail Open "+p.string());
   IKompasDocument3DPtr d=base;
   auto top=req(d->GetTopPart(),"detail top");
   require(d->RebuildDocument(),"detail document rebuild");
@@ -303,7 +311,7 @@ static void reopen_detail(const IDocumentsPtr& docs,const fs::path& p){
   mass(top);
   require(base->Save(),"detail Save");
   close_doc(base);
-  auto b2=req(docs->Open(p.wstring(),true,false),"detail Reopen "+p.string());
+  auto b2=req(open_native(docs,p.wstring()),"detail Reopen "+p.string());
   IKompasDocument3DPtr d2=b2;
   require(d2->RebuildDocument(),"detail reopen document rebuild");
   require(req(d2->GetTopPart(),"detail reopen top")->RebuildModel(false),"detail reopen model rebuild");
@@ -314,7 +322,7 @@ static void acceptance(const IDocumentsPtr& docs){
   reopen_detail(docs,WORKPIECE); log("WORKPIECE_OPEN_REBUILD_SAVE_CLOSE_REOPEN_PASS");
   reopen_detail(docs,CUTTER); log("CUTTER_OPEN_REBUILD_SAVE_CLOSE_REOPEN_PASS");
 
-  auto base=req(docs->Open(ASSEMBLY.wstring(),true,false),"assembly Open");
+  auto base=req(open_native(docs,ASSEMBLY.wstring()),"assembly Open");
   IKompasDocument3DPtr d=base;
   auto top=req(d->GetTopPart(),"assembly top reopen");
   require(d->RebuildDocument(),"assembly RebuildDocument");
@@ -348,7 +356,7 @@ static void acceptance(const IDocumentsPtr& docs){
   close_doc(base);
   log("TOP_DOWN_DEPENDENCY_RESTORE_PASS");
 
-  auto b2=req(docs->Open(ASSEMBLY.wstring(),true,false),"assembly final Reopen");
+  auto b2=req(open_native(docs,ASSEMBLY.wstring()),"assembly final Reopen");
   IKompasDocument3DPtr d2=b2;
   auto t2=req(d2->GetTopPart(),"assembly final top");
   require(d2->RebuildDocument(),"final RebuildDocument");
