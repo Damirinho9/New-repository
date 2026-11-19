@@ -1,0 +1,260 @@
+name: KOMPAS Stage 4 full GUI native 2D and 3D PASS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-fullgui-native-pass.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-2d:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Install official full KOMPAS GUI and SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb xauth dbus procps clang g++ libc++-dev libc++abi-dev \
+            libxcb-res0 libxcb-dri2-0 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 \
+            libxcb-image0 libxcb-render-util0 libunwind8 libxcb-xkb1 libxkbcommon-x11-0 libxcb-util1 \
+            libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 \
+            libxcb-xfixes0 libxcb-glx0 libxcb-present0 libxcb-dri3-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          dpkg -l 'ascon-kompas*' | tee installed-2d.txt
+          test -x /opt/ascon/kompas3d-v25/Bin/kKompas
+          test -x /usr/bin/kompas-v25
+      - name: Compile minimal 2D API7 writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          cat >/tmp/stage4_2d.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <filesystem>
+          #include <fstream>
+          #include <string>
+          #include <cmath>
+          using namespace ksapi;
+          namespace fs=std::filesystem;
+          static std::ofstream lg("/tmp/stage4_fullgui_2d.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          static void require(bool v,const std::string&m){if(!v){log("FAIL "+m);throw std::runtime_error(m);}}
+          template<class T> static T req(const T&v,const std::string&m){if(!v){log("FAIL "+m);throw std::runtime_error(m);}return v;}
+          static IDrawingContainerPtr drawing(const IFragmentDocumentPtr& doc){
+            auto vm=req(doc->GetViewsAndLayersManager(),"views manager");auto vs=req(vm->GetViews(),"views");IViewPtr v=req(vs->GetActiveView(),"active view");IDrawingContainerPtr d=v;return req(d,"drawing container");
+          }
+          static ISymbols2DContainerPtr symbols(const IFragmentDocumentPtr& doc){
+            auto vm=req(doc->GetViewsAndLayersManager(),"views manager");auto vs=req(vm->GetViews(),"views");IViewPtr v=req(vs->GetActiveView(),"active view");ISymbols2DContainerPtr s=v;return req(s,"symbols container");
+          }
+          static IViewPtr viewof(const IFragmentDocumentPtr& doc){return req(req(doc->GetViewsAndLayersManager(),"vm")->GetViews()->GetActiveView(),"view");}
+          static IParametricConstraintPtr con(const IDrawingObjectPtr&o,ksConstraintTypeEnum t,int idx=0,const std::wstring&var=L"",double val=0){
+            auto q=req(o->NewConstraint(),"NewConstraint");q->SetConstraintType(t);q->SetIndex(idx);
+            if(!var.empty()){q->SetVariable(var);q->SetConstraintValue(val);}
+            require(q->Create(),"constraint Create");require(q->IsValid(),"constraint invalid");return q;
+          }
+          extern "C" int run_variant06_writer(){
+            static bool done=false;if(done)return 0;
+            try{
+              log("STAGE4_2D_BEGIN");
+              IApplication& app=GetKompasApplication();app.SetHideMessage(ksHideMessageYes);
+              int a=0,b=0,c=0,d=0;app.GetSystemVersion(a,b,c,d);log("KOMPAS_VERSION="+std::to_string(a)+"."+std::to_string(b)+"."+std::to_string(c));
+              auto lm=req(app.GetApplicationLicenseManager(),"license manager");
+              bool active=lm->IsKompasModuleActive(ksKompasModule2D);log(std::string("LICENSE_2D_BEFORE=")+(active?"1":"0"));
+              if(!active)lm->SetKompasModuleActive(ksKompasModule2D,true);
+              active=lm->IsKompasModuleActive(ksKompasModule2D);log(std::string("LICENSE_2D_AFTER=")+(active?"1":"0"));require(active,"2D license inactive");
+              auto docs=req(app.GetDocuments(),"documents");
+              auto base=req(docs->Add(ksDocumentFragment,true),"Documents.Add fragment");IFragmentDocumentPtr doc=base;req(doc,"fragment cast");
+              doc->SetParametricMode(true);require(doc->IsParametricMode(),"parametric mode");
+              auto dc=drawing(doc);auto sy=symbols(doc);auto vw=viewof(doc);
+              auto line=req(req(dc->GetLineSegments(),"lines")->Add(),"line Add");
+              line->SetX1(200);line->SetY1(200);line->SetX2(220);line->SetY2(200);line->SetStyle(ksCSNormal);require(line->Update(),"line Update");
+              con(IDrawingObjectPtr(line),ksCFixedPoint,0);con(IDrawingObjectPtr(line),ksCHorizontal);
+              auto dim=req(req(sy->GetLineDimensions(),"dimensions")->Add(),"dimension Add");
+              dim->SetX1(200);dim->SetY1(200);dim->SetX2(220);dim->SetY2(200);dim->SetX3(210);dim->SetY3(215);dim->SetOrientation(ksLinDParallel);require(dim->Update(),"dimension Update");
+              IDrawingObjectPtr dobj=dim;
+              con(dobj,ksCFixedDim);con(dobj,ksCDimWithVariable,0,L"Ltest",20.0);
+              auto var=req(vw->GetDimensionVariable(dim),"dimension variable");
+              double x1=line->GetX1(),y1=line->GetY1(),x2=line->GetX2(),y2=line->GetY2();
+              var->SetValue(35.0);require(doc->CompleteRebuildDocument(),"rebuild after Ltest=35");
+              double X1=line->GetX1(),Y1=line->GetY1(),X2=line->GetX2(),Y2=line->GetY2();double len=std::hypot(X2-X1,Y2-Y1);
+              log("LTEST_AFTER="+std::to_string(var->GetValue()));log("LINE_LENGTH_AFTER="+std::to_string(len));
+              require(std::abs(var->GetValue()-35.0)<1e-5,"Ltest !=35");require(std::abs(len-35.0)<0.5,"line length !=35");
+              require(std::hypot(X1-x1,Y1-y1)+std::hypot(X2-x2,Y2-y2)>10.0,"coordinates did not move");
+              log("PARAMETRIC_COORDINATE_MUTATION_PASS");
+              fs::path out="/tmp/Stage4_Minimal_Parametric.frw";fs::remove(out);require(base->SaveAs(out.wstring()),"SaveAs");require(fs::exists(out)&&fs::file_size(out)>1024,"FRW missing");log("SAVE_PASS");
+              require(base->Close(kdDoNotSaveChanges),"Close");log("CLOSE_PASS");
+              auto b2=req(docs->Open(out.wstring(),true,false),"Reopen FRW");IFragmentDocumentPtr d2=b2;req(d2,"reopen fragment cast");d2->SetParametricMode(true);require(d2->CompleteRebuildDocument(),"reopen rebuild");
+              auto vr=req(d2->GetVariableByName(false,L"Ltest"),"reopen Ltest");require(std::abs(vr->GetValue()-35.0)<1e-5,"reopen variable mismatch");
+              auto objs=drawing(d2)->GetObjects({ksDrLineSeg});bool found=false;
+              for(auto&o:objs){ILineSegmentPtr s=o;if(!s)continue;double l=std::hypot(s->GetX2()-s->GetX1(),s->GetY2()-s->GetY1());if(std::abs(l-35.0)<0.5&&std::abs(s->GetY1()-200)<1&&std::abs(s->GetY2()-200)<1){found=true;log("REOPEN_LINE_LENGTH="+std::to_string(l));break;}}
+              require(found,"reopened driven line missing");require(b2->Save(),"final Save");require(b2->Close(kdDoNotSaveChanges),"final Close");
+              log("REOPEN_REBUILD_PASS");log("RESULT=PASS_MINIMAL_NATIVE_2D_FRW_MUTATION_REOPEN");done=true;return 0;
+            }catch(const std::exception&e){log(std::string("EXCEPTION=")+e.what());log("RESULT=FAIL_MINIMAL_NATIVE_2D");done=true;return 2;}
+             catch(...){log("EXCEPTION=unknown");log("RESULT=FAIL_MINIMAL_NATIVE_2D");done=true;return 2;}
+          }
+          CPP
+          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC" /tmp/stage4_2d.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/writer_variant06.so
+          sed -e 's/30000/10000/' -e 's/g_attempts>=20/g_attempts>=1/' kompas-linux/bootstrap_variant06_poll.cpp >/tmp/bootstrap_stage4.cpp
+          g++ -std=c++20 -O2 -fPIC -shared -pthread /tmp/bootstrap_stage4.cpp -ldl -o /tmp/bootstrap_stage4.so
+      - name: Run full GUI 2D acceptance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export HOME="$RUNNER_TEMP/fullgui-2d-home" XDG_CONFIG_HOME="$HOME/.config"
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25"
+          if [ -d /etc/ascon/KOMPAS-3D/25 ]; then cp -a /etc/ascon/KOMPAS-3D/25/. "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/"; fi
+          rm -f /tmp/stage4_fullgui_2d.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/Stage4_Minimal_Parametric.frw
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- env LD_PRELOAD=/tmp/bootstrap_stage4.so /usr/bin/kompas-v25 -automation >/tmp/kompas2d.out 2>/tmp/kompas2d.err &
+          KP=$!
+          PASS=0
+          for i in $(seq 1 100); do sleep 1; grep -q '^RESULT=PASS_MINIMAL_NATIVE_2D_FRW_MUTATION_REOPEN$' /tmp/stage4_fullgui_2d.log 2>/dev/null && { PASS=1; break; }; grep -q '^RESULT=FAIL_MINIMAL_NATIVE_2D$' /tmp/stage4_fullgui_2d.log 2>/dev/null && break; kill -0 "$KP" 2>/dev/null || break; done
+          cat /tmp/work1_bootstrap.log 2>/dev/null || true;cat /tmp/stage4_fullgui_2d.log 2>/dev/null || true;tail -120 /tmp/kompas2d.err 2>/dev/null || true
+          mkdir -p result/stage4-fullgui-2d
+          cp /tmp/stage4_fullgui_2d.log result/stage4-fullgui-2d/ 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log result/stage4-fullgui-2d/ 2>/dev/null || true
+          cp /tmp/kompas2d.err result/stage4-fullgui-2d/ 2>/dev/null || true
+          cp /tmp/Stage4_Minimal_Parametric.frw result/stage4-fullgui-2d/ 2>/dev/null || true
+          test "$PASS" = 1
+          sha256sum /tmp/Stage4_Minimal_Parametric.frw | tee result/stage4-fullgui-2d/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-fullgui-native-2d
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            installed-2d.txt
+            result/stage4-fullgui-2d/**
+
+  native-3d:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Install official full KOMPAS GUI and SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb xauth dbus procps clang g++ libc++-dev libc++abi-dev \
+            libxcb-res0 libxcb-dri2-0 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 \
+            libxcb-image0 libxcb-render-util0 libunwind8 libxcb-xkb1 libxkbcommon-x11-0 libxcb-util1 \
+            libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 \
+            libxcb-xfixes0 libxcb-glx0 libxcb-present0 libxcb-dri3-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          dpkg -l 'ascon-kompas*' | tee installed-3d.txt
+          python3 - <<'PY'
+          import zipfile,pathlib,hashlib
+          z=pathlib.Path('/opt/ascon/kompas3d-v25/SDK/KsAPI/Samples.zip');p=pathlib.Path('/tmp/Stage4_Existing_Part.m3d')
+          with zipfile.ZipFile(z) as f:p.write_bytes(f.read('Examples/Content/part.m3d'))
+          print('PART_SHA256='+hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+      - name: Compile minimal 3D API7 writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          cat >/tmp/stage4_3d.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <filesystem>
+          #include <fstream>
+          #include <string>
+          #include <cmath>
+          using namespace ksapi;
+          namespace fs=std::filesystem;
+          static std::ofstream lg("/tmp/stage4_fullgui_3d.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          static void require(bool v,const std::string&m){if(!v){log("FAIL "+m);throw std::runtime_error(m);}}
+          template<class T> static T req(const T&v,const std::string&m){if(!v){log("FAIL "+m);throw std::runtime_error(m);}return v;}
+          static bool rectangle(const IFragmentDocumentPtr& frag){
+            auto vm=req(frag->GetViewsAndLayersManager(),"frag vm");auto view=req(vm->GetViews()->GetActiveView(),"frag view");IDrawingContainerPtr dc=view;dc=req(dc,"frag dc");auto lines=req(dc->GetLineSegments(),"frag lines");
+            const double p[4][4]={{-4,-3,4,-3},{4,-3,4,3},{4,3,-4,3},{-4,3,-4,-3}};
+            for(int i=0;i<4;i++){auto s=req(lines->Add(),"sketch line Add");s->SetX1(p[i][0]);s->SetY1(p[i][1]);s->SetX2(p[i][2]);s->SetY2(p[i][3]);s->SetStyle(ksCSNormal);require(s->Update(),"sketch line Update");}
+            return true;
+          }
+          extern "C" int run_variant06_writer(){
+            static bool done=false;if(done)return 0;
+            try{
+              log("STAGE4_3D_BEGIN");IApplication& app=GetKompasApplication();app.SetHideMessage(ksHideMessageYes);
+              int a=0,b=0,c=0,d=0;app.GetSystemVersion(a,b,c,d);log("KOMPAS_VERSION="+std::to_string(a)+"."+std::to_string(b)+"."+std::to_string(c));
+              auto lm=req(app.GetApplicationLicenseManager(),"license manager");bool active=lm->IsKompasModuleActive(ksKompasModule3D);log(std::string("LICENSE_3D_BEFORE=")+(active?"1":"0"));
+              if(!active)lm->SetKompasModuleActive(ksKompasModule3D,true);active=lm->IsKompasModuleActive(ksKompasModule3D);log(std::string("LICENSE_3D_AFTER=")+(active?"1":"0"));require(active,"3D license inactive");
+              auto docs=req(app.GetDocuments(),"documents");fs::path seed="/tmp/Stage4_Existing_Part.m3d";auto base=req(docs->Open(seed.wstring(),true,false),"Open existing M3D");IKompasDocument3DPtr doc=base;req(doc,"3D cast");auto top=req(doc->GetTopPart(),"TopPart");
+              log("OPEN_EXISTING_M3D_PASS");log("TOPPART_PASS");require(doc->RebuildDocument(),"initial doc rebuild");require(top->RebuildModel(false),"initial model rebuild");
+              double mass0=top->GetMass(),density=top->GetDensity();if(density<=0){top->SetMaterial(L"Stage4Smoke",1.0);require(top->RebuildModel(false),"material model rebuild");require(doc->RebuildDocument(),"material doc rebuild");density=top->GetDensity();mass0=top->GetMass();}
+              require(density>0,"density <=0");double vol0=mass0/density;log("MASS_BEFORE="+std::to_string(mass0));log("DENSITY="+std::to_string(density));log("VOLUME_BEFORE_DERIVED="+std::to_string(vol0));
+              auto mc=req(top->GetModelContainer(),"model container");auto sk=req(req(mc->GetSketchs(),"sketches")->Add(),"sketch Add");sk->SetPlane(req(top->GetDefaultObject(o3d_planeXOY),"XOY"));auto frag=req(sk->BeginEdit(false),"BeginEdit");rectangle(frag);require(sk->EndEdit(),"EndEdit");require(sk->Update(),"sketch Update");log("SKETCH_EDIT_PASS");
+              auto exts=req(mc->GetExtrusions(),"extrusions");ksObj3dTypeEnum op=mass0<=1e-12?o3d_baseExtrusion:o3d_bossExtrusion;auto ext=req(exts->Add(op),"extrusion Add");ext->SetProfiles({IModelObjectPtr(sk)});require(ext->SetSideParameters(true,etBlind,3.0,0.0,false,IModelObjectPtr{}),"side params");bool ok=ext->Update();
+              if(!ok&&op==o3d_bossExtrusion){ext->Delete();ext=req(exts->Add(o3d_cutExtrusion),"cut extrusion Add");ext->SetProfiles({IModelObjectPtr(sk)});require(ext->SetSideParameters(true,etBlind,3.0,0.0,false,IModelObjectPtr{}),"cut side params");require(ext->Update(),"cut extrusion Update");log("EXTRUSION_MODE=cut");}else{require(ok,"extrusion Update");log(std::string("EXTRUSION_MODE=")+(op==o3d_baseExtrusion?"base":"boss"));}
+              require(top->RebuildModel(false),"model rebuild");require(doc->RebuildDocument(),"doc rebuild");log("EXTRUSION_PASS");
+              double mass1=top->GetMass(),density1=top->GetDensity();require(density1>0,"density after <=0");double vol1=mass1/density1;log("MASS_AFTER="+std::to_string(mass1));log("VOLUME_AFTER_DERIVED="+std::to_string(vol1));require(mass1>0&&vol1>0,"mass volume not positive");require(std::abs(mass1-mass0)>1e-10||std::abs(vol1-vol0)>1e-10,"physical properties unchanged");log("PHYSICAL_MASS_VOLUME_CHANGE_PASS");
+              fs::path out="/tmp/Stage4_Minimal_Extrusion.m3d";fs::remove(out);require(base->SaveAs(out.wstring()),"SaveAs");require(fs::exists(out)&&fs::file_size(out)>1024,"M3D missing");require(base->Close(kdDoNotSaveChanges),"Close");log("SAVE_CLOSE_PASS");
+              auto b2=req(docs->Open(out.wstring(),true,false),"Reopen M3D");IKompasDocument3DPtr d2=b2;req(d2,"reopen 3D cast");require(d2->RebuildDocument(),"reopen doc rebuild");auto t2=req(d2->GetTopPart(),"reopen top");require(t2->RebuildModel(false),"reopen model rebuild");
+              double mass2=t2->GetMass(),density2=t2->GetDensity();require(density2>0,"reopen density <=0");double vol2=mass2/density2;log("REOPEN_MASS="+std::to_string(mass2));log("REOPEN_VOLUME_DERIVED="+std::to_string(vol2));require(std::abs(mass2-mass1)<=std::max(1e-8,std::abs(mass1)*1e-5),"reopen mass mismatch");require(std::abs(vol2-vol1)<=std::max(1e-8,std::abs(vol1)*1e-5),"reopen volume mismatch");
+              require(b2->Save(),"final Save");require(b2->Close(kdDoNotSaveChanges),"final Close");log("REOPEN_REBUILD_PASS");log("RESULT=PASS_MINIMAL_NATIVE_3D_EXTRUSION_MASS_VOLUME_REOPEN");done=true;return 0;
+            }catch(const std::exception&e){log(std::string("EXCEPTION=")+e.what());log("RESULT=FAIL_MINIMAL_NATIVE_3D");done=true;return 2;}
+             catch(...){log("EXCEPTION=unknown");log("RESULT=FAIL_MINIMAL_NATIVE_3D");done=true;return 2;}
+          }
+          CPP
+          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC" /tmp/stage4_3d.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/writer_variant06.so
+          sed -e 's/30000/10000/' -e 's/g_attempts>=20/g_attempts>=1/' kompas-linux/bootstrap_variant06_poll.cpp >/tmp/bootstrap_stage4.cpp
+          g++ -std=c++20 -O2 -fPIC -shared -pthread /tmp/bootstrap_stage4.cpp -ldl -o /tmp/bootstrap_stage4.so
+      - name: Run full GUI 3D acceptance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export HOME="$RUNNER_TEMP/fullgui-3d-home" XDG_CONFIG_HOME="$HOME/.config"
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25"
+          if [ -d /etc/ascon/KOMPAS-3D/25 ]; then cp -a /etc/ascon/KOMPAS-3D/25/. "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/"; fi
+          rm -f /tmp/stage4_fullgui_3d.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/Stage4_Minimal_Extrusion.m3d
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- env LD_PRELOAD=/tmp/bootstrap_stage4.so /usr/bin/kompas-v25 -automation >/tmp/kompas3d.out 2>/tmp/kompas3d.err &
+          KP=$!
+          PASS=0
+          for i in $(seq 1 100); do sleep 1; grep -q '^RESULT=PASS_MINIMAL_NATIVE_3D_EXTRUSION_MASS_VOLUME_REOPEN$' /tmp/stage4_fullgui_3d.log 2>/dev/null && { PASS=1; break; }; grep -q '^RESULT=FAIL_MINIMAL_NATIVE_3D$' /tmp/stage4_fullgui_3d.log 2>/dev/null && break; kill -0 "$KP" 2>/dev/null || break; done
+          cat /tmp/work1_bootstrap.log 2>/dev/null || true;cat /tmp/stage4_fullgui_3d.log 2>/dev/null || true;tail -120 /tmp/kompas3d.err 2>/dev/null || true
+          mkdir -p result/stage4-fullgui-3d
+          cp /tmp/stage4_fullgui_3d.log result/stage4-fullgui-3d/ 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log result/stage4-fullgui-3d/ 2>/dev/null || true
+          cp /tmp/kompas3d.err result/stage4-fullgui-3d/ 2>/dev/null || true
+          cp /tmp/Stage4_Minimal_Extrusion.m3d result/stage4-fullgui-3d/ 2>/dev/null || true
+          test "$PASS" = 1
+          sha256sum /tmp/Stage4_Minimal_Extrusion.m3d | tee result/stage4-fullgui-3d/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-fullgui-native-3d
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            installed-3d.txt
+            result/stage4-fullgui-3d/**
