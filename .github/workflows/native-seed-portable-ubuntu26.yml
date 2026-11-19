@@ -3,7 +3,7 @@ name: Portable KOMPAS native seed bridge on Ubuntu 26
 on:
   workflow_dispatch:
   push:
-    branches: [kompas-7335493-native-work1]
+    branches: [kompas-7335493-native-direct]
     paths:
       - '.github/workflows/native-seed-portable-ubuntu26.yml'
       - 'kompas-linux/bootstrap_variant06_poll.cpp'
