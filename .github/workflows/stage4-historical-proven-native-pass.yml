@@ -8,6 +8,7 @@ on:
       - '.github/workflows/stage4-historical-proven-native-pass.yml'
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
