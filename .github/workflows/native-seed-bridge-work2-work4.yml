@@ -1,0 +1,274 @@
+name: KOMPAS native seed bridge Work 2 and Work 4
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/native-seed-bridge-work2-work4.yml'
+      - 'kompas-linux/native_seed_writer.cpp'
+      - 'kompas-linux/work2_variant19_native.cpp'
+      - 'kompas-linux/work4_variant16_native.cpp'
+      - 'kompas-linux/bootstrap_variant06_qt.cpp'
+
+jobs:
+  seed-alt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Restore KOMPAS ALT RPM cache
+        id: rpm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: fastbuild/*.rpm
+          key: kompas-v25-alt-rpms-25.0.5.2780
+
+      - name: Prepare seed writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y aria2 rpm2cpio cpio clang libc++-dev libc++abi-dev qt6-base-dev pkg-config xvfb xauth
+          mkdir -p fastbuild sdkroot gfxroot result/native-seed
+          GFX_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          D3_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas3d-v25-25.0.5.2780-0.x86_64.rpm'
+          SDK_URL='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
+          test -s fastbuild/graphic.rpm || aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o graphic.rpm "$GFX_URL"
+          test -s fastbuild/kompas3d.rpm || aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d fastbuild -o kompas3d.rpm "$D3_URL"
+          test -s fastbuild/sdk.rpm || aria2c --allow-overwrite=true --auto-file-renaming=false -x 8 -s 8 -k 2M -d fastbuild -o sdk.rpm "$SDK_URL"
+          (cd sdkroot && rpm2cpio ../fastbuild/sdk.rpm | cpio -idm --quiet)
+          (cd gfxroot && rpm2cpio ../fastbuild/graphic.rpm | cpio -idm --quiet './opt/ascon/kompas3d-v25/Bin/libksAPI.so')
+          INC="$PWD/sdkroot/opt/ascon/kompas3d-v25/SDK/KsAPI/Include"
+          LIB="$PWD/gfxroot/opt/ascon/kompas3d-v25/Bin"
+          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" kompas-linux/native_seed_writer.cpp             -L"$LIB" -Wl,-rpath,/opt/ascon/kompas3d-v25/Bin -lksAPI -lc++abi             -o fastbuild/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread             kompas-linux/bootstrap_variant06_qt.cpp             $(pkg-config --cflags --libs Qt6Core) -ldl             -o fastbuild/bootstrap_variant06_qt.so
+
+      - name: Save KOMPAS ALT RPM cache
+        if: steps.rpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: fastbuild/*.rpm
+          key: kompas-v25-alt-rpms-25.0.5.2780
+
+      - name: Create native blank M3D and A3D in ALT
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo mkdir -p /tmp/.X11-unix
+          sudo chmod 1777 /tmp/.X11-unix
+          sudo rm -f /tmp/.X11-unix/X111
+          Xvfb :111 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb-alt.out 2>/tmp/xvfb-alt.err &
+          XV=$!
+          trap 'kill "$XV" 2>/dev/null || true' EXIT
+          sleep 2
+          docker run --rm -e DISPLAY=:111 -v /tmp/.X11-unix:/tmp/.X11-unix -v "$PWD:/work" alt:p11 bash -lc '
+            set -euxo pipefail
+            for src in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+              [ -f "$src" ] || continue
+              sed -i -E                 -e "s#https?://ftp\.altlinux\.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#https?://ftp\.altlinux\.org#http://mirror.yandex.ru/altlinux#g" "$src"
+              sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/" "$src"
+            done
+            apt-get -o Acquire::Retries=3 update
+            apt-get install -y wget ca-certificates dbus procps glibc-i18ndata fontconfig
+            apt-get install -y libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
+            wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-alt.sh
+            sed -i -E "/^[[:space:]]*apt-get[[:space:]]+update[[:space:]]*$/d" /tmp/ascon.sh
+            bash /tmp/ascon.sh
+            for src in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+              [ -f "$src" ] || continue
+              sed -i -E                 -e "s#https?://ftp\.altlinux\.org/pub/distributions/ALTLinux#http://mirror.yandex.ru/altlinux#g"                 -e "s#https?://ftp\.altlinux\.org#http://mirror.yandex.ru/altlinux#g" "$src"
+              sed -i "/x86_64-i586/s/^[[:space:]]*rpm/# rpm/" "$src"
+            done
+            apt-get -o Acquire::Retries=3 update
+            mkdir -p /var/cache/apt/archives
+            cp /work/fastbuild/graphic.rpm /var/cache/apt/archives/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm
+            cp /work/fastbuild/kompas3d.rpm /var/cache/apt/archives/ascon-kompas3d-v25-25.0.5.2780-0.x86_64.rpm
+            apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-v25
+
+            BIN=/opt/ascon/kompas3d-v25/Bin
+            export HOME=/root XDG_CONFIG_HOME=/root/.config DISPLAY=:111 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+            mkdir -p /root/.config/ascon/KOMPAS-3D/25
+            [ ! -d /etc/ascon/KOMPAS-3D/25 ] || cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/KOMPAS-3D/25/ || true
+            RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+            [ -z "$RES" ] || cp -f "$RES" /root/.config/ascon/KOMPAS-3D/25/QtResources.bin
+            KEXEC="$BIN/kKompas"
+            if [ ! -x "$KEXEC" ]; then ln -sf "$BIN/ksinvisible" /tmp/kKompas; KEXEC=/tmp/kKompas; fi
+            test -x "$KEXEC"
+            timeout 20s dbus-run-session -- env DISPLAY=:111 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 "$KEXEC" -automation >/tmp/init.out 2>/tmp/init.err || true
+            pkill -x kKompas 2>/dev/null || true
+            pkill -x ksinvisible 2>/dev/null || true
+
+            cp /work/fastbuild/writer_variant06.so /tmp/writer_variant06.so
+            cp /work/fastbuild/bootstrap_variant06_qt.so /tmp/bootstrap_variant06_qt.so
+            rm -rf /tmp/native_seed
+            rm -f /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
+            export LANG=C.UTF-8 LC_ALL=C.UTF-8 LD_LIBRARY_PATH="$BIN"
+            dbus-run-session -- env DISPLAY=:111 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1               LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$KEXEC" -automation >/tmp/seed.out 2>/tmp/seed.err &
+            KP=$!
+            PASS=0
+            for i in $(seq 1 70); do
+              sleep 2
+              if grep -q "^RESULT=PASS_NATIVE_SEED_ALT$" /tmp/native_seed/seed.log 2>/dev/null; then PASS=1; break; fi
+              if grep -q "^RESULT=FAIL_NATIVE_SEED_ALT$" /tmp/native_seed/seed.log 2>/dev/null; then break; fi
+              if ! kill -0 "$KP" 2>/dev/null; then break; fi
+            done
+            cat /tmp/native_seed/seed.log 2>/dev/null || true
+            cat /tmp/work1_bootstrap.log 2>/dev/null || true
+            [ "$PASS" = 1 ]
+            test -s /tmp/native_seed/BlankPart.m3d
+            test -s /tmp/native_seed/BlankAssembly.a3d
+            cp /tmp/native_seed/BlankPart.m3d /work/result/native-seed/
+            cp /tmp/native_seed/BlankAssembly.a3d /work/result/native-seed/
+            cp /tmp/native_seed/seed.log /work/result/native-seed/
+          '
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib
+          d=Path("result/native-seed")
+          for n in ["BlankPart.m3d","BlankAssembly.a3d"]:
+              p=d/n
+              assert p.stat().st_size>1024
+              assert zipfile.is_zipfile(p),n
+              with zipfile.ZipFile(p) as z:
+                  assert {"Contents","FileInfo"}.issubset(set(z.namelist())),(n,z.namelist())
+              print(hashlib.sha256(p.read_bytes()).hexdigest(),n)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-native-seed-alt
+          path: result/native-seed/**
+          if-no-files-found: error
+
+  build-ubuntu:
+    needs: seed-alt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: 7335493-native-seed-alt
+          path: result/native-seed
+
+      - name: Build Work 2 and Work 4 from ALT native seeds in licensed Ubuntu KOMPAS
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf result/bridge-native
+          mkdir -p result/bridge-native/work2 result/bridge-native/work4
+          docker run --rm --name kompas-seed-bridge -v "$PWD:/work" ubuntu:24.04 bash -lc '
+            set -euxo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y wget curl ca-certificates gnupg lsb-release xvfb xauth dbus procps               locales fontconfig qt6-base-dev pkg-config clang g++ libc++-dev libc++abi-dev               libxcb-res0 libxcb-dri2-0 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4               libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libunwind8 libxcb-xkb1 libxkbcommon-x11-0               libxcb-util1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render0 libxcb-shm0               libxcb-sync1 libxcb-xfixes0 libxcb-glx0 libxcb-present0 libxcb-dri3-0
+            wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+            bash /tmp/ascon.sh || true
+            rm -f /etc/apt/sources.list.d/ascon.list
+            echo "deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main" > /etc/apt/sources.list.d/ascon.list
+            apt-get update
+            apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+
+            BIN=/opt/ascon/kompas3d-v25/Bin
+            INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+            clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC"               /work/kompas-linux/work2_variant19_native.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/work2.so
+            clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC"               /work/kompas-linux/work4_variant16_native.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/work4.so
+            g++ -std=c++20 -O2 -fPIC -shared -pthread /work/kompas-linux/bootstrap_variant06_qt.cpp               $(pkg-config --cflags --libs Qt6Core) -ldl -o /tmp/bootstrap.so
+
+            export HOME=/root XDG_CONFIG_HOME=/root/.config
+            mkdir -p /root/.config/ascon/KOMPAS-3D/25 /root/.config/ascon/"KOMPAS-3D Invisible"/25
+            [ ! -d /etc/ascon/KOMPAS-3D/25 ] || cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/KOMPAS-3D/25/ || true
+            [ ! -d /etc/ascon/KOMPAS-3D/25 ] || cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/"KOMPAS-3D Invisible"/25/ || true
+            RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+            [ -z "$RES" ] || cp -f "$RES" /root/.config/ascon/"KOMPAS-3D Invisible"/25/QtResources.bin
+
+            mkdir -p /tmp/.X11-unix
+            chmod 1777 /tmp/.X11-unix
+            rm -f /tmp/.X11-unix/X112
+            Xvfb :112 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
+            XV=$!
+            trap "kill $XV 2>/dev/null || true" EXIT
+            sleep 2
+            export DISPLAY=:112 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
+            export KOMPAS_NATIVE_SEED_DIR=/work/result/native-seed
+            unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+            run_work() {
+              local so="$1" log="$2" pass="$3" fail="$4" outdir="$5"
+              cp "$so" /tmp/writer_variant06.so
+              cp /tmp/bootstrap.so /tmp/bootstrap_variant06_qt.so
+              rm -f /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
+              rm -rf "$outdir" /tmp/work2_seed_work /tmp/work4_seed_work
+              dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config DISPLAY=:112                 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"                 KOMPAS_NATIVE_SEED_DIR=/work/result/native-seed LD_PRELOAD=/tmp/bootstrap_variant06_qt.so                 "$BIN/ksinvisible" -automation >/tmp/kompas.out 2>/tmp/kompas.err &
+              KP=$!
+              ok=0
+              for i in $(seq 1 100); do
+                sleep 2
+                if grep -q "^$pass$" "$log" 2>/dev/null; then ok=1; break; fi
+                if grep -q "^$fail$" "$log" 2>/dev/null; then break; fi
+                if ! kill -0 "$KP" 2>/dev/null; then break; fi
+              done
+              cat "$log" 2>/dev/null || true
+              cat /tmp/work1_bootstrap.log 2>/dev/null || true
+              tail -120 /tmp/kompas.err 2>/dev/null || true
+              kill "$KP" 2>/dev/null || true
+              wait "$KP" 2>/dev/null || true
+              [ "$ok" = 1 ]
+            }
+
+            run_work /tmp/work2.so /tmp/work2_v19_native/work2.log               RESULT=PASS_NATIVE_WORK2_VARIANT19 RESULT=FAIL_NATIVE_WORK2_VARIANT19 /tmp/work2_v19_native
+            cp -a /tmp/work2_v19_native/. /work/result/bridge-native/work2/
+
+            run_work /tmp/work4.so /tmp/work4_v16_native/work4.log               RESULT=PASS_NATIVE_WORK4_VARIANT16 RESULT=FAIL_NATIVE_WORK4_VARIANT16 /tmp/work4_v16_native
+            cp -a /tmp/work4_v16_native/. /work/result/bridge-native/work4/
+          '
+
+      - name: Strict native bridge acceptance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          W2=result/bridge-native/work2
+          W4=result/bridge-native/work4
+          grep -q '^RESULT=PASS_NATIVE_WORK2_VARIANT19_REOPEN_REBUILD_DEPENDENCY$' "$W2/work2.log"
+          grep -q '^RESULT=PASS_NATIVE_WORK2_VARIANT19$' "$W2/work2.log"
+          grep -q '^TOP_DOWN_DEPENDENCY_PHYSICAL_CHANGE_PASS$' "$W2/work2.log"
+          grep -q '^FINAL_NOMINAL_REOPEN_PASS$' "$W2/work2.log"
+          grep -q '^RESULT=PASS_NATIVE_WORK4_VARIANT16_REOPEN_REBUILD_PARAMETRIC$' "$W4/work4.log"
+          grep -q '^RESULT=PASS_NATIVE_WORK4_VARIANT16$' "$W4/work4.log"
+          grep -q '^PARAMETRIC_T_40_44_40_PASS$' "$W4/work4.log"
+          grep -q '^FINAL_NOMINAL_REOPEN_PASS$' "$W4/work4.log"
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,hashlib
+          roots=[
+            Path("result/bridge-native/work2"),
+            Path("result/bridge-native/work4"),
+          ]
+          for root in roots:
+              files=sorted(list(root.glob("*.m3d"))+list(root.glob("*.a3d")))
+              assert files,root
+              lines=[]
+              for p in files:
+                  assert p.stat().st_size>1024,p
+                  assert zipfile.is_zipfile(p),p
+                  with zipfile.ZipFile(p) as z:
+                      assert {"Contents","FileInfo"}.issubset(set(z.namelist())),p
+                  lines.append(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}")
+              (root/"SHA256.txt").write_text("\n".join(lines)+"\n")
+          print("RESULT=PASS_NATIVE_SEED_BRIDGE_WORK2_WORK4")
+          PY
+          printf '%s\n'             'ALT_NATIVE_SEED_PASS'             'UBUNTU_LICENSED_3D_BUILD_PASS'             'WORK2_NATIVE_REOPEN_DEPENDENCY_PASS'             'WORK4_NATIVE_PARAMETRIC_REOPEN_PASS'             'RESULT=PASS_NATIVE_SEED_BRIDGE_WORK2_WORK4' > result/bridge-native/ACCEPTANCE.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-native-seed-bridge-work2-work4
+          path: result/bridge-native/**
+          if-no-files-found: ignore
