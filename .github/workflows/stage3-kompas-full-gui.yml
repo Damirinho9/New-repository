@@ -98,6 +98,8 @@ jobs:
           export HOME="$RUNNER_TEMP/kompas-gui-home"
           export XDG_CONFIG_HOME="$HOME/.config"
           mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25"
+          RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/QtResources.bin"
           unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
           ldd "$KOMPAS_GUI_EXE" | tee gui-ldd.txt
@@ -111,7 +113,7 @@ jobs:
           echo "GUI_SYMLINK=$(readlink /tmp/kKompas)" | tee gui-process.txt
 
           export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
-          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"             dbus-run-session -- /tmp/kKompas -automation >kompas-gui.out 2>kompas-gui.err &
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"             dbus-run-session -- /tmp/kKompas -automation -APIServer=10500 >kompas-gui.out 2>kompas-gui.err &
           WRAPPER_PID=$!
           echo "WRAPPER_PID=$WRAPPER_PID" | tee -a gui-process.txt
 
@@ -138,15 +140,19 @@ jobs:
           } | tee -a gui-process.txt
 
           : > gui-sockets-history.txt
+          APIPORT=10500
           for i in $(seq 1 60); do
             ss -ltnpH > gui-sockets.txt || true
             {
               echo "SNAPSHOT=$i"
-              grep -E "pid=$KP[,)]|\(\(\"kKompas\"" gui-sockets.txt || true
+              grep -E "pid=$KP[,)]|\(\(\"kKompas\"|:$APIPORT[[:space:]]" gui-sockets.txt || true
             } >> gui-sockets-history.txt
-            if grep -E "pid=$KP[,)]|\(\(\"kKompas\"" gui-sockets.txt >/dev/null; then break; fi
+            if grep -E ":$APIPORT[[:space:]]" gui-sockets.txt >/dev/null; then break; fi
             sleep 1
           done
+          cat gui-sockets.txt
+          grep -E ":$APIPORT[[:space:]]" gui-sockets.txt
+          echo "APISERVER_PORT=$APIPORT" | tee -a gui-process.txt
 
           export KOMPAS_GUI_PID="$KP"
           python3 - <<'PY' | tee gui-sdk.txt
