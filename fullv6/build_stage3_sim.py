@@ -138,6 +138,7 @@ add_scope=os.environ.get("ADD_SCOPE","0")=="1"
 force_gate_ma=float(os.environ.get("FORCE_GATE_MA","0") or 0)
 force_bridge_ma=float(os.environ.get("FORCE_BRIDGE_MA","0") or 0)
 force_t2_v=os.environ.get("FORCE_T2_V","")
+force_sens_v=os.environ.get("FORCE_SENS_V","")
 if control_supply:
     net += ["V2 vctrl 0 12","RCTRL vctrl u_ctrl 100"]
 if force_gate_ma:
@@ -148,6 +149,8 @@ if force_bridge_ma:
     net += [f"IBCTRL br_top 0 {a:.12g}"]
 if force_t2_v:
     net += [f"VT2TEST t2 0 {force_t2_v}"]
+if force_sens_v:
+    net += [f"VSENSTEST sens 0 {force_sens_v}"]
 if add_scope:
     net += ["XSC1 sens l 0 nc_trig sw nc_b OSCILLOSCOPE"]
 
@@ -163,7 +166,7 @@ layout={
  "XVS2":[1404,342,90],"C3":[1512,450,90],"XFU2":[1512,576],
  "XXP1":[1908,306,90],
 "I1":[270,486,90],"VPH":[270,486,90],"RPH":[360,486],"V1":[1908,648,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],
- "IG1":[1116,558,90],"IG2":[1368,234,90],"IBCTRL":[1062,756,90],"VT2TEST":[684,756,90],
+ "IG1":[1116,558,90],"IG2":[1368,234,90],"IBCTRL":[1062,756,90],"VT2TEST":[684,756,90],"VSENSTEST":[360,756,90],
  "GND":[[72,144],[252,558],[432,558],[666,558],[900,558],[1080,558],[1233,558],[1404,648],[1512,648],[270,558],[900,810]],
 }
 if control_supply:
@@ -178,6 +181,8 @@ if not force_bridge_ma:
     layout.pop("IBCTRL",None)
 if not force_t2_v:
     layout.pop("VT2TEST",None)
+if not force_sens_v:
+    layout.pop("VSENSTEST",None)
 if add_scope:
     layout["XSC1"]=[756,756]
 spec={
@@ -228,6 +233,7 @@ labels={
  "IG2":"DIAGNOSTIC ONLY: VS2 gate current",
  "IBCTRL":"DIAGNOSTIC ONLY: RB154 control sink",
  "VT2TEST":"DIAGNOSTIC ONLY: force T2",
+ "VSENSTEST":"DIAGNOSTIC ONLY: force SENS",
  "XSC1":"XSC1: A=SENS, B=SW",
 }
 for item in root.iter("Item"):
@@ -245,7 +251,7 @@ manifest={
  "auxiliary_control_supply":control_supply,"control_supply_V":12 if control_supply else None,
  "control_series_Ohm":100 if control_supply else None,"transient_photo":transient_photo,
  "photo_pulse_R_Ohm":float(os.environ.get("PHOTO_PULSE_R_OHM","4700000")) if transient_photo else None,
- "force_gate_mA":force_gate_ma or None,"force_bridge_mA":force_bridge_ma or None,"force_t2_V":force_t2_v or None,
+ "force_gate_mA":force_gate_ma or None,"force_bridge_mA":force_bridge_ma or None,"force_t2_V":force_t2_v or None,"force_sens_V":force_sens_v or None,
  "scope":add_scope,"Rline_Ohm":10,"Rload_Ohm":1000},
  "models":models,
  "model_patch_notes":model_patch_notes,

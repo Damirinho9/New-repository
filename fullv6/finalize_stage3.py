@@ -45,6 +45,24 @@ def photo_batch(name,patch,direction):
  save(f"diag_4_{name}.json",out)
  return out
 
+# Isolate VT1/VT2 before the photocurrent sweep. The source does not mark D/S.
+# Test both D/S assignments and both simulation-body-diode choices with SENS forced positive/negative.
+chain=[]
+for flip in (0,1):
+ for body in (1,0):
+  c=dict(base,KP501_FLIP=flip,KP501_BODY_DIODE=body,KP501_VTO=1.5,PHOTO_PATCH=1)
+  off=run(f"chain_f{flip}_b{body}_pos",0,.20,9000,dict(c,FORCE_SENS_V=3))
+  on=run(f"chain_f{flip}_b{body}_neg",0,.20,9000,dict(c,FORCE_SENS_V=-3))
+  span=abs(load(on)-load(off))
+  chain.append({"cfg":c,"positive_sens":off,"negative_sens":on,"span":span,"off":load(off),"on":load(on)})
+save("diag_4a_forced_sens.json",chain)
+chain_valid=[x for x in chain if x["span"]>100 and min(x["off"],x["on"])<80 and max(x["off"],x["on"])>170]
+if chain_valid:
+ chosen_chain=max(chain_valid,key=lambda x:x["span"]); base.update({k:v for k,v in chosen_chain["cfg"].items() if k in ("KP501_FLIP","KP501_BODY_DIODE","KP501_VTO")})
+else:
+ save("FAIL_photo_chain_forced_sens.json",chain)
+ raise SystemExit("BLOCK_A4A VT1/VT2 cannot switch T2 from forced SENS")
+
 mods=photo_batch("native_normal",0,1)
 valid=[x for x in mods if x["span"]>100 and x["lo"]<80 and x["hi"]>170]
 if not valid:

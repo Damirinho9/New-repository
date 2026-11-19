@@ -22,7 +22,9 @@ def _replace_card(model,xmlio,factory):
 
 def _zvn(m):
     v=float(os.environ.get('KP501_VTO','1.5'))
-    return f'.SUBCKT {m} 1 2 3\nRD 1 4 2\nRS 5 3 2\nRG 2 6 20\nM1 4 6 5 5 MZVN\nD1 3 1 DBODY\n.MODEL MZVN NMOS LEVEL=1 VTO={v:.6g} KP=0.08 LAMBDA=0.005 CGSO=35p CGDO=7p\n.MODEL DBODY D IS=1e-12 N=1.2 BV=240 IBV=1m\n.ENDS {m}'
+    body=os.environ.get('KP501_BODY_DIODE','1')=='1'
+    d='D1 3 1 DBODY\\n.MODEL DBODY D IS=1e-12 N=1.2 BV=240 IBV=1m\\n' if body else ''
+    return f'.SUBCKT {m} 1 2 3\\nRD 1 4 2\\nRS 5 3 2\\nRG 2 6 20\\nM1 4 6 5 5 MZVN\\n{d}.MODEL MZVN NMOS LEVEL=1 VTO={v:.6g} KP=0.08 LAMBDA=0.005 CGSO=35p CGDO=7p\\n.ENDS {m}'
 
 def _kp707(m):
     v=float(os.environ.get('KP707_VTO','3.2'))
@@ -36,7 +38,7 @@ def patch_models(root,xmlio):
     notes={}
     k=float(os.environ.get('KP501_VTO','1.5')); p=float(os.environ.get('KP707_VTO','3.2'))
     for ref in ('VT1','VT2'):
-        c=_find_component(root,xmlio,ref); _replace_card(_find_model(root,c),xmlio,_zvn); notes[ref]=f'KP501A datasheet-fit N-MOS VTO={k:g}V'
+        c=_find_component(root,xmlio,ref); _replace_card(_find_model(root,c),xmlio,_zvn); notes[ref]=f"KP501A datasheet-fit N-MOS VTO={k:g}V body_diode={os.environ.get('KP501_BODY_DIODE','1')}"
     c=_find_component(root,xmlio,'VT3'); _replace_card(_find_model(root,c),xmlio,_kp707); notes['VT3']=f'KP707V2 datasheet-fit N-MOS VTO={p:g}V'
     sv=float(os.environ.get('SCR_VTH','2.5'))
     for ref in ('VS1','VS2'):
