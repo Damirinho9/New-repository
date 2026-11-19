@@ -1,0 +1,189 @@
+name: KOMPAS portable independent native acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/native-portable-independent-acceptance.yml'
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download proven ALT native seed
+        uses: actions/download-artifact@v4
+        with:
+          name: 7335493-native-seed-alt
+          path: result/native-seed
+          run-id: 44476851857
+          github-token: ${{ github.token }}
+
+      - name: Download portable KOMPAS runtime parts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-part*
+          path: runtime-parts
+          merge-multiple: true
+          run-id: 44290433663
+          github-token: ${{ github.token }}
+
+      - name: Restore portable KOMPAS runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd runtime-parts
+          sha256sum kompas-runtime.part-00 kompas-runtime.part-01 kompas-runtime.part-02 kompas-runtime.part-03
+          test "$(sha256sum kompas-runtime.part-00 | cut -d' ' -f1)" = "965285771caff99fddb1306485dd9c062fc16a49c258451ee70badab1ecc14f4"
+          test "$(sha256sum kompas-runtime.part-01 | cut -d' ' -f1)" = "424b833def76283914c2db926e2feedae2c3c570c59af05ab237768cf084d9bd"
+          test "$(sha256sum kompas-runtime.part-02 | cut -d' ' -f1)" = "a0e997d9dd5eba32b70fa4cdd3a20d948ecdb02637372ff80928fa538d10daed"
+          test "$(sha256sum kompas-runtime.part-03 | cut -d' ' -f1)" = "93643b93b97dc58d6097251cf0ed74ecc474a9aa474e5b622f928c9a264228e7"
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/kompas-v25-portable-runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/kompas-v25-portable-runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/kompas-runtime"
+          tar --zstd -xf "$RUNNER_TEMP/kompas-v25-portable-runtime.tar.zst" -C "$RUNNER_TEMP/kompas-runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25
+          sudo ln -s "$RUNNER_TEMP/kompas-runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/kompas-runtime/opt/ascon/common" ]; then
+            sudo rm -rf /opt/ascon/common
+            sudo ln -s "$RUNNER_TEMP/kompas-runtime/opt/ascon/common" /opt/ascon/common
+          fi
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          test -x "$BIN/ksinvisible"
+          file "$BIN/ksinvisible"
+          SYSROOT="$RUNNER_TEMP/kompas-runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+          LD_LIBRARY_PATH="$BIN:$SYS_LD" ldd "$BIN/ksinvisible" | tee /tmp/ksinvisible-ldd-pre.txt || true
+
+      - name: Install only minimal compiler prerequisites if missing
+        shell: bash
+        run: |
+          set -euxo pipefail
+          need=()
+          command -v Xvfb >/dev/null || need+=(xvfb)
+          command -v dbus-run-session >/dev/null || need+=(dbus)
+          test -e /usr/include/c++/v1/memory || need+=(libc++-dev libc++abi-dev)
+          command -v clang++ >/dev/null || need+=(clang)
+          command -v g++ >/dev/null || need+=(g++)
+          dpkg -s libxcb-res0 >/dev/null 2>&1 || need+=(libxcb-res0)
+          dpkg -s libxcb-dri2-0 >/dev/null 2>&1 || need+=(libxcb-dri2-0)
+          dpkg -s libxcb-xkb1 >/dev/null 2>&1 || need+=(libxcb-xkb1)
+          if [ "${#need[@]}" -gt 0 ]; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need[@]}"
+          fi
+          clang++ --version | head -1
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD" ldd "$BIN/ksinvisible" | tee /tmp/ksinvisible-ldd.txt
+          if grep -q "not found" /tmp/ksinvisible-ldd.txt; then
+            echo "UNRESOLVED_RUNTIME_LIBS"
+            grep "not found" /tmp/ksinvisible-ldd.txt
+            exit 42
+          fi
+
+      - name: Compile independent native writers with visible editable opening
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          mkdir -p /tmp/native-src
+          for n in work1_variant06_native work2_variant19_native work4_variant16_native probe_active3d_seed bootstrap_variant06_poll; do
+            cp "kompas-linux/$n.cpp" "/tmp/native-src/$n.cpp"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          for n in ('work2_variant19_native','work4_variant16_native'):
+              p=Path('/tmp/native-src')/(n+'.cpp')
+              s=p.read_text()
+              assert 'docs->Open(p.wstring(),false,false)' in s
+              s=s.replace('docs->Open(p.wstring(),false,false)','docs->Open(p.wstring(),true,false)')
+              s=s.replace('par->SetVisible(false); par->SetReadOnly(false);','par->SetVisible(true); par->SetReadOnly(false);')
+              p.write_text(s)
+          p=Path('/tmp/native-src/bootstrap_variant06_poll.cpp')
+          p.write_text(p.read_text().replace('if(g_attempts>=20)','if(g_attempts>=1)'))
+          PY
+          for n in work1_variant06_native work2_variant19_native work4_variant16_native probe_active3d_seed; do
+            clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC" "/tmp/native-src/$n.cpp" -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o "/tmp/$n.so"
+          done
+          g++ -std=c++20 -O2 -fPIC -shared -pthread /tmp/native-src/bootstrap_variant06_poll.cpp -ldl -o /tmp/bootstrap.so
+
+      - name: Run independent native CAD acceptance preserving every result
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export HOME="$RUNNER_TEMP/kompas-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25"
+          RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          sudo mkdir -p /tmp/.X11-unix
+          sudo chmod 1777 /tmp/.X11-unix
+          Xvfb :114 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
+          XV=$!
+          trap 'kill "$XV" 2>/dev/null || true' EXIT
+          sleep 2
+          test -S /tmp/.X11-unix/X114
+          export DISPLAY=:114 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          export KOMPAS_NATIVE_SEED_DIR="$GITHUB_WORKSPACE/result/native-seed"
+          export KOMPAS_USE_DIRECT_ADD=0
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          mkdir -p result/independent-native
+          printf '%s  %s\n' '0898524f47f3659ed4767feccf3052820222ecb9da8d862670a5e4ce064513b6' "$KOMPAS_NATIVE_SEED_DIR/BlankPart.m3d" '407b7c0260034b49dabbffbbc5ae7d80b300316a6214716f6e67ef365df04265' "$KOMPAS_NATIVE_SEED_DIR/BlankAssembly.a3d" | sha256sum -c -
+          run_one() {
+            local key="$1" writer="$2" log="$3" marker="$4" out="$5"
+            shift 5
+            local dest="$GITHUB_WORKSPACE/result/independent-native/$key"
+            mkdir -p "$dest"
+            cp "/tmp/$writer.so" /tmp/writer_variant06.so
+            cp /tmp/bootstrap.so /tmp/bootstrap_variant06_qt.so
+            rm -f /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
+            rm -f "$log"
+            if [ -n "$out" ]; then rm -rf "$out"; fi
+            setsid dbus-run-session -- env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" DISPLAY=:114 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$LD_LIBRARY_PATH" KOMPAS_NATIVE_SEED_DIR="$KOMPAS_NATIVE_SEED_DIR" KOMPAS_USE_DIRECT_ADD=0 LD_PRELOAD=/tmp/bootstrap_variant06_qt.so "$BIN/ksinvisible" -automation "$@" >"$dest/kompas.stdout" 2>"$dest/kompas.stderr" &
+            KP=$!
+            local ok=0
+            for i in $(seq 1 90); do
+              sleep 1
+              if grep -Fqx "$marker" "$log" 2>/dev/null; then ok=1; break; fi
+              if grep -Eq '^RESULT=FAIL|^FAIL |^EXCEPTION=' "$log" 2>/dev/null || grep -Eq 'WRITER_RC=[1-9]' /tmp/work1_bootstrap.log 2>/dev/null; then break; fi
+              if ! kill -0 "$KP" 2>/dev/null; then break; fi
+            done
+            cat "$log" 2>/dev/null || true
+            cat /tmp/work1_bootstrap.log 2>/dev/null || true
+            kill -TERM -- "-$KP" 2>/dev/null || true
+            sleep 1
+            kill -KILL -- "-$KP" 2>/dev/null || true
+            wait "$KP" 2>/dev/null || true
+            [ ! -d "$out" ] || cp -a "$out"/. "$dest"/
+            [ ! -f "$log" ] || cp -f "$log" "$dest/"
+            cp /tmp/work1_bootstrap.log "$dest/" 2>/dev/null || true
+            if [ "$key" = active-seed ]; then cp /tmp/active3d_seed_result.m3d "$dest/" 2>/dev/null || true; fi
+            find "$dest" -type f \( -name '*.m3d' -o -name '*.a3d' -o -name '*.frw' \) -exec sha256sum {} + > "$dest/SHA256.txt"
+            printf '%s=%s\n' "$key" "$ok" | tee -a result/independent-native/status.txt
+          }
+          cp "$KOMPAS_NATIVE_SEED_DIR/BlankPart.m3d" /tmp/cli-active-part.m3d
+          run_one active-seed probe_active3d_seed /tmp/active3d_seed_probe.log RESULT=ACTIVE3D_SEED_NATIVE_MUTATION_PASS "" /tmp/cli-active-part.m3d
+          run_one work1 work1_variant06_native /tmp/work1_v06_native/work1.log RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06 /tmp/work1_v06_native
+          run_one work2 work2_variant19_native /tmp/work2_v19_native/work2.log RESULT=PASS_NATIVE_WORK2_VARIANT19 /tmp/work2_v19_native
+          run_one work4 work4_variant16_native /tmp/work4_v16_native/work4.log RESULT=PASS_NATIVE_WORK4_VARIANT16 /tmp/work4_v16_native
+          cat result/independent-native/status.txt
+          grep -qx 'work1=1' result/independent-native/status.txt
+          grep -qx 'work2=1' result/independent-native/status.txt
+          grep -qx 'work4=1' result/independent-native/status.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-independent-native-acceptance
+          path: result/independent-native/**
+          if-no-files-found: ignore
