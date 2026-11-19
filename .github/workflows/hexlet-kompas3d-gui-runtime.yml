@@ -31,6 +31,23 @@ jobs:
           command -v kompas-v25 | tee runtime_evidence/launcher.txt
           dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
 
+          # Initialize the per-user KOMPAS profile from installed ASCON defaults.
+          mkdir -p "$HOME/.config/ascon/KOMPAS-3D/25"
+          find /opt/ascon /etc/ascon /usr/share -type f \
+            \( -name 'UI_Shortcuts.config' -o -name 'UI_AppPaths.config' -o -name 'QtResources.bin' \) \
+            -print | sort | tee runtime_evidence/config-candidates.txt || true
+          for base in UI_Shortcuts.config UI_AppPaths.config QtResources.bin; do
+            src=$(find /opt/ascon /etc/ascon /usr/share -type f -name "$base" 2>/dev/null | head -1 || true)
+            if [ -n "$src" ]; then
+              cp -f "$src" "$HOME/.config/ascon/KOMPAS-3D/25/$base"
+              echo "$base <= $src" | tee -a runtime_evidence/config-copied.txt
+            else
+              echo "$base <= NOT_FOUND" | tee -a runtime_evidence/config-copied.txt
+            fi
+          done
+          find "$HOME/.config/ascon/KOMPAS-3D/25" -maxdepth 1 -type f -printf '%f %s\n' \
+            | sort | tee runtime_evidence/user-config-before-launch.txt
+
       - name: Accept EULA and open File-Create dialog in real GUI
         shell: bash
         run: |
