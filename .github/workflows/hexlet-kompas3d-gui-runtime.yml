@@ -131,30 +131,13 @@ jobs:
             exit 42
           fi
 
-          # Stage 4: invoke the native File -> Create command while the first GUI
-          # instance still renders normally under Xvfb. Ctrl+N is KOMPAS's native
-          # shortcut for File -> Create and opens the same new-document chooser.
-          xdotool windowfocus --sync "$MAIN_WID"
-          xdotool key --window "$MAIN_WID" ctrl+n
-          sleep 4
-
+          # Stage 4 diagnostic: capture the actual rendered home screen immediately
+          # after the EULA is gone. This is the reliable surface for selecting
+          # the native "Чертеж" create tile.
+          import -display :99 -window root runtime_evidence/03_home_after_eula.png
+          test -s runtime_evidence/03_home_after_eula.png
           xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-windows-after-create-command.txt || true
-          FOCUS_AFTER_CREATE=$(xdotool getwindowfocus)
-          echo "FOCUS_AFTER_CREATE=$FOCUS_AFTER_CREATE" \
-            | tee runtime_evidence/create-focus.txt
-          xdotool getwindowname "$FOCUS_AFTER_CREATE" \
-            | tee -a runtime_evidence/create-focus.txt || true
-          xdotool getwindowgeometry --shell "$FOCUS_AFTER_CREATE" \
-            | tee runtime_evidence/create-focus-geometry.txt || true
-          import -display :99 -window root runtime_evidence/03_create_document_chooser.png
-          test -s runtime_evidence/03_create_document_chooser.png
-
-          # Return to the home screen so the already-proven EULA persistence test
-          # can still run unchanged. Drawing selection will be added from this
-          # captured real chooser on the next deterministic action.
-          xdotool key Escape || true
-          sleep 1
+            | tee runtime_evidence/visible-windows-home-after-eula.txt || true
 
           # Close the first KOMPAS instance through WM_DELETE so acceptance state is persisted.
           xdotool windowclose "$MAIN_WID" || true
@@ -211,7 +194,7 @@ jobs:
 
           test -s runtime_evidence/01_first_start.png
           test -s runtime_evidence/02_eula_before_accept.png
-          test -s runtime_evidence/03_create_document_chooser.png
+          test -s runtime_evidence/03_home_after_eula.png
           test -s runtime_evidence/04_second_launch_no_eula_root.png
           test -s runtime_evidence/05_second_launch_no_eula_main.png
 
@@ -228,10 +211,9 @@ jobs:
           sha256sum \
             runtime_evidence/01_first_start.png \
             runtime_evidence/02_eula_before_accept.png \
-            runtime_evidence/03_create_document_chooser.png \
+            runtime_evidence/03_home_after_eula.png \
             runtime_evidence/04_second_launch_no_eula_root.png \
             runtime_evidence/05_second_launch_no_eula_main.png \
-            runtime_evidence/06_file_menu_open.png \
             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
