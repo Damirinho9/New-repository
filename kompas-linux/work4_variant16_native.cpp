@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -100,11 +101,24 @@ static IKompasDocumentPtr open_native(const IDocumentsPtr& docs,const fs::path& 
   auto d=docs->OpenDocument(p.wstring(),par);
   return require_ptr(d,"OpenDocument "+p.string());
 }
+static fs::path seed_file(const char* name) {
+  const char* dir=std::getenv("KOMPAS_NATIVE_SEED_DIR");
+  require(dir&&*dir,"KOMPAS_NATIVE_SEED_DIR missing");
+  fs::path p=fs::path(dir)/name;
+  require(fs::exists(p)&&fs::file_size(p)>1024,std::string("seed missing ")+p.string());
+  return p;
+}
+static IKompasDocumentPtr open_seed_copy(const IDocumentsPtr& docs,const char* seedName,const fs::path& tmp) {
+  fs::create_directories(tmp.parent_path());
+  fs::copy_file(seed_file(seedName),tmp,fs::copy_options::overwrite_existing);
+  log(std::string("SEED_COPY_PASS ")+seedName+" -> "+tmp.string());
+  return open_native(docs,tmp);
+}
 static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
-  auto tpl=native_template(".m3d");
-  log("NEW_PART_TEMPLATE="+tpl.string());
-  auto base=require_ptr(docs->AddNewDocumentFromTemplate(tpl.wstring(),false),"AddNewDocumentFromTemplate part");
-  log("NEW_PART_TEMPLATE_ADD_PASS");
+  static int n=0;
+  fs::path tmp=fs::path("/tmp/work4_seed_work")/("part_"+std::to_string(++n)+".m3d");
+  auto base=require_ptr(open_seed_copy(docs,"BlankPart.m3d",tmp),"Open seed part");
+  log("NEW_PART_SEED_OPEN_PASS");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast part document 3D");
   auto top = require_ptr(doc->GetTopPart(), "part TopPart");
@@ -112,10 +126,9 @@ static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
   return {base,doc,top};
 }
 static DocPart new_assembly(const IDocumentsPtr& docs, const std::wstring& name) {
-  auto tpl=native_template(".a3d");
-  log("NEW_ASSEMBLY_TEMPLATE="+tpl.string());
-  auto base=require_ptr(docs->AddNewDocumentFromTemplate(tpl.wstring(),false),"AddNewDocumentFromTemplate assembly");
-  log("NEW_ASSEMBLY_TEMPLATE_ADD_PASS");
+  fs::path tmp="/tmp/work4_seed_work/assembly_seed.a3d";
+  auto base=require_ptr(open_seed_copy(docs,"BlankAssembly.a3d",tmp),"Open seed assembly");
+  log("NEW_ASSEMBLY_SEED_OPEN_PASS");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast assembly document 3D");
   auto top = require_ptr(doc->GetTopPart(), "assembly TopPart");
