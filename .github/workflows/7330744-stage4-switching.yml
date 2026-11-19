@@ -1,0 +1,140 @@
+name: 7330744 Stage 4 real I_PH load switching
+
+on:
+  push:
+    branches: [multisim-7330744-stage4-switching]
+    paths:
+      - ".github/workflows/7330744-stage4-switching.yml"
+      - "blocks_v6/**"
+  workflow_dispatch:
+
+concurrency:
+  group: 7330744-stage4-switching
+  cancel-in-progress: true
+
+jobs:
+  final:
+    runs-on: windows-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python preflight before NI install
+        shell: powershell
+        run: |
+          python -m py_compile blocks_v6/topology_models.py blocks_v6/stage4_switching.py
+          if($LASTEXITCODE -ne 0){throw "Python preflight failed"}
+
+      - name: Download harvested Multisim library
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-full-v6-discovery
+          path: dep-library
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43835690292
+
+      - name: Download decoded master DB index
+        uses: actions/download-artifact@v4
+        with:
+          name: 7330744-dbnode
+          path: dep-db
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 43836264959
+
+      - name: Prepare component library
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force fullv6-lib,stage3-out,stage3-final | Out-Null
+          Expand-Archive -Path dep-library\parts-library.zip -DestinationPath fullv6-lib -Force
+          Copy-Item dep-db\db_index.json fullv6-lib\db_index.json -Force
+
+      - name: Install NI Multisim 14.3
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $installer=Join-Path $env:RUNNER_TEMP 'ni-cds-educational_14.3_online.exe'
+          Invoke-WebRequest 'https://download.ni.com/support/nipkg/products/ni-c/ni-cds-educational/14.3/online/ni-cds-educational_14.3_online.exe' -OutFile $installer -UseBasicParsing
+          if((Get-AuthenticodeSignature $installer).Status -ne 'Valid'){throw 'Invalid NI signature'}
+          $p=Start-Process $installer -ArgumentList @('--quiet','--accept-eulas','--prevent-reboot') -PassThru
+          if(-not $p.WaitForExit(480000)){try{Stop-Process -Id $p.Id -Force}catch{}}
+          $ms=Get-ChildItem 'C:\Program Files (x86)\National Instruments','C:\Program Files\National Instruments' -Filter Multisim.exe -Recurse -ErrorAction SilentlyContinue|Select-Object -First 1
+          if(-not $ms){throw 'Multisim.exe absent'}
+          $ms.FullName|Out-File stage3-final\multisim-path.txt
+
+      - name: Install x86 Python COM bridge and MultisimForge
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $py=Join-Path $env:RUNNER_TEMP 'python-3.11.9-x86.exe'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.11.9/python-3.11.9.exe' -OutFile $py -UseBasicParsing
+          if((Get-AuthenticodeSignature $py).Status -ne 'Valid'){throw 'Invalid Python signature'}
+          $p=Start-Process $py -ArgumentList @('/quiet','InstallAllUsers=1','TargetDir=C:\Python311-32','PrependPath=0','Include_launcher=0','Include_test=0','Include_pip=1') -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "Python x86 installer exit=$($p.ExitCode)"}
+          & 'C:\Python311-32\python.exe' -m pip install --disable-pip-version-check --quiet pywin32
+          git clone https://github.com/AmaneSuzuha000/MultisimForge.git "$env:RUNNER_TEMP\MultisimForge"
+          git -C "$env:RUNNER_TEMP\MultisimForge" checkout c2eec0d354944cec4edec4e71b65b5eb6c52913c
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -m pip install --disable-pip-version-check -e ".[capture]"
+          python -m pip install --disable-pip-version-check --quiet pyautogui pywinauto pywin32 pillow
+
+      - name: Confirm MultisimForge 0.1.8 native transient engine
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Set-Location "$env:RUNNER_TEMP\MultisimForge"
+          python -c "import multisimforge; print('MultisimForge native COM engine ready')"
+          git rev-parse HEAD | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\stage3-final\multisimforge-commit.txt"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: 7330744-stage2-topology-candidate
+          path: dep-candidate
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 44514081073
+      - uses: actions/download-artifact@v4
+        with:
+          name: 7330744-stage3-native-final
+          path: dep-circuits
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 44485499970
+      - name: Reuse harvested native carriers and vendor files
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          $p=Get-ChildItem dep-circuits -Recurse -Filter '*.ms14' | Select-Object -First 1
+          if(-not $p){throw "Missing native carrier"}
+          python -m multisimforge parts harvest $p.FullName
+          if($LASTEXITCODE -ne 0){throw "Harvest failed"}
+          New-Item -ItemType Directory -Force vendor,stage4-out | Out-Null
+          Copy-Item dep-candidate\vendor\* vendor\ -Force
+          $models=@('PHOTO_DIODE_RATED','MUR1510G','MDA2504','30_AMP','HDR1X5','1N4742A')
+          foreach($m in $models){
+            python -m multisimforge parts fetch "$m" 2>&1 | Out-File -Append stage4-out\fetch.log
+          }
+
+      - name: Run real photocurrent endpoint search and I_PH load sweep
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Continue'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          $env:PYTHONPATH="$env:GITHUB_WORKSPACE\fullv6;$env:GITHUB_WORKSPACE\blocks_v6"
+          python -u blocks_v6\stage4_switching.py 2>&1 | Tee-Object -FilePath stage4-out\console.log
+          $rc=$LASTEXITCODE
+          if($rc -ne 0){exit $rc}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7330744-stage4-real-switching
+          path: |
+            stage4-out/
+            docs/7330744/V6_SOURCE_REFERENCE.md
+            vendor/
+          if-no-files-found: error
+          retention-days: 14

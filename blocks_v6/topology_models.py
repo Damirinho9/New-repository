@@ -41,16 +41,25 @@ def patch_models(root,xmlio,refs=None):
         n1,n2=x.split()[1],y.split()[1]
         if ref.startswith("VT"):
             small=ref!="VT3"
-            src="vendor/ZVN2120G.txt" if small else "vendor/SIHFBE30.lib"
-            expected="ZVN2120G" if small else "SIHFBE30"
-            try:
-                s,t=vendor_card(src,n1,expected),vendor_card(src,n2,expected)
-                notes[ref]=expected+" vendor electrical proxy"
-            except (OSError,ValueError,StopIteration) as exc:
-                # A fallback is explicitly an approximate diagnostic card, not an approved substitution.
-                args=(1.5,0.08,2,2,220) if small else (3.2,0.55,0.8,0.8,800)
-                s,t=_mos(n1,*args),_mos(n2,*args)
-                notes[ref]="APPROXIMATE ONLY: "+str(exc)
+            corner=os.environ.get("KP501_CORNER_VTO") if small else None
+            if corner not in (None,""):
+                v=float(corner)
+                if not (1.0 <= v <= 3.0): raise ValueError("KP501 corner outside datasheet VGS(th)=1..3V")
+                # Datasheet-constrained corner: VDS 240V, VGS(th) 1..3V, RDS(on)<=10 ohm at VGS=10V.
+                # KP and access resistances are chosen only to satisfy those static limits; this is not a manufacturer SPICE card.
+                s,t=_mos(n1,v,0.025,1.5,1.5,240),_mos(n2,v,0.025,1.5,1.5,240)
+                notes[ref]=f"KP501A datasheet-constrained corner VTO={v:g}V; not manufacturer SPICE"
+            else:
+                src="vendor/ZVN2120G.txt" if small else "vendor/SIHFBE30.lib"
+                expected="ZVN2120G" if small else "SIHFBE30"
+                try:
+                    s,t=vendor_card(src,n1,expected),vendor_card(src,n2,expected)
+                    notes[ref]=expected+" vendor electrical proxy"
+                except (OSError,ValueError,StopIteration) as exc:
+                    # A fallback is explicitly an approximate diagnostic card, not an approved substitution.
+                    args=(1.5,0.08,2,2,220) if small else (3.2,0.55,0.8,0.8,800)
+                    s,t=_mos(n1,*args),_mos(n2,*args)
+                    notes[ref]="APPROXIMATE ONLY: "+str(exc)
         else:
             s,t=_relative(x),_relative(y)
             notes[ref]="Functional cathode-referenced NI SCR, not manufacturer T123-250"
