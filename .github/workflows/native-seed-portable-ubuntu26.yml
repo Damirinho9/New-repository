@@ -125,6 +125,7 @@ jobs:
 
           export DISPLAY=:114 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
           export KOMPAS_NATIVE_SEED_DIR="$GITHUB_WORKSPACE/result/native-seed"
+          export KOMPAS_USE_DIRECT_ADD=1
           unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
           rm -rf result/portable-native
           mkdir -p result/portable-native/work2 result/portable-native/work4
@@ -135,7 +136,7 @@ jobs:
             cp /tmp/bootstrap.so /tmp/bootstrap_variant06_qt.so
             rm -f /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
             rm -rf "$outdir" /tmp/work2_seed_work /tmp/work4_seed_work
-            dbus-run-session -- env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" DISPLAY=:114               QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$LD_LIBRARY_PATH"               KOMPAS_NATIVE_SEED_DIR="$KOMPAS_NATIVE_SEED_DIR" LD_PRELOAD=/tmp/bootstrap_variant06_qt.so               "$BIN/ksinvisible" -automation >/tmp/kompas.out 2>/tmp/kompas.err &
+            dbus-run-session -- env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" DISPLAY=:114               QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$LD_LIBRARY_PATH"               KOMPAS_NATIVE_SEED_DIR="$KOMPAS_NATIVE_SEED_DIR" KOMPAS_USE_DIRECT_ADD="$KOMPAS_USE_DIRECT_ADD" LD_PRELOAD=/tmp/bootstrap_variant06_qt.so               "$BIN/ksinvisible" -automation >/tmp/kompas.out 2>/tmp/kompas.err &
             KP=$!
             ok=0
             for i in $(seq 1 70); do
