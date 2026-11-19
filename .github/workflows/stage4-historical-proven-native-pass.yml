@@ -146,6 +146,14 @@ jobs:
             ascon-kompas-graphic-v25=25.0.5.2780 ascon-kompas3d-v25=25.0.5.2780 ascon-kompas-sdk-v25=25.0.5.2780
           dpkg -l 'ascon-kompas*' | tee installed-3d.txt
           cat /etc/os-release | tee os-3d.txt
+      - name: Restore verified native seed
+        uses: actions/download-artifact@v4
+        with:
+          name: 7335493-native-seed-alt
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          path: result/stage4-historical-3d/seed
+
       - name: Run strict minimal native 3D gate
         shell: bash
         run: |
@@ -159,7 +167,7 @@ jobs:
           import pathlib,time,hashlib,ksapi
           from constants import constants as c
           from constants3d import constants as c3
-          seed=pathlib.Path('/tmp/Stage4_Existing_Seed.m3d');out=pathlib.Path('result/stage4-historical-3d/Stage4_Minimal_Extrusion.m3d').resolve()
+          seed=pathlib.Path('result/stage4-historical-3d/seed/BlankPart.m3d').resolve();out=pathlib.Path('result/stage4-historical-3d/Stage4_Minimal_Extrusion.m3d').resolve()
           logp=pathlib.Path('result/stage4-historical-3d/native-3d.log')
           def log(x):
               print(x,flush=True)
@@ -182,10 +190,10 @@ jobs:
           req(app,'GetKompas');log('APP='+str(app.GetApplicationName(True)));log('BUILD='+str(app.GetBuildNumber()))
           lm=req(app.GetApplicationLicenseManager(),'license manager');req(lm.IsKompasModuleActive(c.ksKompasModule3D),'3D inactive');log('LICENSE_3D_ACTIVE=1')
           docs=req(app.GetDocuments(),'documents')
-          dtype=getattr(c,'ksDocumentPart',1)
-          created=req(docs.Add(dtype,True),'Documents.Add part')
-          req(created.SaveAs(str(seed)),'Save seed M3D');req(seed.exists() and seed.stat().st_size>1024,'seed M3D missing');req(created.Close(c.kdDoNotSaveChanges),'close seed')
-          log('SEED_NATIVE_M3D_CREATED')
+          req(seed.exists() and seed.stat().st_size>1024,'verified seed M3D missing')
+          got=hashlib.sha256(seed.read_bytes()).hexdigest()
+          req(got=='0898524f47f3659ed4767feccf3052820222ecb9da8d862670a5e4ce064513b6','verified seed hash mismatch')
+          log('SEED_NATIVE_M3D_VERIFIED='+got)
           base=req(docs.Open(str(seed),True,False),'Open existing M3D');d3=req(ksapi.IKompasDocument3D(base),'3D cast');top=req(d3.GetTopPart(),'TopPart')
           log('OPEN_EXISTING_M3D_PASS');log('TOPPART_PASS');req(d3.RebuildDocument(),'initial doc rebuild');req(top.RebuildModel(False),'initial model rebuild')
           mass0,density0,vol0=metrics(top);log(f'MASS_BEFORE={mass0:.12g}');log(f'VOLUME_BEFORE={vol0:.12g}')
