@@ -156,6 +156,9 @@ jobs:
                 PASS=1
                 break
               fi
+              if grep -q "RESULT=FAIL_NATIVE_WORK4_VARIANT16" /tmp/work4_v16_native/work4.log 2>/dev/null; then
+                break
+              fi
               if ! kill -0 "$KP" 2>/dev/null; then break; fi
             done
             cat /tmp/work4_v16_native/work4.log 2>/dev/null || true
