@@ -40,15 +40,21 @@ def _find_any_card(comp,model,xmlio):
     return ma,cb
 
 def _fd320_card(old):
-    s=old.replace("\\r\\n","\\n").replace("\\r","\\n")
-    mm=re.search(r"(?i)\\.model\\s+(\\S+)",s)
+    s=chr(10).join(old.splitlines())
+    mm=re.search("(?i)[.]model[ \\t]+([^ \\t]+)",s)
     if mm:
         name=mm.group(1)
         return f".MODEL {name} D(IS=2n N=1.25 RS=2 CJO=80p VJ=0.65 M=0.45 BV=30 IBV=50u TT=1u)"
-    sm=re.search(r"(?im)^\\s*\\.subckt\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)",s)
-    if not sm: raise RuntimeError("Unsupported FD320 carrier card")
+    sm=re.search("(?im)^[ \\t]*[.]subckt[ \\t]+([^ \\t]+)[ \\t]+([^ \\t]+)[ \\t]+([^ \\t]+)",s)
+    if not sm:
+        raise RuntimeError("Unsupported FD320 carrier card")
     name,p1,p2=sm.groups()
-    return "\\n".join([f".SUBCKT {name} {p1} {p2}",f"DPHOTO {p1} {p2} DFD320",".MODEL DFD320 D(IS=2n N=1.25 RS=2 CJO=80p VJ=0.65 M=0.45 BV=30 IBV=50u TT=1u)",f".ENDS {name}"])
+    return chr(10).join([
+        f".SUBCKT {name} {p1} {p2}",
+        f"DPHOTO {p1} {p2} DFD320",
+        ".MODEL DFD320 D(IS=2n N=1.25 RS=2 CJO=80p VJ=0.65 M=0.45 BV=30 IBV=50u TT=1u)",
+        f".ENDS {name}",
+    ])
 
 def _patch_fd320(root,xmlio,notes):
     c=_find_component(root,xmlio,"VD1");mod=_find_model(root,c);a,b=_find_any_card(c,mod,xmlio)
