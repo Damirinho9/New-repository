@@ -147,7 +147,7 @@ jobs:
           for i in $(seq 1 90); do
             sleep 1
             CANDIDATE=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
-            if [ -n "$CANDIDATE" ] && [ "$CANDIDATE" != "$MAIN_WID" ]; then
+            if [ -n "$CANDIDATE" ]; then
               SECOND_WID="$CANDIDATE"
               break
             fi
