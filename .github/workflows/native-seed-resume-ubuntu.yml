@@ -59,7 +59,7 @@ jobs:
           echo "deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main" | sudo tee /etc/apt/sources.list.d/ascon.list
           test -s /etc/apt/trusted.gpg.d/ascon.gpg
           sudo apt-get update
-          sudo apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          sudo apt-get install -y ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           BIN=/opt/ascon/kompas3d-v25/Bin
           ldd "$BIN/ksinvisible" | tee /tmp/ksinvisible-ldd.txt
           ! grep -q "not found" /tmp/ksinvisible-ldd.txt
