@@ -56,7 +56,7 @@ jobs:
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 \
             libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-util1 libxcb-shape0 libxcb-xinerama0 \
             libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-glx0 libxcb-present0 \
-            libxcb-dri3-0 libxkbcommon-x11-0 libopengl0 libglu1-mesa
+            libxcb-dri3-0 libxkbcommon-x11-0 libopengl0 libglu1-mesa libxcb-composite0 libxv1
           if apt-cache show libc++1-18 >/dev/null 2>&1; then
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libc++1-18 libc++abi1-18 libunwind-18
           else
@@ -213,7 +213,7 @@ jobs:
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 \
             libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-util1 libxcb-shape0 libxcb-xinerama0 \
             libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-glx0 libxcb-present0 \
-            libxcb-dri3-0 libxkbcommon-x11-0 libopengl0 libglu1-mesa
+            libxcb-dri3-0 libxkbcommon-x11-0 libopengl0 libglu1-mesa libxcb-composite0 libxv1
           if apt-cache show libc++1-18 >/dev/null 2>&1; then
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libc++1-18 libc++abi1-18 libunwind-18
           else
