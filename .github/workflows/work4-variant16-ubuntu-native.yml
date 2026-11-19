@@ -95,11 +95,25 @@ jobs:
               export DISPLAY=:106 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
               unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
-              dbus-run-session -- env \
-                HOME=/root XDG_CONFIG_HOME=/root/.config DISPLAY=:106 QT_QPA_PLATFORM=xcb \
-                LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN" \
+              KEXEC="$BIN/kKompas"
+              if [ ! -x "$KEXEC" ] && [ -x "$BIN/ksinvisible" ]; then
+                ln -sf "$BIN/ksinvisible" /tmp/kKompas
+                KEXEC=/tmp/kKompas
+              fi
+              test -x "$KEXEC"
+              echo "KEXEC=$KEXEC"
+
+              timeout 25s dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config \
+                DISPLAY=:106 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN" \
+                "$KEXEC" -automation >/tmp/kompas-init.out 2>/tmp/kompas-init.err || true
+              pkill -x kKompas 2>/dev/null || true
+              pkill -x ksinvisible 2>/dev/null || true
+              rm -f /tmp/work1_bootstrap_once.lock
+
+              dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config \
+                DISPLAY=:106 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN" \
                 LD_PRELOAD=/tmp/bootstrap_variant06_qt.so \
-                "$BIN/ksinvisible" -automation >/tmp/kompas-work4.out 2>/tmp/kompas-work4.err &
+                "$KEXEC" -automation >/tmp/kompas-work4.out 2>/tmp/kompas-work4.err &
               KP=$!
 
               PASS=0
