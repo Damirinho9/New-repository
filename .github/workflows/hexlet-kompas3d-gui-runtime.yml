@@ -143,29 +143,624 @@ jobs:
             exit 42
           fi
 
-          MAIN_AFTER=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+          MAIN_AFTER=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_relaunch_no_eula_root.png
+          test -s runtime_evidence/05_relaunch_no_eula_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
           echo "MAIN_WINDOW_AFTER_EULA=$MAIN_AFTER" | tee runtime_evidence/main-after-eula.txt
           test -n "$MAIN_AFTER"
 
-          # Force a real remap/repaint after the modal dialog is gone.
-          # This changes only X11 window visibility, not KOMPAS document state.
-          xdotool windowminimize --sync "$MAIN_AFTER"
-          sleep 2
-          xdotool windowmap --sync "$MAIN_AFTER"
-          xdotool windowraise "$MAIN_AFTER"
-          xdotool windowactivate --sync "$MAIN_AFTER"
-          xrefresh -display :99
-          sleep 5
+          # Strong persistence proof: restart KOMPAS in the same runner.
+          # If EULA acceptance was real, the dialog must not appear again.
+          kill "$(cat runtime_evidence/kompas-launch.pid)" 2>/dev/null || true
+          for i in $(seq 1 20); do
+            sleep 1
+            if ! ps -p "$(cat runtime_evidence/kompas-launch.pid)" >/dev/null 2>&1; then break; fi
+          done
+
+          kompas-v25 >runtime_evidence/kompas-relaunch.out 2>runtime_evidence/kompas-relaunch.err &
+          RELAUNCH_PID=$!
+          echo "$RELAUNCH_PID" > runtime_evidence/kompas-relaunch.pid
+
+          RELAUNCH_WID=""
+          for i in $(seq 1 90); do
+            sleep 1
+            RELAUNCH_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+            [ -n "$RELAUNCH_WID" ] && break
+          done
+          echo "RELAUNCH_WINDOW_ID=$RELAUNCH_WID" | tee runtime_evidence/relaunch-window.txt
+          test -n "$RELAUNCH_WID"
+
+          sleep 15
+
+          EULA_ON_RELAUNCH=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "EULA_ON_RELAUNCH=$EULA_ON_RELAUNCH" | tee runtime_evidence/eula-on-relaunch.txt
+          if [ -n "$EULA_ON_RELAUNCH" ]; then
+            import -display :99 -window root runtime_evidence/04_relaunch_EULA_FAILED.png || true
+            echo 'RESULT=FAIL_EULA_REAPPEARED_ON_RELAUNCH' | tee runtime_evidence/result.txt
+            exit 43
+          fi
 
           xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-windows-after-eula.txt || true
+            | tee runtime_evidence/visible-windows-after-relaunch.txt || true
           ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
-            | tee runtime_evidence/processes-after-eula.txt
+            | tee runtime_evidence/processes-after-relaunch.txt
 
-          import -display :99 -window root runtime_evidence/04_after_eula_accept_root.png
-          import -display :99 -window "$MAIN_AFTER" runtime_evidence/05_after_eula_accept_main.png
+          import -display :99 -window root runtime_evidence/04_relaunch_no_eula_root.png
+          import -display :99 -window "$RELAUNCH_WID" runtime_evidence/05_relaunch_no_eula_main.png
 
-          echo 'RESULT=PASS_EULA_DISMISSED' | tee runtime_evidence/result.txt
+          echo 'RESULT=PASS_EULA_DISMISSED_AND_PERSISTED' | tee runtime_evidence/result.txt
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "MAIN_WINDOW_AFTER_EULA=$MAIN_AFTER" | tee runtime_evidence/main-after-eula.txt
+          test -n "$MAIN_AFTER"
+
+          # Strong persistence proof: restart KOMPAS in the same runner.
+          # If EULA acceptance was real, the dialog must not appear again.
+          kill "$(cat runtime_evidence/kompas-launch.pid)" 2>/dev/null || true
+          for i in $(seq 1 20); do
+            sleep 1
+            if ! ps -p "$(cat runtime_evidence/kompas-launch.pid)" >/dev/null 2>&1; then break; fi
+          done
+
+          kompas-v25 >runtime_evidence/kompas-relaunch.out 2>runtime_evidence/kompas-relaunch.err &
+          RELAUNCH_PID=$!
+          echo "$RELAUNCH_PID" > runtime_evidence/kompas-relaunch.pid
+
+          RELAUNCH_WID=""
+          for i in $(seq 1 90); do
+            sleep 1
+            RELAUNCH_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+            [ -n "$RELAUNCH_WID" ] && break
+          done
+          echo "RELAUNCH_WINDOW_ID=$RELAUNCH_WID" | tee runtime_evidence/relaunch-window.txt
+          test -n "$RELAUNCH_WID"
+
+          sleep 15
+
+          EULA_ON_RELAUNCH=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "EULA_ON_RELAUNCH=$EULA_ON_RELAUNCH" | tee runtime_evidence/eula-on-relaunch.txt
+          if [ -n "$EULA_ON_RELAUNCH" ]; then
+            import -display :99 -window root runtime_evidence/04_relaunch_EULA_FAILED.png || true
+            echo 'RESULT=FAIL_EULA_REAPPEARED_ON_RELAUNCH' | tee runtime_evidence/result.txt
+            exit 43
+          fi
+
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-windows-after-relaunch.txt || true
+          ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
+            | tee runtime_evidence/processes-after-relaunch.txt
+
+          import -display :99 -window root runtime_evidence/04_relaunch_no_eula_root.png
+          import -display :99 -window "$RELAUNCH_WID" runtime_evidence/05_relaunch_no_eula_main.png
+
+          echo 'RESULT=PASS_EULA_DISMISSED_AND_PERSISTED' | tee runtime_evidence/result.txt
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/eula-after-click.txt
+          grep -q '^EULA_ON_RELAUNCH=
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "MAIN_WINDOW_AFTER_EULA=$MAIN_AFTER" | tee runtime_evidence/main-after-eula.txt
+          test -n "$MAIN_AFTER"
+
+          # Strong persistence proof: restart KOMPAS in the same runner.
+          # If EULA acceptance was real, the dialog must not appear again.
+          kill "$(cat runtime_evidence/kompas-launch.pid)" 2>/dev/null || true
+          for i in $(seq 1 20); do
+            sleep 1
+            if ! ps -p "$(cat runtime_evidence/kompas-launch.pid)" >/dev/null 2>&1; then break; fi
+          done
+
+          kompas-v25 >runtime_evidence/kompas-relaunch.out 2>runtime_evidence/kompas-relaunch.err &
+          RELAUNCH_PID=$!
+          echo "$RELAUNCH_PID" > runtime_evidence/kompas-relaunch.pid
+
+          RELAUNCH_WID=""
+          for i in $(seq 1 90); do
+            sleep 1
+            RELAUNCH_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+            [ -n "$RELAUNCH_WID" ] && break
+          done
+          echo "RELAUNCH_WINDOW_ID=$RELAUNCH_WID" | tee runtime_evidence/relaunch-window.txt
+          test -n "$RELAUNCH_WID"
+
+          sleep 15
+
+          EULA_ON_RELAUNCH=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "EULA_ON_RELAUNCH=$EULA_ON_RELAUNCH" | tee runtime_evidence/eula-on-relaunch.txt
+          if [ -n "$EULA_ON_RELAUNCH" ]; then
+            import -display :99 -window root runtime_evidence/04_relaunch_EULA_FAILED.png || true
+            echo 'RESULT=FAIL_EULA_REAPPEARED_ON_RELAUNCH' | tee runtime_evidence/result.txt
+            exit 43
+          fi
+
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-windows-after-relaunch.txt || true
+          ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
+            | tee runtime_evidence/processes-after-relaunch.txt
+
+          import -display :99 -window root runtime_evidence/04_relaunch_no_eula_root.png
+          import -display :99 -window "$RELAUNCH_WID" runtime_evidence/05_relaunch_no_eula_main.png
+
+          echo 'RESULT=PASS_EULA_DISMISSED_AND_PERSISTED' | tee runtime_evidence/result.txt
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/eula-on-relaunch.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED_AND_PERSISTED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-relaunch.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_relaunch_no_eula_root.png \
+            runtime_evidence/05_relaunch_no_eula_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "MAIN_WINDOW_AFTER_EULA=$MAIN_AFTER" | tee runtime_evidence/main-after-eula.txt
+          test -n "$MAIN_AFTER"
+
+          # Strong persistence proof: restart KOMPAS in the same runner.
+          # If EULA acceptance was real, the dialog must not appear again.
+          kill "$(cat runtime_evidence/kompas-launch.pid)" 2>/dev/null || true
+          for i in $(seq 1 20); do
+            sleep 1
+            if ! ps -p "$(cat runtime_evidence/kompas-launch.pid)" >/dev/null 2>&1; then break; fi
+          done
+
+          kompas-v25 >runtime_evidence/kompas-relaunch.out 2>runtime_evidence/kompas-relaunch.err &
+          RELAUNCH_PID=$!
+          echo "$RELAUNCH_PID" > runtime_evidence/kompas-relaunch.pid
+
+          RELAUNCH_WID=""
+          for i in $(seq 1 90); do
+            sleep 1
+            RELAUNCH_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+            [ -n "$RELAUNCH_WID" ] && break
+          done
+          echo "RELAUNCH_WINDOW_ID=$RELAUNCH_WID" | tee runtime_evidence/relaunch-window.txt
+          test -n "$RELAUNCH_WID"
+
+          sleep 15
+
+          EULA_ON_RELAUNCH=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ
+
+      - name: Strict EULA gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
+          test -s runtime_evidence/03_eula_before_accept.png
+          test -s runtime_evidence/04_after_eula_accept_root.png
+          test -s runtime_evidence/05_after_eula_accept_main.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
+          grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
+
+          if [ -f runtime_evidence/eula-xwininfo-after.txt ]; then
+            ! grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt
+          fi
+
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept_root.png \
+            runtime_evidence/05_after_eula_accept_main.png \
+            | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-eula-gate-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "EULA_ON_RELAUNCH=$EULA_ON_RELAUNCH" | tee runtime_evidence/eula-on-relaunch.txt
+          if [ -n "$EULA_ON_RELAUNCH" ]; then
+            import -display :99 -window root runtime_evidence/04_relaunch_EULA_FAILED.png || true
+            echo 'RESULT=FAIL_EULA_REAPPEARED_ON_RELAUNCH' | tee runtime_evidence/result.txt
+            exit 43
+          fi
+
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-windows-after-relaunch.txt || true
+          ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
+            | tee runtime_evidence/processes-after-relaunch.txt
+
+          import -display :99 -window root runtime_evidence/04_relaunch_no_eula_root.png
+          import -display :99 -window "$RELAUNCH_WID" runtime_evidence/05_relaunch_no_eula_main.png
+
+          echo 'RESULT=PASS_EULA_DISMISSED_AND_PERSISTED' | tee runtime_evidence/result.txt
 
       - name: Strict EULA gate
         shell: bash
