@@ -86,9 +86,9 @@ struct DocPart {
 };
 static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
   log("NEW_PART_BEFORE_DOCUMENTS_ADD");
-  auto base = docs->AddWithDefaultSettings(ksDocumentPart, true);
+  auto base = docs->Add(ksDocumentPart, true);
   if (!base) base = docs->Add(ksDocumentPart, true);
-  base = require_ptr(base, "Documents.AddWithDefaultSettings/Add part");
+  base = require_ptr(base, "Documents.Add part");
   log("NEW_PART_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast part document 3D");
@@ -98,9 +98,9 @@ static DocPart new_part(const IDocumentsPtr& docs, const std::wstring& name) {
 }
 static DocPart new_assembly(const IDocumentsPtr& docs, const std::wstring& name) {
   log("NEW_ASSEMBLY_BEFORE_DOCUMENTS_ADD");
-  auto base = docs->AddWithDefaultSettings(ksDocumentAssembly, true);
+  auto base = docs->Add(ksDocumentAssembly, true);
   if (!base) base = docs->Add(ksDocumentAssembly, true);
-  base = require_ptr(base, "Documents.AddWithDefaultSettings/Add assembly");
+  base = require_ptr(base, "Documents.Add assembly");
   log("NEW_ASSEMBLY_AFTER_DOCUMENTS_ADD");
   IKompasDocument3DPtr doc = base;
   require_ptr(doc, "cast assembly document 3D");
