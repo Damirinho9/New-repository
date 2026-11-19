@@ -1,5 +1,4 @@
 name: Hexlet KOMPAS-3D GUI Runtime
-# clean branch runtime trigger
 
 on:
   push:
@@ -29,7 +28,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             wget ca-certificates gnupg \
-            xvfb openbox xdotool imagemagick desktop-file-utils \
+            xvfb openbox xdotool imagemagick desktop-file-utils x11-utils \
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
 
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
@@ -50,334 +49,130 @@ jobs:
           dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
           command -v kompas-v25 | tee runtime_evidence/launcher.txt
 
-      - name: Launch full KOMPAS-3D GUI under Xvfb + openbox
+      - name: Launch full GUI and accept EULA by detected window geometry
         shell: bash
         run: |
           set -euxo pipefail
           export DISPLAY=:99
 
           Xvfb :99 -screen 0 1920x1080x24 -ac >runtime_evidence/xvfb.log 2>&1 &
-          XVFB_PID=$!
-          echo "$XVFB_PID" > runtime_evidence/xvfb.pid
-
+          echo $! > runtime_evidence/xvfb.pid
           sleep 2
 
           openbox >runtime_evidence/openbox.log 2>&1 &
-          OPENBOX_PID=$!
-          echo "$OPENBOX_PID" > runtime_evidence/openbox.pid
-
+          echo $! > runtime_evidence/openbox.pid
           sleep 2
 
           kompas-v25 >runtime_evidence/kompas-gui.out 2>runtime_evidence/kompas-gui.err &
-          LAUNCH_PID=$!
-          echo "$LAUNCH_PID" > runtime_evidence/kompas-launch.pid
+          echo $! > runtime_evidence/kompas-launch.pid
 
-          WID=""
+          MAIN_WID=""
           for i in $(seq 1 90); do
             sleep 1
-            WID=$(xdotool search --onlyvisible --name 'КОМПАС-3Д v25|КОМПАС-3D v25|КОМПАС' 2>/dev/null | tail -1 || true)
-            [ -n "$WID" ] && break
+            MAIN_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$MAIN_WID" ] && break
           done
+          echo "MAIN_WINDOW_ID=$MAIN_WID" | tee runtime_evidence/main-window.txt
+          test -n "$MAIN_WID"
 
-          echo "WINDOW_ID=$WID" | tee runtime_evidence/window.txt
-          test -n "$WID"
-
-          xdotool getwindowname "$WID" | tee runtime_evidence/window-title.txt
-          xdotool getwindowgeometry --shell "$WID" | tee runtime_evidence/window-geometry.txt
+          xdotool getwindowname "$MAIN_WID" | tee runtime_evidence/main-window-title.txt
+          xdotool getwindowgeometry --shell "$MAIN_WID" | tee runtime_evidence/main-window-geometry.txt
 
           ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
-            | tee runtime_evidence/processes.txt
+            | tee runtime_evidence/processes-before-eula.txt
 
           import -display :99 -window root runtime_evidence/01_startup.png
-
-          # Allow the real GUI to finish startup. At this stage an EULA dialog is
-          # acceptable and expected; closing it is the next acceptance step.
           sleep 25
-          xdotool search --onlyvisible --name 'КОМПАС|Лицензи|License' \
-            getwindowname %@ 2>/dev/null | tee runtime_evidence/visible-windows-after-startup.txt || true
-          ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
-            | tee runtime_evidence/processes-after-startup.txt
-          import -display :99 -window root runtime_evidence/02_full_gui_ready.png
+          import -display :99 -window root runtime_evidence/02_full_gui_with_eula.png
 
-          # Step 3: accept EULA by locating the actual EULA window and clicking
-          # the "Принимаю" button at a geometry-derived position. No blind Tab/Enter.
+          # Find the actual EULA dialog by its exact title.
           EULA_WID=""
           for i in $(seq 1 30); do
-            EULA_WID=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ
+            EULA_WID=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+            [ -n "$EULA_WID" ] && break
+            sleep 1
+          done
 
-      - name: Strict runtime gate
+          echo "EULA_WINDOW_ID=$EULA_WID" | tee runtime_evidence/eula-window.txt
+          test -n "$EULA_WID"
+
+          xdotool getwindowname "$EULA_WID" | tee runtime_evidence/eula-window-title.txt
+          xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-window-geometry.txt
+          xwininfo -id "$EULA_WID" -all > runtime_evidence/eula-xwininfo.txt
+
+          # Use the geometry returned by X11. No blind keyboard navigation.
+          eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
+          test "$WIDTH" -gt 300
+          test "$HEIGHT" -gt 300
+
+          # Native ASCON EULA: "Принимаю" is the left button on the bottom row.
+          # Its center is approximately 65% across the dialog and 24 px above bottom.
+          CLICK_X=$((X + WIDTH * 65 / 100))
+          CLICK_Y=$((Y + HEIGHT - 24))
+          printf 'CLICK_X=%s\nCLICK_Y=%s\n' "$CLICK_X" "$CLICK_Y" \
+            | tee runtime_evidence/eula-click-target.txt
+
+          xdotool windowfocus --sync "$EULA_WID"
+          xdotool mousemove --sync "$CLICK_X" "$CLICK_Y"
+          xdotool getmouselocation --shell | tee runtime_evidence/eula-mouse-location.txt
+          import -display :99 -window root runtime_evidence/03_eula_before_accept.png
+
+          # Click the detected "Принимаю" button.
+          xdotool click 1
+
+          # EULA must disappear. If it remains, fail immediately and do nothing else.
+          EULA_STILL=""
+          for i in $(seq 1 20); do
+            sleep 1
+            EULA_STILL=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+            [ -z "$EULA_STILL" ] && break
+          done
+
+          echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
+          if [ -n "$EULA_STILL" ]; then
+            import -display :99 -window root runtime_evidence/04_eula_accept_FAILED.png || true
+            echo 'RESULT=FAIL_EULA_STILL_VISIBLE' | tee runtime_evidence/result.txt
+            exit 41
+          fi
+
+          # Main KOMPAS GUI must remain alive after the dialog disappears.
+          MAIN_AFTER=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+          echo "MAIN_WINDOW_AFTER_EULA=$MAIN_AFTER" | tee runtime_evidence/main-after-eula.txt
+          test -n "$MAIN_AFTER"
+
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-windows-after-eula.txt || true
+          ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
+            | tee runtime_evidence/processes-after-eula.txt
+
+          import -display :99 -window root runtime_evidence/04_after_eula_accept.png
+
+          echo 'RESULT=PASS_EULA_DISMISSED' | tee runtime_evidence/result.txt
+
+      - name: Strict EULA gate
         shell: bash
         run: |
           set -euxo pipefail
           test -s runtime_evidence/01_startup.png
-          test -s runtime_evidence/02_full_gui_ready.png
+          test -s runtime_evidence/02_full_gui_with_eula.png
           test -s runtime_evidence/03_eula_before_accept.png
           test -s runtime_evidence/04_after_eula_accept.png
+
+          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' runtime_evidence/eula-window-title.txt
+          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
           grep -q 'RESULT=PASS_EULA_DISMISSED' runtime_evidence/result.txt
-          grep -q '^EULA_AFTER_CLICK=
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-eula.txt
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas3d-gui-runtime-evidence
-          path: runtime_evidence/
-          if-no-files-found: error
- 2>/dev/null | tail -1 || true)
-            [ -n "$EULA_WID" ] && break
-            sleep 1
-          done
-
-          echo "EULA_WINDOW_ID=$EULA_WID" | tee runtime_evidence/eula-window.txt
-          test -n "$EULA_WID"
-
-          xdotool getwindowname "$EULA_WID" | tee runtime_evidence/eula-window-title.txt
-          xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-window-geometry.txt
-          xwininfo -id "$EULA_WID" -all > runtime_evidence/eula-xwininfo.txt
-
-          # Load the exact geometry returned by X11.
-          eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
-          test "$WIDTH" -gt 300
-          test "$HEIGHT" -gt 300
-
-          # On the native ASCON EULA dialog the accept/reject buttons are on the
-          # bottom row. "Принимаю" is the left button, centered at ~65% of the
-          # dialog width. Vertical position is 24 px above the bottom edge.
-          CLICK_X=$((X + WIDTH * 65 / 100))
-          CLICK_Y=$((Y + HEIGHT - 24))
-          printf 'CLICK_X=%s\nCLICK_Y=%s\n' "$CLICK_X" "$CLICK_Y" | tee runtime_evidence/eula-click-target.txt
-
-          xdotool windowfocus --sync "$EULA_WID"
-          xdotool mousemove --sync "$CLICK_X" "$CLICK_Y"
-          xdotool getmouselocation --shell | tee runtime_evidence/eula-mouse-location.txt
-          import -display :99 -window root runtime_evidence/03_eula_before_accept.png
-
-          xdotool click 1
-
-          # EULA must disappear. If it remains visible, stop immediately.
-          EULA_STILL=""
-          for i in $(seq 1 20); do
-            sleep 1
-            EULA_STILL=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ
-
-      - name: Strict runtime gate
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -s runtime_evidence/01_startup.png
-          test -s runtime_evidence/02_full_gui_ready.png
-          grep -q 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' runtime_evidence/result.txt
-          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
-          sha256sum runtime_evidence/01_startup.png runtime_evidence/02_full_gui_ready.png \
+          sha256sum \
+            runtime_evidence/01_startup.png \
+            runtime_evidence/02_full_gui_with_eula.png \
+            runtime_evidence/03_eula_before_accept.png \
+            runtime_evidence/04_after_eula_accept.png \
             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-gui-runtime-evidence
-          path: runtime_evidence/
-          if-no-files-found: error
- 2>/dev/null | tail -1 || true)
-            [ -z "$EULA_STILL" ] && break
-          done
-
-          echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
-          if [ -n "$EULA_STILL" ]; then
-            import -display :99 -window root runtime_evidence/04_eula_accept_FAILED.png || true
-            echo 'RESULT=FAIL_EULA_STILL_VISIBLE' | tee runtime_evidence/result.txt
-            exit 41
-          fi
-
-          # The main KOMPAS-3D window must still be alive after accepting EULA.
-          MAIN_AFTER=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25
-
-      - name: Strict runtime gate
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -s runtime_evidence/01_startup.png
-          test -s runtime_evidence/02_full_gui_ready.png
-          grep -q 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' runtime_evidence/result.txt
-          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
-          sha256sum runtime_evidence/01_startup.png runtime_evidence/02_full_gui_ready.png \
-            | tee runtime_evidence/sha256.txt
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas3d-gui-runtime-evidence
-          path: runtime_evidence/
-          if-no-files-found: error
- 2>/dev/null | tail -1 || true)
-          echo "MAIN_WINDOW_AFTER_EULA=$MAIN_AFTER" | tee runtime_evidence/main-after-eula.txt
-          test -n "$MAIN_AFTER"
-
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-windows-after-eula.txt || true
-          import -display :99 -window root runtime_evidence/04_after_eula_accept.png
-
-          test -s runtime_evidence/01_startup.png
-          test -s runtime_evidence/02_full_gui_ready.png
-          test -s runtime_evidence/03_eula_before_accept.png
-          test -s runtime_evidence/04_after_eula_accept.png
-          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
-
-          echo 'RESULT=PASS_EULA_DISMISSED' | tee runtime_evidence/result.txt
-
-      - name: Strict runtime gate
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -s runtime_evidence/01_startup.png
-          test -s runtime_evidence/02_full_gui_ready.png
-          grep -q 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' runtime_evidence/result.txt
-          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
-          sha256sum runtime_evidence/01_startup.png runtime_evidence/02_full_gui_ready.png \
-            | tee runtime_evidence/sha256.txt
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas3d-gui-runtime-evidence
-          path: runtime_evidence/
-          if-no-files-found: error
- runtime_evidence/eula-after-click.txt
-          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
-          sha256sum runtime_evidence/01_startup.png \
-                    runtime_evidence/02_full_gui_ready.png \
-                    runtime_evidence/03_eula_before_accept.png \
-                    runtime_evidence/04_after_eula_accept.png \
-            | tee runtime_evidence/sha256.txt
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas3d-gui-runtime-evidence
-          path: runtime_evidence/
-          if-no-files-found: error
- 2>/dev/null | tail -1 || true)
-            [ -n "$EULA_WID" ] && break
-            sleep 1
-          done
-
-          echo "EULA_WINDOW_ID=$EULA_WID" | tee runtime_evidence/eula-window.txt
-          test -n "$EULA_WID"
-
-          xdotool getwindowname "$EULA_WID" | tee runtime_evidence/eula-window-title.txt
-          xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-window-geometry.txt
-          xwininfo -id "$EULA_WID" -all > runtime_evidence/eula-xwininfo.txt
-
-          # Load the exact geometry returned by X11.
-          eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
-          test "$WIDTH" -gt 300
-          test "$HEIGHT" -gt 300
-
-          # On the native ASCON EULA dialog the accept/reject buttons are on the
-          # bottom row. "Принимаю" is the left button, centered at ~65% of the
-          # dialog width. Vertical position is 24 px above the bottom edge.
-          CLICK_X=$((X + WIDTH * 65 / 100))
-          CLICK_Y=$((Y + HEIGHT - 24))
-          printf 'CLICK_X=%s\nCLICK_Y=%s\n' "$CLICK_X" "$CLICK_Y" | tee runtime_evidence/eula-click-target.txt
-
-          xdotool windowfocus --sync "$EULA_WID"
-          xdotool mousemove --sync "$CLICK_X" "$CLICK_Y"
-          xdotool getmouselocation --shell | tee runtime_evidence/eula-mouse-location.txt
-          import -display :99 -window root runtime_evidence/03_eula_before_accept.png
-
-          xdotool click 1
-
-          # EULA must disappear. If it remains visible, stop immediately.
-          EULA_STILL=""
-          for i in $(seq 1 20); do
-            sleep 1
-            EULA_STILL=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ
-
-      - name: Strict runtime gate
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -s runtime_evidence/01_startup.png
-          test -s runtime_evidence/02_full_gui_ready.png
-          grep -q 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' runtime_evidence/result.txt
-          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
-          sha256sum runtime_evidence/01_startup.png runtime_evidence/02_full_gui_ready.png \
-            | tee runtime_evidence/sha256.txt
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas3d-gui-runtime-evidence
-          path: runtime_evidence/
-          if-no-files-found: error
- 2>/dev/null | tail -1 || true)
-            [ -z "$EULA_STILL" ] && break
-          done
-
-          echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
-          if [ -n "$EULA_STILL" ]; then
-            import -display :99 -window root runtime_evidence/04_eula_accept_FAILED.png || true
-            echo 'RESULT=FAIL_EULA_STILL_VISIBLE' | tee runtime_evidence/result.txt
-            exit 41
-          fi
-
-          # The main KOMPAS-3D window must still be alive after accepting EULA.
-          MAIN_AFTER=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25
-
-      - name: Strict runtime gate
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -s runtime_evidence/01_startup.png
-          test -s runtime_evidence/02_full_gui_ready.png
-          grep -q 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' runtime_evidence/result.txt
-          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
-          sha256sum runtime_evidence/01_startup.png runtime_evidence/02_full_gui_ready.png \
-            | tee runtime_evidence/sha256.txt
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas3d-gui-runtime-evidence
-          path: runtime_evidence/
-          if-no-files-found: error
- 2>/dev/null | tail -1 || true)
-          echo "MAIN_WINDOW_AFTER_EULA=$MAIN_AFTER" | tee runtime_evidence/main-after-eula.txt
-          test -n "$MAIN_AFTER"
-
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-windows-after-eula.txt || true
-          import -display :99 -window root runtime_evidence/04_after_eula_accept.png
-
-          test -s runtime_evidence/01_startup.png
-          test -s runtime_evidence/02_full_gui_ready.png
-          test -s runtime_evidence/03_eula_before_accept.png
-          test -s runtime_evidence/04_after_eula_accept.png
-          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
-
-          echo 'RESULT=PASS_EULA_DISMISSED' | tee runtime_evidence/result.txt
-
-      - name: Strict runtime gate
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -s runtime_evidence/01_startup.png
-          test -s runtime_evidence/02_full_gui_ready.png
-          grep -q 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' runtime_evidence/result.txt
-          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
-          sha256sum runtime_evidence/01_startup.png runtime_evidence/02_full_gui_ready.png \
-            | tee runtime_evidence/sha256.txt
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas3d-gui-runtime-evidence
+          name: kompas3d-eula-gate-evidence
           path: runtime_evidence/
           if-no-files-found: error
