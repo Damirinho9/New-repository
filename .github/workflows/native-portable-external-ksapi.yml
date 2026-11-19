@@ -1,0 +1,210 @@
+name: KOMPAS official external KsAPI native mutation and Work 1 V06
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/native-portable-external-ksapi.yml'
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download proven ALT native seed
+        uses: actions/download-artifact@v4
+        with:
+          name: 7335493-native-seed-alt
+          path: result/native-seed
+          run-id: 44476851857
+          github-token: ${{ github.token }}
+
+      - name: Download portable KOMPAS runtime parts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-part*
+          path: runtime-parts
+          merge-multiple: true
+          run-id: 44290433663
+          github-token: ${{ github.token }}
+
+      - name: Restore portable KOMPAS runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd runtime-parts
+          sha256sum kompas-runtime.part-00 kompas-runtime.part-01 kompas-runtime.part-02 kompas-runtime.part-03
+          test "$(sha256sum kompas-runtime.part-00 | cut -d' ' -f1)" = "965285771caff99fddb1306485dd9c062fc16a49c258451ee70badab1ecc14f4"
+          test "$(sha256sum kompas-runtime.part-01 | cut -d' ' -f1)" = "424b833def76283914c2db926e2feedae2c3c570c59af05ab237768cf084d9bd"
+          test "$(sha256sum kompas-runtime.part-02 | cut -d' ' -f1)" = "a0e997d9dd5eba32b70fa4cdd3a20d948ecdb02637372ff80928fa538d10daed"
+          test "$(sha256sum kompas-runtime.part-03 | cut -d' ' -f1)" = "93643b93b97dc58d6097251cf0ed74ecc474a9aa474e5b622f928c9a264228e7"
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/kompas-v25-portable-runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/kompas-v25-portable-runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/kompas-runtime"
+          tar --zstd -xf "$RUNNER_TEMP/kompas-v25-portable-runtime.tar.zst" -C "$RUNNER_TEMP/kompas-runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25
+          sudo ln -s "$RUNNER_TEMP/kompas-runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/kompas-runtime/opt/ascon/common" ]; then
+            sudo rm -rf /opt/ascon/common
+            sudo ln -s "$RUNNER_TEMP/kompas-runtime/opt/ascon/common" /opt/ascon/common
+          fi
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          test -x "$BIN/ksinvisible"
+          file "$BIN/ksinvisible"
+          SYSROOT="$RUNNER_TEMP/kompas-runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+          LD_LIBRARY_PATH="$BIN:$SYS_LD" ldd "$BIN/ksinvisible" | tee /tmp/ksinvisible-ldd-pre.txt || true
+
+      - name: Launch official external SDK session and run native acceptance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export HOME="$RUNNER_TEMP/kompas-external-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25"
+          RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          export PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          mkdir -p result/external-native
+          export NATIVE_ROOT="$GITHUB_WORKSPACE/result/external-native"
+          export KOMPAS_NATIVE_SEED_DIR="$GITHUB_WORKSPACE/result/native-seed"
+          printf '%s  %s\n' '0898524f47f3659ed4767feccf3052820222ecb9da8d862670a5e4ce064513b6' "$KOMPAS_NATIVE_SEED_DIR/BlankPart.m3d" '407b7c0260034b49dabbffbbc5ae7d80b300316a6214716f6e67ef365df04265' "$KOMPAS_NATIVE_SEED_DIR/BlankAssembly.a3d" | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          p=Path('/opt/ascon/kompas3d-v25/SDK/KsAPI/Samples.zip')
+          with zipfile.ZipFile(p) as z:
+              for s in ('part.m3d','Step5.frw'):
+                  Path('/tmp/official-'+s).write_bytes(z.read('Examples/Content/'+s))
+          PY
+          cat > /tmp/official_probe.py <<'PY'
+          import os,sys,math,shutil,traceback,time,pathlib,hashlib
+          import ksapi
+          from constants import constants as c
+          from constants3d import constants as c3
+          root=pathlib.Path(os.environ['NATIVE_ROOT'])
+          def require(x,msg):
+              if not x: raise RuntimeError(msg)
+              return x
+          def connect():
+              for i in range(30):
+                  app=ksapi.GetKompasInvisible()
+                  if app: return app
+                  time.sleep(1)
+              raise RuntimeError('GetKompasInvisible returned null')
+          def info(doc,label):
+              if not doc:
+                  print(label,'NULL',flush=True);return
+              print(label,'TYPE',doc.GetDocumentType(),'PATH',doc.GetFullPath(),'VISIBLE',doc.IsVisible(),'ACTIVE',doc.IsActive(),'READONLY',doc.IsReadOnly(),flush=True)
+          def lines(doc):
+              return require(ksapi.IDrawingContainer(require(require(require(doc.GetViewsAndLayersManager(),'views manager').GetViews(),'views').GetActiveView(),'active view')),'drawing container').GetLineSegments()
+          def line(ls,x1,y1,x2,y2):
+              s=require(ls.Add(),'LineSegments.Add')
+              s.SetX1(x1);s.SetY1(y1);s.SetX2(x2);s.SetY2(y2);s.SetStyle(c.ksCSNormal)
+              require(s.Update(),'Line.Update')
+              return s
+          app=connect()
+          print('EXTERNAL_SDK_CONNECTED',app.GetApplicationName(True),app.GetSystemVersion(0,0,0,0),flush=True)
+          lm=require(app.GetApplicationLicenseManager(),'license manager')
+          active2=lm.IsKompasModuleActive(c.ksKompasModule2D)
+          active3=lm.IsKompasModuleActive(c.ksKompasModule3D)
+          print('LICENSE_2D_ACTIVE',active2,'LICENSE_3D_ACTIVE',active3,flush=True)
+          docs=require(app.GetDocuments(),'GetDocuments')
+          print('DOCUMENT_COUNT',docs.GetCount(),flush=True)
+          info(app.GetActiveDocument(),'ACTIVE')
+          for i in range(docs.GetCount()):
+              info(docs.GetItem(i),'DOC_'+str(i))
+          for path in [pathlib.Path(os.environ['KOMPAS_NATIVE_SEED_DIR'])/'BlankPart.m3d',pathlib.Path(os.environ['KOMPAS_NATIVE_SEED_DIR'])/'BlankAssembly.a3d',pathlib.Path('/tmp/official-part.m3d'),pathlib.Path('/tmp/official-Step5.frw')]:
+              print('FILE_TYPE',path,docs.GetDocumentTypeByName(str(path),0,''),flush=True)
+          if sys.argv[1]=='work1':
+              require(active2,'native 2D module inactive')
+              sys.path.insert(0,os.path.join(os.environ['GITHUB_WORKSPACE'],'kompas-linux'))
+              import build_variant06_python as b
+              # Existing correct variant-06 builder; connect by official invisible endpoint.
+              b.ksapi.GetKompas=lambda: ksapi.GetKompasInvisible()
+              b.OUT=root/'Work1_V06_ParametricMechanism.frw'
+              b.LOG=root/'work1.log'
+              os.environ.pop('KOMPAS_PORT',None)
+              b.main()
+              sys.exit(0)
+          if sys.argv[1]=='3d':
+              require(active3,'native 3D module inactive')
+              seed=pathlib.Path(os.environ['KOMPAS_NATIVE_SEED_DIR'])/'BlankPart.m3d'
+              p=pathlib.Path('/tmp/external-seed.m3d');shutil.copy2(seed,p)
+              d=docs.Open(str(p),True,False)
+              info(d,'SEED_OPEN')
+              if not d:
+                  p=pathlib.Path('/tmp/official-part.m3d')
+                  d=docs.Open(str(p),True,False)
+                  info(d,'SDK_SAMPLE_OPEN')
+              d=require(d,'external SDK cannot open seed or vendor sample')
+              dd=require(ksapi.IKompasDocument3D(d),'QueryInterface 3D')
+              top=require(dd.GetTopPart(),'GetTopPart');print('TOP_PART_PASS',flush=True)
+              mc=require(top.GetModelContainer(),'model container')
+              mass0=top.GetMass()
+              sk=require(require(mc.GetSketchs(),'sketches').Add(),'sketch Add')
+              sk.SetPlane(require(top.GetDefaultObject(c3.o3d_planeXOY),'XOY'))
+              frag=require(sk.BeginEdit(False),'BeginEdit');print('BEGIN_EDIT_PASS',flush=True)
+              ls=require(lines(frag),'line collection')
+              for a,b in zip([(50,50),(70,50),(70,62),(50,62)],[(70,50),(70,62),(50,62),(50,50)]):
+                  line(ls,*a,*b)
+              require(sk.EndEdit(),'EndEdit');require(sk.Update(),'sketch update')
+              ex=require(require(mc.GetExtrusions(),'extrusions').Add(c3.o3d_baseExtrusion),'extrusion Add')
+              ex.SetProfiles([sk]);require(ex.SetSideParameters(True,c3.etBlind,10.,0.,False,None),'extrusion side')
+              require(ex.Update(),'extrusion Update')
+              require(top.RebuildModel(False),'rebuild model');require(dd.RebuildDocument(),'rebuild doc')
+              mass=top.GetMass();print('MASS_BEFORE_AFTER',mass0,mass,flush=True)
+              require(mass>mass0+1e-8,'positive physical mass change')
+              out=root/'SDK_Mutation_Proof.m3d'
+              require(d.SaveAs(str(out)),'SaveAs')
+              require(d.Close(c.kdDoNotSaveChanges),'close')
+              d2=require(docs.Open(str(out),True,False),'reopen')
+              d3=require(ksapi.IKompasDocument3D(d2),'reopen 3D')
+              require(d3.RebuildDocument(),'reopen rebuild doc')
+              t2=require(d3.GetTopPart(),'reopen top')
+              require(t2.RebuildModel(False),'reopen rebuild model')
+              require(abs(t2.GetMass()-mass)<max(1e-7,abs(mass)*1e-6),'reopened mass mismatch')
+              require(d2.Save(),'final Save')
+              require(d2.Close(c.kdDoNotSaveChanges),'final Close')
+              print('SHA256',hashlib.sha256(out.read_bytes()).hexdigest(),flush=True)
+              print('RESULT=PASS_EXTERNAL_3D_MUTATION_REOPEN',flush=True)
+          PY
+          command -v xvfb-run
+          command -v dbus-run-session
+          run_one() {
+            local key="$1"
+            set +e
+            timeout --kill-after=5s 145s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" dbus-run-session -- bash -c '
+              set -e
+              "$1/ksinvisible" -automation >"$NATIVE_ROOT/$2.kompas.stdout" 2>"$NATIVE_ROOT/$2.kompas.stderr" &
+              KP=$!
+              trap "kill $KP 2>/dev/null || true" EXIT
+              python3 -u /tmp/official_probe.py "$2"
+            ' bash "$BIN" "$key" 2>&1 | tee "$NATIVE_ROOT/$key.sdk.log"
+            local rc=${PIPESTATUS[0]}
+            set -e
+            echo "$key=$rc" | tee -a "$NATIVE_ROOT/status.txt"
+          }
+          run_one work1
+          run_one 3d
+          cat "$NATIVE_ROOT/status.txt"
+          find "$NATIVE_ROOT" -maxdepth 1 -type f \( -name '*.frw' -o -name '*.m3d' \) -exec sha256sum {} + | tee "$NATIVE_ROOT/SHA256.txt"
+          grep -qx 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' "$NATIVE_ROOT/work1.log"
+          grep -qx 'RESULT=PASS_EXTERNAL_3D_MUTATION_REOPEN' "$NATIVE_ROOT/3d.sdk.log"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-external-ksapi-native
+          path: result/external-native/**
+          if-no-files-found: ignore
