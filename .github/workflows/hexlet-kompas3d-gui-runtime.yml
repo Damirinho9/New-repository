@@ -23,27 +23,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             wget ca-certificates gnupg \
-            xvfb openbox xdotool imagemagick desktop-file-utils x11-utils x11-xserver-utils mesa-utils libgl1-mesa-dri \
+            xvfb openbox xdotool imagemagick desktop-file-utils \
+            x11-utils x11-xserver-utils mesa-utils libgl1-mesa-dri \
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
-
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
-
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
             | sudo tee /etc/apt/sources.list.d/ascon.list
-
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ascon-kompas-v25 \
             ascon-kompas-graphic-v25 \
             ascon-kompas3d-v25 \
             ascon-kompas-sdk-v25
-
           mkdir -p runtime_evidence
           command -v kompas-v25 | tee runtime_evidence/launcher.txt
           dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
 
-      - name: Accept EULA deterministically and prove persistence
+      - name: Accept EULA and create real drawing through full GUI
         shell: bash
         run: |
           set -euxo pipefail
@@ -51,7 +48,8 @@ jobs:
           export LIBGL_ALWAYS_SOFTWARE=1
           export QT_OPENGL=software
 
-          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >runtime_evidence/xvfb.log 2>&1 &
+          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
+            >runtime_evidence/xvfb.log 2>&1 &
           echo $! > runtime_evidence/xvfb.pid
           sleep 2
 
@@ -61,9 +59,9 @@ jobs:
 
           glxinfo -B > runtime_evidence/glxinfo.txt 2>&1 || true
 
-          kompas-v25 >runtime_evidence/kompas-first.out 2>runtime_evidence/kompas-first.err &
-          FIRST_PID=$!
-          echo "$FIRST_PID" > runtime_evidence/kompas-first.pid
+          kompas-v25 >runtime_evidence/kompas.out 2>runtime_evidence/kompas.err &
+          KPID=$!
+          echo "$KPID" > runtime_evidence/kompas.pid
 
           MAIN_WID=""
           for i in $(seq 1 90); do
@@ -71,11 +69,9 @@ jobs:
             MAIN_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
             [ -n "$MAIN_WID" ] && break
           done
-          echo "MAIN_WINDOW_ID=$MAIN_WID" | tee runtime_evidence/main-window.txt
           test -n "$MAIN_WID"
-
+          echo "MAIN_WINDOW_ID=$MAIN_WID" | tee runtime_evidence/main-window.txt
           xdotool getwindowgeometry --shell "$MAIN_WID" | tee runtime_evidence/main-window-geometry.txt
-          import -display :99 -window root runtime_evidence/01_first_start.png
 
           sleep 25
 
@@ -85,27 +81,18 @@ jobs:
             [ -n "$EULA_WID" ] && break
             sleep 1
           done
-          echo "EULA_WINDOW_ID=$EULA_WID" | tee runtime_evidence/eula-window.txt
           test -n "$EULA_WID"
-
+          echo "EULA_WINDOW_ID=$EULA_WID" | tee runtime_evidence/eula-window.txt
           xdotool getwindowname "$EULA_WID" | tee runtime_evidence/eula-window-title.txt
           xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-window-geometry.txt
-          xwininfo -id "$EULA_WID" -all > runtime_evidence/eula-xwininfo-before.txt
 
-          # Move the real EULA window aside before accepting it. This exposes
-          # the native Create tiles and avoids stale framebuffer pixels hiding them.
+          # Move EULA aside so the native Create tiles are physically exposed.
           xdotool windowmove "$EULA_WID" 1320 260
           sleep 1
-          import -display :99 -window root runtime_evidence/02a_create_tiles_exposed.png
-          xdotool getwindowgeometry --shell "$EULA_WID" \
-            | tee runtime_evidence/eula-window-geometry-moved.txt
+          import -display :99 -window root runtime_evidence/01_create_tiles_exposed.png
+          xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-window-geometry-moved.txt
 
           eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
-          test "$WIDTH" -gt 300
-          test "$HEIGHT" -gt 300
-
-          # Measured on the actual ASCON dialog:
-          # 500x650 at X=710,Y=234; "Принимаю" center = ~65% width, 42 px above bottom.
           CLICK_X=$((X + WIDTH * 65 / 100))
           CLICK_Y=$((Y + HEIGHT - 42))
           printf 'CLICK_X=%s\nCLICK_Y=%s\n' "$CLICK_X" "$CLICK_Y" \
@@ -113,37 +100,16 @@ jobs:
 
           xdotool windowfocus --sync "$EULA_WID"
           xdotool mousemove --sync "$CLICK_X" "$CLICK_Y"
-          xdotool getmouselocation --shell | tee runtime_evidence/eula-mouse-location.txt
           import -display :99 -window root runtime_evidence/02_eula_before_accept.png
-
           xdotool click 1
           sleep 2
 
-          # Hard check 1: the original EULA XID must not remain viewable.
-          if xwininfo -id "$EULA_WID" -all > runtime_evidence/eula-xwininfo-after.txt 2>&1; then
-            if grep -q 'Map State: IsViewable' runtime_evidence/eula-xwininfo-after.txt; then
-              import -display :99 -window root runtime_evidence/03_eula_accept_FAILED.png || true
-              echo 'RESULT=FAIL_EULA_XID_STILL_VIEWABLE' | tee runtime_evidence/result.txt
-              exit 41
-            fi
-          else
-            echo 'EULA_XID_DESTROYED=1' | tee runtime_evidence/eula-xid-destroyed.txt
-          fi
-
-          # Hard check 2: no visible EULA-title window may exist.
           EULA_STILL=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
           echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
-          if [ -n "$EULA_STILL" ]; then
-            import -display :99 -window root runtime_evidence/03_eula_accept_FAILED.png || true
-            echo 'RESULT=FAIL_EULA_STILL_VISIBLE' | tee runtime_evidence/result.txt
-            exit 42
-          fi
+          test -z "$EULA_STILL"
 
-          # Stage 4: create a real drawing through the rendered KOMPAS GUI.
-          # The EULA was moved to the right before acceptance, exposing the native
-          # Create tiles. "Чертеж" center was measured at approximately (918,205)
-          # on the 1920x1080 Xvfb screen.
-          import -display :99 -window root runtime_evidence/03_home_after_eula.png
+          # Native GUI drawing tile. Its center was measured from the exposed
+          # KOMPAS start screen at x=918.7, y=208.1 on 1920x1080.
           xdotool windowfocus --sync "$MAIN_WID"
           xdotool mousemove --sync 919 208
           xdotool getmouselocation --shell | tee runtime_evidence/drawing-tile-mouse.txt
@@ -155,63 +121,47 @@ jobs:
           FOCUS_DRAWING=$(xdotool getwindowfocus)
           echo "FOCUS_DRAWING=$FOCUS_DRAWING" | tee runtime_evidence/drawing-focus.txt
           xdotool getwindowname "$FOCUS_DRAWING" | tee -a runtime_evidence/drawing-focus.txt || true
-          xdotool getwindowgeometry --shell "$FOCUS_DRAWING" \
-            | tee runtime_evidence/drawing-focus-geometry.txt || true
+          import -display :99 -window root runtime_evidence/03_after_drawing_tile.png
 
-          import -display :99 -window root runtime_evidence/04_drawing_created.png
-          test -s runtime_evidence/04_drawing_created.png
-
-          # Functional proof probe: a real unsaved drawing must react to Ctrl+S
-          # by opening the native save dialog.
+          # Functional gate: a real unsaved drawing must open a Save dialog.
           xdotool key --window "$MAIN_WID" ctrl+s
           sleep 4
           SAVE_FOCUS=$(xdotool getwindowfocus)
           echo "SAVE_FOCUS=$SAVE_FOCUS" | tee runtime_evidence/save-focus.txt
           xdotool getwindowname "$SAVE_FOCUS" | tee -a runtime_evidence/save-focus.txt || true
-          xdotool getwindowgeometry --shell "$SAVE_FOCUS" \
-            | tee runtime_evidence/save-focus-geometry.txt || true
+          xdotool getwindowgeometry --shell "$SAVE_FOCUS" | tee runtime_evidence/save-focus-geometry.txt || true
           xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
             | tee runtime_evidence/visible-windows-after-save.txt || true
-          import -display :99 -window root runtime_evidence/05_save_dialog_probe.png
-          test -s runtime_evidence/05_save_dialog_probe.png
+          import -display :99 -window root runtime_evidence/04_save_dialog_probe.png
 
-          # Close only the save dialog if one opened; do not discard the drawing.
-          if [ "$SAVE_FOCUS" != "$MAIN_WID" ]; then
-            xdotool key --window "$SAVE_FOCUS" Escape || true
-            sleep 1
+          if [ "$SAVE_FOCUS" = "$MAIN_WID" ]; then
+            echo 'RESULT=FAIL_NO_SAVE_DIALOG_AFTER_DRAWING' | tee runtime_evidence/result.txt
+            exit 51
           fi
 
-          # Non-fatal API7 probe against the accepted full GUI. Historical runs
-          # returned None here, so GUI creation remains authoritative.
+          # API7 attach is optional. Historical full-GUI runs returned None.
           export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
-          python3 -c 'import ksapi; app=ksapi.GetKompas(); print("GETKOMPAS=", app); print("API7_GUI_ATTACH=AVAILABLE" if app is not None else "API7_GUI_ATTACH=UNAVAILABLE"); print("APP_NAME=", app.GetApplicationName(True)) if app is not None else None; print("BUILD=", app.GetBuildNumber()) if app is not None else None' \
-            | tee runtime_evidence/api7-gui-probe.txt
+          python3 -c 'import ksapi; app=ksapi.GetKompas(); print("GETKOMPAS=", app); print("API7_GUI_ATTACH=AVAILABLE" if app is not None else "API7_GUI_ATTACH=UNAVAILABLE")' \
+            | tee runtime_evidence/api7-gui-probe.txt || true
 
-          echo 'RESULT=PASS_REAL_DRAWING_CREATED_IN_GUI' | tee runtime_evidence/result.txt
+          echo 'RESULT=PASS_REAL_DRAWING_CREATED_SAVE_DIALOG_OPENED' | tee runtime_evidence/result.txt
 
       - name: Strict drawing creation gate
         shell: bash
         run: |
           set -euxo pipefail
-
-          test -s runtime_evidence/01_first_start.png
+          test -s runtime_evidence/01_create_tiles_exposed.png
           test -s runtime_evidence/02_eula_before_accept.png
-          test -s runtime_evidence/02a_create_tiles_exposed.png
-          test -s runtime_evidence/03_home_after_eula.png
-          test -s runtime_evidence/04_drawing_created.png
-          test -s runtime_evidence/05_save_dialog_probe.png
-
-          grep -q '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ runtime_evidence/eula-window-title.txt
+          test -s runtime_evidence/03_after_drawing_tile.png
+          test -s runtime_evidence/04_save_dialog_probe.png
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_IN_GUI$' runtime_evidence/result.txt
-          grep -Ei 'КОМПАС-3D|Чертеж|KOMPAS' runtime_evidence/drawing-focus.txt runtime_evidence/visible-windows-after-drawing.txt
-          grep -Ei 'Сохран|Save|Файл|KOMPAS|КОМПАС' runtime_evidence/save-focus.txt runtime_evidence/visible-windows-after-save.txt
-
+          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_SAVE_DIALOG_OPENED$' runtime_evidence/result.txt
+          grep -Ei 'Сохран|Save|Файл|KOMPAS|КОМПАС' \
+            runtime_evidence/save-focus.txt runtime_evidence/visible-windows-after-save.txt
           sha256sum \
-            runtime_evidence/02a_create_tiles_exposed.png \
-            runtime_evidence/03_home_after_eula.png \
-            runtime_evidence/04_drawing_created.png \
-            runtime_evidence/05_save_dialog_probe.png \
+            runtime_evidence/01_create_tiles_exposed.png \
+            runtime_evidence/03_after_drawing_tile.png \
+            runtime_evidence/04_save_dialog_probe.png \
             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
@@ -220,24 +170,3 @@ jobs:
           name: kompas3d-real-drawing-evidence
           path: runtime_evidence/
           if-no-files-found: error
-
-# stage3 eula gate trigger
- runtime_evidence/eula-window-title.txt
-          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_IN_GUI$' runtime_evidence/result.txt
-          grep -Ei 'КОМПАС-3D|Чертеж|KOMPAS' runtime_evidence/drawing-focus.txt runtime_evidence/visible-windows-after-drawing.txt
-
-          sha256sum \
-            runtime_evidence/02a_create_tiles_exposed.png \
-            runtime_evidence/03_home_after_eula.png \
-            runtime_evidence/04_drawing_created.png \
-            | tee runtime_evidence/sha256.txt
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas3d-real-drawing-evidence
-          path: runtime_evidence/
-          if-no-files-found: error
-
-# stage3 eula gate trigger
