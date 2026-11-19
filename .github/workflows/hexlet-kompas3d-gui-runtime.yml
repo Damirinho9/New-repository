@@ -90,71 +90,117 @@ jobs:
           if ps -p "$FIRST_PID" >/dev/null 2>&1; then kill "$FIRST_PID" 2>/dev/null || true; fi
           sleep 3
 
-          kompas-v25 >runtime_evidence/kompas-second.out 2>runtime_evidence/kompas-second.err &
-          SECOND_PID=$!
-          echo "$SECOND_PID" > runtime_evidence/kompas-second.pid
+          # Fresh full GUI launched as automation server after EULA acceptance.
+          kompas-v25 -automation >runtime_evidence/kompas-automation.out 2>runtime_evidence/kompas-automation.err &
+          AUTO_PID=$!
+          echo "$AUTO_PID" > runtime_evidence/kompas-automation.pid
 
-          SECOND_WID=""
+          AUTO_WID=""
           for i in $(seq 1 90); do
             sleep 1
-            SECOND_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
-            [ -n "$SECOND_WID" ] && break
+            AUTO_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$AUTO_WID" ] && break
           done
-          test -n "$SECOND_WID"
-          echo "SECOND_WINDOW_ID=$SECOND_WID" | tee runtime_evidence/main-window-second.txt
-          sleep 15
+          test -n "$AUTO_WID"
+          echo "AUTOMATION_WINDOW_ID=$AUTO_WID" | tee runtime_evidence/automation-window.txt
+          sleep 10
 
-          EULA_SECOND=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
-          echo "EULA_ON_SECOND_LAUNCH=$EULA_SECOND" | tee runtime_evidence/eula-second-launch.txt
-          test -z "$EULA_SECOND"
+          EULA_AUTO=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+          echo "EULA_ON_AUTOMATION_LAUNCH=$EULA_AUTO" | tee runtime_evidence/eula-automation-launch.txt
+          test -z "$EULA_AUTO"
 
-          # Literal route: File -> Create.
-          xdotool windowfocus --sync "$SECOND_WID"
-          eval "$(xdotool getwindowgeometry --shell "$SECOND_WID")"
-          FILE_X=$((X + 20))
-          FILE_Y=$((Y + 25))
-          printf 'FILE_X=%s\nFILE_Y=%s\n' "$FILE_X" "$FILE_Y" | tee runtime_evidence/file-menu-click.txt
-          xdotool mousemove --sync "$FILE_X" "$FILE_Y"
-          xdotool click 1
-          sleep 2
-          import -display :99 -window root runtime_evidence/02_file_menu_open.png
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          export STAGE4_OUT="$GITHUB_WORKSPACE/runtime_evidence/Hexlet_stage4_real_drawing.cdw"
+          python3 - <<'PY' | tee runtime_evidence/api7-gui-result.txt
+import os, pathlib, time, hashlib
+import ksapi
+from constants import constants as c
 
-          # Invoke the same File -> Create command using KOMPAS' documented Ctrl+N shortcut.
-          # The File menu was explicitly opened above; Ctrl+N is the native "Создать новый документ" command.
-          xdotool key Escape
-          sleep 1
-          xdotool key --clearmodifiers ctrl+n
-          sleep 5
+app=None
+for i in range(60):
+    app=ksapi.GetKompas()
+    if app is not None:
+        break
+    time.sleep(1)
+print("GETKOMPAS=", app)
+if app is None:
+    raise SystemExit("API7_GUI_ATTACH=UNAVAILABLE")
+print("API7_GUI_ATTACH=AVAILABLE")
+print("APP_NAME=", app.GetApplicationName(True))
+print("BUILD=", app.GetBuildNumber())
+try:
+    app.SetVisible(True)
+except Exception as exc:
+    print("SET_VISIBLE_WARN=", repr(exc))
 
-          CREATE_FOCUS=$(xdotool getwindowfocus)
-          echo "CREATE_FOCUS=$CREATE_FOCUS" | tee runtime_evidence/create-focus.txt
-          xdotool getwindowname "$CREATE_FOCUS" | tee -a runtime_evidence/create-focus.txt || true
-          xdotool getwindowgeometry --shell "$CREATE_FOCUS" | tee runtime_evidence/create-focus-geometry.txt || true
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null             | tee runtime_evidence/visible-windows-create-dialog.txt || true
+docs=app.GetDocuments()
+if docs is None:
+    raise SystemExit("GetDocuments returned None")
 
-          if [ "$CREATE_FOCUS" = "$SECOND_WID" ]; then
-            echo 'RESULT=FAIL_FILE_CREATE_DID_NOT_OPEN_DIALOG' | tee runtime_evidence/result.txt
-            exit 51
-          fi
+doc=None
+try:
+    doc=docs.AddWithDefaultSettings(c.ksDocumentDrawing, True)
+    print("ADD_WITH_DEFAULT=", doc)
+except Exception as exc:
+    print("ADD_WITH_DEFAULT_ERROR=", repr(exc))
+if doc is None:
+    try:
+        doc=docs.Add(c.ksDocumentDrawing, True)
+        print("ADD=", doc)
+    except Exception as exc:
+        print("ADD_ERROR=", repr(exc))
+if doc is None:
+    raise SystemExit("DRAWING_CREATE_FAIL")
 
-          import -display :99 -window "$CREATE_FOCUS" runtime_evidence/03_new_document_dialog.png
-          echo 'RESULT=PASS_FILE_CREATE_DIALOG_OPENED' | tee runtime_evidence/result.txt
+dtype=doc.GetDocumentType()
+print("DOCUMENT_TYPE=", dtype)
+print("EXPECTED_DRAWING_TYPE=", c.ksDocumentDrawing)
+if dtype != c.ksDocumentDrawing:
+    raise SystemExit("DOCUMENT_TYPE_NOT_DRAWING")
+print("DOCUMENT_TYPE_DRAWING=PASS")
 
-      - name: Strict File-Create dialog gate
+d2=ksapi.IKompasDocument2D(doc)
+vm=d2.GetViewsAndLayersManager()
+views=vm.GetViews()
+print("VIEWS_COUNT=", views.GetCount())
+active=views.GetActiveView()
+print("ACTIVE_VIEW=", active)
+if active is None:
+    raise SystemExit("NO_ACTIVE_DRAWING_VIEW")
+
+out=pathlib.Path(os.environ["STAGE4_OUT"])
+ok=doc.SaveAs(str(out.resolve()))
+print("SAVEAS=", ok)
+if not out.exists() or out.stat().st_size <= 0:
+    raise SystemExit("DRAWING_SAVE_FAIL")
+print("CDW_SIZE=", out.stat().st_size)
+print("CDW_SHA256=", hashlib.sha256(out.read_bytes()).hexdigest())
+print("RESULT=PASS_REAL_DRAWING_CREATED_IN_FULL_GUI")
+PY
+
+          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_IN_FULL_GUI$' runtime_evidence/api7-gui-result.txt
+          cp runtime_evidence/api7-gui-result.txt runtime_evidence/result.txt
+          xdotool windowfocus --sync "$AUTO_WID" || true
+          sleep 3
+          import -display :99 -window root runtime_evidence/02_drawing_created_gui.png
+          test -s runtime_evidence/02_drawing_created_gui.png
+
+      - name: Strict real drawing gate
         shell: bash
         run: |
           set -euxo pipefail
           test -s runtime_evidence/01_eula_before_accept.png
-          test -s runtime_evidence/02_file_menu_open.png
-          test -s runtime_evidence/03_new_document_dialog.png
+          test -s runtime_evidence/02_drawing_created_gui.png
+          test -s runtime_evidence/Hexlet_stage4_real_drawing.cdw
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^EULA_ON_SECOND_LAUNCH=$' runtime_evidence/eula-second-launch.txt
-          grep -q '^RESULT=PASS_FILE_CREATE_DIALOG_OPENED$' runtime_evidence/result.txt
-          sha256sum runtime_evidence/03_new_document_dialog.png | tee runtime_evidence/sha256.txt
+          grep -q '^API7_GUI_ATTACH=AVAILABLE$' runtime_evidence/api7-gui-result.txt
+          grep -q '^DOCUMENT_TYPE_DRAWING=PASS$' runtime_evidence/api7-gui-result.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_IN_FULL_GUI$' runtime_evidence/result.txt
+          sha256sum runtime_evidence/Hexlet_stage4_real_drawing.cdw runtime_evidence/02_drawing_created_gui.png             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-file-create-dialog-evidence
+          name: kompas3d-real-drawing-evidence
           path: runtime_evidence/
           if-no-files-found: error
