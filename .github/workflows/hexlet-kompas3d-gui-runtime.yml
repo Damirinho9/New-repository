@@ -1,0 +1,108 @@
+name: Hexlet KOMPAS-3D GUI Runtime
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-kompas3d-gui-clean
+    paths:
+      - ".github/workflows/hexlet-kompas3d-gui-runtime.yml"
+  workflow_dispatch:
+
+jobs:
+  kompas3d-gui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official ASCON KOMPAS-3D v25 + SDK and GUI dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget ca-certificates gnupg \
+            xvfb openbox xdotool imagemagick \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-v25 \
+            ascon-kompas-graphic-v25 \
+            ascon-kompas3d-v25 \
+            ascon-kompas-sdk-v25
+
+          command -v kompas-v25
+          mkdir -p runtime_evidence
+          dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
+          command -v kompas-v25 | tee runtime_evidence/launcher.txt
+
+      - name: Launch full KOMPAS-3D GUI under Xvfb + openbox
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+
+          Xvfb :99 -screen 0 1920x1080x24 -ac >runtime_evidence/xvfb.log 2>&1 &
+          XVFB_PID=$!
+          echo "$XVFB_PID" > runtime_evidence/xvfb.pid
+
+          sleep 2
+
+          openbox >runtime_evidence/openbox.log 2>&1 &
+          OPENBOX_PID=$!
+          echo "$OPENBOX_PID" > runtime_evidence/openbox.pid
+
+          sleep 2
+
+          kompas-v25 >runtime_evidence/kompas-gui.out 2>runtime_evidence/kompas-gui.err &
+          LAUNCH_PID=$!
+          echo "$LAUNCH_PID" > runtime_evidence/kompas-launch.pid
+
+          WID=""
+          for i in $(seq 1 90); do
+            sleep 1
+            WID=$(xdotool search --onlyvisible --name 'КОМПАС-3Д v25|КОМПАС-3D v25|КОМПАС' 2>/dev/null | tail -1 || true)
+            [ -n "$WID" ] && break
+          done
+
+          echo "WINDOW_ID=$WID" | tee runtime_evidence/window.txt
+          test -n "$WID"
+
+          xdotool getwindowname "$WID" | tee runtime_evidence/window-title.txt
+          xdotool getwindowgeometry --shell "$WID" | tee runtime_evidence/window-geometry.txt
+
+          ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
+            | tee runtime_evidence/processes.txt
+
+          import -display :99 -window root runtime_evidence/01_full_gui.png
+
+          test -s runtime_evidence/01_full_gui.png
+          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes.txt
+
+          echo 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' | tee runtime_evidence/result.txt
+
+      - name: Strict runtime gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s runtime_evidence/01_full_gui.png
+          grep -q 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' runtime_evidence/result.txt
+          grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes.txt
+          sha256sum runtime_evidence/01_full_gui.png | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-gui-runtime-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
