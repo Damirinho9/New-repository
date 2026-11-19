@@ -124,7 +124,7 @@ jobs:
           $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
           $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
           $env:PYTHONPATH="$env:GITHUB_WORKSPACE\fullv6;$env:GITHUB_WORKSPACE\blocks_v6"
-          python -u blocks_v6\sweep_remaining.py 2>&1 | Tee-Object -FilePath blocks-out\console.log
+          python -u blocks_v6\sweep_high.py 2>&1 | Tee-Object -FilePath blocks-out\console.log
           $rc=$LASTEXITCODE
           if($rc -ne 0){exit $rc}
 
