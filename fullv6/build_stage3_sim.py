@@ -44,7 +44,8 @@ kp501_flip=os.environ.get("KP501_FLIP","0")=="1"
 vt3_flip=os.environ.get("VT3_FLIP","0")=="1"
 bridge_swap=os.environ.get("BRIDGE_SWAP","0")=="1"
 bridge_mode=os.environ.get("BRIDGE_MODE","dc_bt")
-vd20_swap=os.environ.get("VD20_SWAP","0")=="1"\nphoto_dir=int(os.environ.get("PHOTO_DIR","1"))
+vd20_swap=os.environ.get("VD20_SWAP","0")=="1"
+photo_dir=int(os.environ.get("PHOTO_DIR","1"))
 
 vt1_pins={"D":"sens","S":"t1"} if kp501_flip else {"D":"t1","S":"sens"}
 vt2_pins={"D":"t1","S":"t2"} if kp501_flip else {"D":"t2","S":"t1"}
