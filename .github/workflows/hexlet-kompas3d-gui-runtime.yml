@@ -88,11 +88,21 @@ jobs:
           ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
             | tee runtime_evidence/processes.txt
 
-          import -display :99 -window root runtime_evidence/01_full_gui.png
+          import -display :99 -window root runtime_evidence/01_startup.png
 
-          test -s runtime_evidence/01_full_gui.png
+          # Allow the real GUI to finish startup. At this stage an EULA dialog is
+          # acceptable and expected; closing it is the next acceptance step.
+          sleep 25
+          xdotool search --onlyvisible --name 'КОМПАС|Лицензи|License' \
+            getwindowname %@ 2>/dev/null | tee runtime_evidence/visible-windows-after-startup.txt || true
+          ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep \
+            | tee runtime_evidence/processes-after-startup.txt
+          import -display :99 -window root runtime_evidence/02_full_gui_ready.png
+
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_ready.png
           grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
 
           echo 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' | tee runtime_evidence/result.txt
 
@@ -100,11 +110,13 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          test -s runtime_evidence/01_full_gui.png
+          test -s runtime_evidence/01_startup.png
+          test -s runtime_evidence/02_full_gui_ready.png
           grep -q 'RESULT=PASS_FULL_KOMPAS3D_GUI_RUNTIME' runtime_evidence/result.txt
           grep -Ei 'КОМПАС' runtime_evidence/window-title.txt
-          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes.txt
-          sha256sum runtime_evidence/01_full_gui.png | tee runtime_evidence/sha256.txt
+          grep -Ei 'kompas-v25|kKompas|kompas3d' runtime_evidence/processes-after-startup.txt
+          sha256sum runtime_evidence/01_startup.png runtime_evidence/02_full_gui_ready.png \
+            | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
