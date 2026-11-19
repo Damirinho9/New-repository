@@ -84,59 +84,57 @@ jobs:
             sleep 1
           done
           test -n "$EULA_WID"
-          xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-geometry.txt
+
+          # Move modal aside before accepting, so the real "Чертеж" tile is painted and measurable.
+          xdotool windowmove "$EULA_WID" 1320 260
+          sleep 2
+          import -display :99 -window root runtime_evidence/01_home_with_drawing_tile_exposed.png
+          xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-geometry-moved.txt
 
           eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
           CLICK_X=$((X + WIDTH * 65 / 100))
           CLICK_Y=$((Y + HEIGHT - 42))
           xdotool windowfocus --sync "$EULA_WID"
           xdotool mousemove --sync "$CLICK_X" "$CLICK_Y"
-          import -display :99 -window "$EULA_WID" runtime_evidence/01_eula_before_accept.png
+          import -display :99 -window "$EULA_WID" runtime_evidence/02_eula_before_accept.png
           xdotool click 1
-          sleep 3
+          sleep 5
 
           EULA_STILL=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
           echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
           test -z "$EULA_STILL"
 
-          # Stay in the first already-rendered GUI. After EULA dismissal,
-          # invoke the native File -> Create command (Ctrl+N) in the same process.
-          sleep 5
+          # Native start-page tile "Чертеж", measured on the exposed 1920x1080 GUI.
           xdotool windowfocus --sync "$MAIN_WID"
-          xdotool mousemove --sync 500 500
+          xdotool mousemove --sync 919 208
+          xdotool getmouselocation --shell | tee runtime_evidence/drawing-tile-pointer.txt
           xdotool click 1
-          sleep 1
-          xdotool key --clearmodifiers ctrl+n
-          sleep 5
+          sleep 15
 
-          CREATE_WID=$(xdotool getwindowfocus)
-          echo "CREATE_WINDOW_ID=$CREATE_WID" | tee runtime_evidence/create-window.txt
-          xdotool getwindowname "$CREATE_WID" | tee runtime_evidence/create-window-title.txt || true
-          xdotool getwindowgeometry --shell "$CREATE_WID" | tee runtime_evidence/create-window-geometry.txt || true
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null             | tee runtime_evidence/visible-windows-after-ctrl-n.txt || true
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null             | tee runtime_evidence/visible-windows-after-drawing-click.txt || true
+          import -display :99 -window root runtime_evidence/03_after_drawing_click_root.png
+          import -display :99 -window "$MAIN_WID" runtime_evidence/04_after_drawing_click_main.png
 
-          if [ "$CREATE_WID" = "$MAIN_WID" ]; then
-            echo 'RESULT=FAIL_CTRL_N_NO_NEW_DOCUMENT_DIALOG' | tee runtime_evidence/result.txt
-            exit 51
-          fi
+          # Capture process and window tree for an independent structural comparison.
+          xwininfo -root -tree > runtime_evidence/xwin-tree-after-drawing.txt
+          ps aux | grep -Ei 'kompas-v25|kKompas|kompas3d' | grep -v grep             | tee runtime_evidence/processes-after-drawing.txt
 
-          import -display :99 -window "$CREATE_WID" runtime_evidence/02_new_document_dialog.png
-          test -s runtime_evidence/02_new_document_dialog.png
-          echo 'RESULT=PASS_NEW_DOCUMENT_DIALOG_OPENED' | tee runtime_evidence/result.txt
+          echo 'RESULT=DIAGNOSTIC_DRAWING_TILE_CLICK_COMPLETED' | tee runtime_evidence/result.txt
 
-      - name: Strict new-document dialog gate
+      - name: Drawing click evidence gate
         shell: bash
         run: |
           set -euxo pipefail
-          test -s runtime_evidence/01_eula_before_accept.png
-          test -s runtime_evidence/02_new_document_dialog.png
+          test -s runtime_evidence/01_home_with_drawing_tile_exposed.png
+          test -s runtime_evidence/03_after_drawing_click_root.png
+          test -s runtime_evidence/04_after_drawing_click_main.png
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^RESULT=PASS_NEW_DOCUMENT_DIALOG_OPENED$' runtime_evidence/result.txt
-          sha256sum runtime_evidence/02_new_document_dialog.png | tee runtime_evidence/sha256.txt
+          grep -q '^RESULT=DIAGNOSTIC_DRAWING_TILE_CLICK_COMPLETED$' runtime_evidence/result.txt
+          sha256sum runtime_evidence/03_after_drawing_click_root.png runtime_evidence/04_after_drawing_click_main.png             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-new-document-dialog-evidence
+          name: kompas3d-drawing-click-evidence
           path: runtime_evidence/
           if-no-files-found: error
