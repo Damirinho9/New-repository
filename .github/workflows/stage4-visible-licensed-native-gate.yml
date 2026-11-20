@@ -1,0 +1,281 @@
+name: KOMPAS Stage 4 licensed invisible-to-visible native gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-visible-licensed-native-gate.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  native-gate:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then
+            sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+          fi
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+
+      - name: Install controller prerequisites only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            xvfb xauth dbus procps python3 file \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
+            libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
+            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
+
+      - name: Run licensed invisible to visible native gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat >/tmp/visible_gate.py <<'PY'
+          import math, os, pathlib, sys, time, traceback
+          import ksapi
+          from constants import constants as c
+
+          outdir=pathlib.Path(os.environ["GITHUB_WORKSPACE"])/"result/visible-native"
+          outdir.mkdir(parents=True,exist_ok=True)
+          logp=outdir/"gate.log"
+
+          def log(s):
+              s=str(s)
+              print(s,flush=True)
+              with logp.open("a",encoding="utf-8") as f:
+                  f.write(s+"\n")
+
+          def req(v,m):
+              if not v:
+                  raise RuntimeError(m)
+              return v
+
+          def pump(app,n=20,delay=0.10):
+              for _ in range(n):
+                  try: app.PumpWaitingMessages()
+                  except BaseException: pass
+                  time.sleep(delay)
+
+          def rectangle(fragment):
+              vm=req(fragment.GetViewsAndLayersManager(),"fragment vm")
+              views=req(vm.GetViews(),"fragment views")
+              view=req(views.GetActiveView(),"fragment active view")
+              dc=req(ksapi.IDrawingContainer(view),"fragment drawing container")
+              lines=req(dc.GetLineSegments(),"fragment lines")
+              for x1,y1,x2,y2 in ((-6,-4,6,-4),(6,-4,6,4),(6,4,-6,4),(-6,4,-6,-4)):
+                  s=req(lines.Add(),"rectangle line add")
+                  s.SetX1(x1); s.SetY1(y1); s.SetX2(x2); s.SetY2(y2); s.SetStyle(c.ksCSNormal)
+                  req(s.Update(),"rectangle line update")
+
+          app=None
+          try:
+              BIN="/opt/ascon/kompas3d-v25/Bin"
+              ksapi.SetKompasPath(BIN)
+              log("BOOTSTRAP=OpenKompasInvisible")
+              app=req(ksapi.OpenKompasInvisible(),"OpenKompasInvisible returned null")
+              log("APP=1")
+              lm=req(app.GetApplicationLicenseManager(),"license manager")
+              l2=bool(lm.IsKompasModuleActive(c.ksKompasModule2D))
+              l3=bool(lm.IsKompasModuleActive(c.ksKompasModule3D))
+              log("LICENSE_2D_BEFORE="+str(int(l2)))
+              log("LICENSE_3D_BEFORE="+str(int(l3)))
+              req(l2 and l3,"licensed invisible backend not active")
+
+              try: log("VISIBLE_BEFORE="+str(int(bool(app.IsVisible()))))
+              except BaseException as e: log("VISIBLE_BEFORE_EXCEPTION="+repr(e))
+              try: log("MAIN_WINDOW_BEFORE="+str(app.GetMainWindowHandle()))
+              except BaseException as e: log("MAIN_WINDOW_BEFORE_EXCEPTION="+repr(e))
+
+              app.SetVisible(True)
+              pump(app,40,0.10)
+
+              try: log("VISIBLE_AFTER="+str(int(bool(app.IsVisible()))))
+              except BaseException as e: log("VISIBLE_AFTER_EXCEPTION="+repr(e))
+              try: log("MAIN_WINDOW_AFTER="+str(app.GetMainWindowHandle()))
+              except BaseException as e: log("MAIN_WINDOW_AFTER_EXCEPTION="+repr(e))
+
+              l2a=bool(lm.IsKompasModuleActive(c.ksKompasModule2D))
+              l3a=bool(lm.IsKompasModuleActive(c.ksKompasModule3D))
+              log("LICENSE_2D_AFTER="+str(int(l2a)))
+              log("LICENSE_3D_AFTER="+str(int(l3a)))
+              req(l2a and l3a,"license lost after SetVisible")
+
+              docs=req(app.GetDocuments(),"documents")
+              log("DOC_COUNT_BEFORE="+str(docs.GetCount()))
+
+              # 2D - create only after licensed backend has been made visible.
+              f=docs.AddWithDefaultSettings(c.ksDocumentFragment,True)
+              log("FRAGMENT_ADD_DEFAULT_AFTER_VISIBLE="+str(int(bool(f))))
+              req(f,"fragment add after SetVisible")
+              d2=req(ksapi.IKompasDocument2D(f),"fragment cast")
+              d2.SetParametricMode(True)
+              vm=req(d2.GetViewsAndLayersManager(),"2d vm")
+              views=req(vm.GetViews(),"2d views")
+              log("FRAGMENT_VIEWS_COUNT="+str(views.GetCount()))
+              view=req(views.GetActiveView(),"2d active view")
+              dc=req(ksapi.IDrawingContainer(view),"2d drawing container")
+              lines=req(dc.GetLineSegments(),"2d lines")
+              before=int(lines.GetCount())
+              s=req(lines.Add(),"2d line add")
+              s.SetX1(0.0); s.SetY1(0.0); s.SetX2(50.0); s.SetY2(0.0); s.SetStyle(c.ksCSNormal)
+              req(s.Update(),"2d line update")
+              after=int(lines.GetCount())
+              log("FRAGMENT_LINES="+str(before)+"->"+str(after))
+              req(after>before,"2d geometry not inserted")
+              p2="/tmp/Stage4_VisibleLicensed_2D.frw"
+              pathlib.Path(p2).unlink(missing_ok=True)
+              req(f.SaveAs(p2),"2d SaveAs")
+              log("FRAGMENT_SAVE_PASS=1")
+              req(f.Close(c.kdDoNotSaveChanges),"2d close")
+              log("FRAGMENT_CLOSE_PASS=1")
+
+              # 3D - actual native sketch + extrusion.
+              p=docs.AddWithDefaultSettings(c.ksDocumentPart,True)
+              log("PART_ADD_DEFAULT_AFTER_VISIBLE="+str(int(bool(p))))
+              req(p,"part add after SetVisible")
+              d3=req(ksapi.IKompasDocument3D(p),"part cast")
+              top=req(d3.GetTopPart(),"3d top part")
+              log("TOP_PART=1")
+              mc=req(top.GetModelContainer(),"model container")
+              sketches=req(mc.GetSketchs(),"sketch collection")
+              sk=req(sketches.Add(),"sketch add")
+              plane=req(top.GetDefaultObject(c.o3d_planeXOY),"XOY plane")
+              sk.SetPlane(plane)
+              frag=req(sk.BeginEdit(False),"sketch BeginEdit")
+              rectangle(frag)
+              req(sk.EndEdit(),"sketch EndEdit")
+              req(sk.Update(),"sketch update")
+              exts=req(mc.GetExtrusions(),"extrusions")
+              ext=req(exts.Add(c.o3d_baseExtrusion),"base extrusion")
+              ext.SetProfiles([ksapi.IModelObject(sk)])
+              req(ext.SetSideParameters(True,c.etBlind,10.0,0.0,False,ksapi.IModelObject()),"extrusion side params")
+              req(ext.Update(),"extrusion update")
+              req(top.RebuildModel(False),"top rebuild")
+              req(d3.RebuildDocument(),"document rebuild")
+              mass=float(top.GetMass())
+              log("MASS_BEFORE_SAVE="+repr(mass))
+              req(math.isfinite(mass) and mass>0,"3d mass is not positive")
+              p3="/tmp/Stage4_VisibleLicensed_3D.m3d"
+              pathlib.Path(p3).unlink(missing_ok=True)
+              req(p.SaveAs(p3),"3d SaveAs")
+              log("PART_SAVE_PASS=1")
+              req(p.Close(c.kdDoNotSaveChanges),"3d close")
+              log("PART_CLOSE_PASS=1")
+
+              # Strict reopen of both native files in the same licensed GUI-backed session.
+              rf=req(docs.Open(p2,True,False),"2d reopen")
+              rp=req(docs.Open(p3,True,False),"3d reopen")
+              rd2=req(ksapi.IKompasDocument2D(rf),"reopen 2d cast")
+              rvm=req(rd2.GetViewsAndLayersManager(),"reopen 2d vm")
+              rviews=req(rvm.GetViews(),"reopen 2d views")
+              rview=req(rviews.GetActiveView(),"reopen 2d active view")
+              rdc=req(ksapi.IDrawingContainer(rview),"reopen 2d dc")
+              rlines=req(rdc.GetLineSegments(),"reopen 2d lines")
+              log("REOPEN_2D_LINE_COUNT="+str(rlines.GetCount()))
+              req(rlines.GetCount()>=1,"reopen 2d geometry absent")
+
+              rd3=req(ksapi.IKompasDocument3D(rp),"reopen 3d cast")
+              rtop=req(rd3.GetTopPart(),"reopen top part")
+              rmc=req(rtop.GetModelContainer(),"reopen model container")
+              req(rtop.RebuildModel(False),"reopen top rebuild")
+              req(rd3.RebuildDocument(),"reopen doc rebuild")
+              rmass=float(rtop.GetMass())
+              rexts=rmc.GetExtrusions()
+              ec=int(rexts.GetCount()) if rexts else -1
+              log("REOPEN_3D_MASS="+repr(rmass))
+              log("REOPEN_3D_EXTRUSIONS="+str(ec))
+              req(math.isfinite(rmass) and rmass>0 and ec>=1,"reopen 3d validation failed")
+
+              req(rf.Save(),"reopen 2d save")
+              req(rp.Save(),"reopen 3d save")
+              req(rf.Close(c.kdDoNotSaveChanges),"reopen 2d close")
+              req(rp.Close(c.kdDoNotSaveChanges),"reopen 3d close")
+
+              for src in (p2,p3):
+                  q=pathlib.Path(src)
+                  dst=outdir/q.name
+                  dst.write_bytes(q.read_bytes())
+                  log("OUTPUT="+dst.name+" bytes="+str(dst.stat().st_size))
+
+              log("RESULT=PASS_LICENSED_INVISIBLE_TO_VISIBLE_NATIVE_2D_3D")
+          except BaseException as e:
+              log("EXCEPTION="+type(e).__name__+":"+repr(e))
+              traceback.print_exc()
+              log("RESULT=FAIL_LICENSED_INVISIBLE_TO_VISIBLE_NATIVE_2D_3D")
+              sys.exit(2)
+          finally:
+              try:
+                  if app: app.Quit()
+              except BaseException as e:
+                  log("QUIT_EXCEPTION="+repr(e))
+          PY
+
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          export HOME="$RUNNER_TEMP/visible-native-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25" result/visible-native
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+          set +e
+          timeout 180s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- python3 -u /tmp/visible_gate.py \
+            >result/visible-native/stdout.txt 2>result/visible-native/stderr.txt
+          RC=$?
+          set -e
+          cat result/visible-native/stdout.txt || true
+          cat result/visible-native/stderr.txt || true
+          cat result/visible-native/gate.log || true
+          ps -eo pid,ppid,comm,args | grep -E 'kKompas|ksinvisible|python3|dbus' | tee result/visible-native/processes.txt || true
+
+          grep -qx 'RESULT=PASS_LICENSED_INVISIBLE_TO_VISIBLE_NATIVE_2D_3D' result/visible-native/gate.log
+          test "$RC" -eq 0
+          test -s result/visible-native/Stage4_VisibleLicensed_2D.frw
+          test -s result/visible-native/Stage4_VisibleLicensed_3D.m3d
+          sha256sum result/visible-native/Stage4_VisibleLicensed_2D.frw result/visible-native/Stage4_VisibleLicensed_3D.m3d \
+            | tee result/visible-native/SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-visible-licensed-native-gate
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/visible-native/**
