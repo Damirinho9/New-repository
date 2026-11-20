@@ -284,7 +284,7 @@ jobs:
           timeout 140s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
             dbus-run-session -- env \
               PYTHONPATH="$BIN" \
-              LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD" \
+              LD_LIBRARY_PATH="$BIN" \
               HOME="$HOST_HOME" \
               XDG_CONFIG_HOME="$HOST_XDG" \
               QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8 \
