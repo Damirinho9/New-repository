@@ -81,13 +81,587 @@ jobs:
           xdotool click 1
           sleep 3
 
-          EULA_AFTER=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+          EULA_AFTER=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ          xdotool mousemove --window "$MAIN" --sync 920 203
+          xdotool click --repeat 2 --delay 180 1
+          sleep 12
+          import -display :99 -window root runtime_evidence/01_real_drawing_open.png
+
+          # Hard proof of real Drawing creation: KOMPAS shows its license-manager
+          # warning only after the actual Drawing document has been opened.
+          LIC=""
+          for i in $(seq 1 30); do
+            LIC=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+            [ -n "$LIC" ] && break
+            sleep 1
+          done
+          echo "LICENSE_DIALOG=$LIC" | tee runtime_evidence/license-dialog.txt
+          if [ -z "$LIC" ]; then
+            echo 'RESULT=FAIL_REAL_DRAWING_LICENSE_DIALOG_NOT_FOUND' | tee runtime_evidence/result.txt
+            import -display :99 -window root runtime_evidence/01_real_drawing_FAILED.png || true
+            exit 52
+          fi
+          if [ -n "$LIC" ]; then
+            eval "$(xdotool getwindowgeometry --shell "$LIC")"
+            CLOSE_X=$((X + WIDTH * 87 / 100))
+            CLOSE_Y=$((Y + HEIGHT - 24))
+            printf 'X=%s\nY=%s\nWIDTH=%s\nHEIGHT=%s\nCLOSE_X=%s\nCLOSE_Y=%s\n' \
+              "$X" "$Y" "$WIDTH" "$HEIGHT" "$CLOSE_X" "$CLOSE_Y" \
+              | tee runtime_evidence/license-dialog-geometry.txt
+            xdotool windowfocus --sync "$LIC"
+            xdotool mousemove --sync "$CLOSE_X" "$CLOSE_Y"
+            xdotool click 1
+            sleep 2
+          fi
+
+          LIC_AFTER=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+          echo "LICENSE_DIALOG_AFTER=$LIC_AFTER" | tee runtime_evidence/license-dialog-after.txt
+          test -z "$LIC_AFTER"
+
+          import -display :99 -window root runtime_evidence/02_real_drawing_clean.png
+
+          # Probe API7 on the already-created real GUI drawing. This is optional.
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 - <<'PY' | tee runtime_evidence/api7-probe.txt
+          import ksapi
+          app = ksapi.GetKompas()
+          print("GETKOMPAS=", app)
+          if app is None:
+              print("API7_GUI_ATTACH=UNAVAILABLE")
+          else:
+              print("API7_GUI_ATTACH=AVAILABLE")
+              try:
+                  print("APP_NAME=", app.GetApplicationName(True))
+                  print("BUILD=", app.GetBuildNumber())
+                  docs = app.GetDocuments()
+                  print("DOCS=", docs)
+                  try:
+                      print("DOCS_COUNT=", docs.GetCount())
+                  except Exception as exc:
+                      print("DOCS_COUNT_ERROR=", type(exc).__name__, str(exc))
+              except Exception as exc:
+                  print("API7_PROBE_ERROR=", type(exc).__name__, str(exc))
+          PY
+
+          # GUI fallback: use the native command search in the active drawing.
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key alt+slash
+          sleep 2
+          printf 'Надпись' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 3
+          import -display :99 -window root runtime_evidence/03_annotation_command_search.png
+          xdotool key Return
+          sleep 3
+
+          # Place text in the central blank part of the A4 sheet.
+          xdotool mousemove --window "$MAIN" --sync 1040 510
+          xdotool click 1
+          sleep 2
+          printf 'Привет, Хекслет!' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 2
+          xdotool key ctrl+Return || true
+          xdotool key Escape || true
+          sleep 5
+
+          import -display :99 -window root runtime_evidence/04_text_on_real_drawing.png
+
+          # Save probe. Do not claim save success unless a file is actually created.
+          TARGET="$GITHUB_WORKSPACE/runtime_evidence/Hexlet_KOMPAS3D.cdw"
+          xdotool key ctrl+s
+          sleep 4
+          SAVE_WID=$(xdotool search --onlyvisible --name 'Сохран|Save|Сохранение' 2>/dev/null | tail -1 || true)
+          echo "SAVE_WID=$SAVE_WID" | tee runtime_evidence/save-dialog.txt
+
+          if [ -n "$SAVE_WID" ]; then
+            xdotool windowfocus --sync "$SAVE_WID"
+            xdotool key ctrl+a || true
+            xdotool type --delay 2 "$TARGET" || true
+            xdotool key Return || true
+            sleep 8
+          fi
+
+          if [ -s "$TARGET" ]; then
+            sha256sum "$TARGET" | tee runtime_evidence/cdw-sha256.txt
+            echo 'SAVE_RESULT=PASS_NATIVE_CDW_SAVED' | tee runtime_evidence/save-result.txt
+          else
+            echo 'SAVE_RESULT=NOT_CONFIRMED' | tee runtime_evidence/save-result.txt
+          fi
+
+          echo 'RESULT=PASS_REAL_DRAWING_TEXT_GUI_EXECUTED' | tee runtime_evidence/result.txt
+
+      - name: Strict execution gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
+          grep -q '^LICENSE_DIALOG_AFTER=
+          test -s runtime_evidence/02_real_drawing_clean.png
+          test -s runtime_evidence/03_annotation_command_search.png
+          test -s runtime_evidence/04_text_on_real_drawing.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-text-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
           echo "EULA_AFTER=$EULA_AFTER" | tee runtime_evidence/eula-after.txt
           test -z "$EULA_AFTER"
 
+          # Proven repaint sequence from the successful real-Drawing run 44745479436.
           xdotool windowactivate --sync "$MAIN"
           xdotool windowfocus --sync "$MAIN"
+          xdotool key --window "$MAIN" F5 || true
+          sleep 3
+          import -display :99 -window root runtime_evidence/00_home_after_eula_repaint.png
+
+          # Proven native Drawing tile route from run 44745479436.
+          xdotool mousemove --window "$MAIN" --sync 920 203
+          xdotool click --repeat 2 --delay 180 1
+          sleep 12
+          import -display :99 -window root runtime_evidence/01_real_drawing_open.png
+
+          # KOMPAS opens the real drawing even when the license manager warns that
+          # some functionality is limited. Close only that warning dialog.
+          LIC=""
+          for i in $(seq 1 20); do
+            LIC=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+            [ -n "$LIC" ] && break
+            sleep 1
+          done
+          echo "LICENSE_DIALOG=$LIC" | tee runtime_evidence/license-dialog.txt
+          if [ -n "$LIC" ]; then
+            eval "$(xdotool getwindowgeometry --shell "$LIC")"
+            CLOSE_X=$((X + WIDTH * 87 / 100))
+            CLOSE_Y=$((Y + HEIGHT - 24))
+            printf 'X=%s\nY=%s\nWIDTH=%s\nHEIGHT=%s\nCLOSE_X=%s\nCLOSE_Y=%s\n' \
+              "$X" "$Y" "$WIDTH" "$HEIGHT" "$CLOSE_X" "$CLOSE_Y" \
+              | tee runtime_evidence/license-dialog-geometry.txt
+            xdotool windowfocus --sync "$LIC"
+            xdotool mousemove --sync "$CLOSE_X" "$CLOSE_Y"
+            xdotool click 1
+            sleep 2
+          fi
+
+          LIC_AFTER=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+          echo "LICENSE_DIALOG_AFTER=$LIC_AFTER" | tee runtime_evidence/license-dialog-after.txt
+          test -z "$LIC_AFTER"
+
+          import -display :99 -window root runtime_evidence/02_real_drawing_clean.png
+
+          # Probe API7 on the already-created real GUI drawing. This is optional.
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 - <<'PY' | tee runtime_evidence/api7-probe.txt
+          import ksapi
+          app = ksapi.GetKompas()
+          print("GETKOMPAS=", app)
+          if app is None:
+              print("API7_GUI_ATTACH=UNAVAILABLE")
+          else:
+              print("API7_GUI_ATTACH=AVAILABLE")
+              try:
+                  print("APP_NAME=", app.GetApplicationName(True))
+                  print("BUILD=", app.GetBuildNumber())
+                  docs = app.GetDocuments()
+                  print("DOCS=", docs)
+                  try:
+                      print("DOCS_COUNT=", docs.GetCount())
+                  except Exception as exc:
+                      print("DOCS_COUNT_ERROR=", type(exc).__name__, str(exc))
+              except Exception as exc:
+                  print("API7_PROBE_ERROR=", type(exc).__name__, str(exc))
+          PY
+
+          # GUI fallback: use the native command search in the active drawing.
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key alt+slash
           sleep 2
+          printf 'Надпись' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 3
+          import -display :99 -window root runtime_evidence/03_annotation_command_search.png
+          xdotool key Return
+          sleep 3
+
+          # Place text in the central blank part of the A4 sheet.
+          xdotool mousemove --window "$MAIN" --sync 1040 510
+          xdotool click 1
+          sleep 2
+          printf 'Привет, Хекслет!' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 2
+          xdotool key ctrl+Return || true
+          xdotool key Escape || true
+          sleep 5
+
+          import -display :99 -window root runtime_evidence/04_text_on_real_drawing.png
+
+          # Save probe. Do not claim save success unless a file is actually created.
+          TARGET="$GITHUB_WORKSPACE/runtime_evidence/Hexlet_KOMPAS3D.cdw"
+          xdotool key ctrl+s
+          sleep 4
+          SAVE_WID=$(xdotool search --onlyvisible --name 'Сохран|Save|Сохранение' 2>/dev/null | tail -1 || true)
+          echo "SAVE_WID=$SAVE_WID" | tee runtime_evidence/save-dialog.txt
+
+          if [ -n "$SAVE_WID" ]; then
+            xdotool windowfocus --sync "$SAVE_WID"
+            xdotool key ctrl+a || true
+            xdotool type --delay 2 "$TARGET" || true
+            xdotool key Return || true
+            sleep 8
+          fi
+
+          if [ -s "$TARGET" ]; then
+            sha256sum "$TARGET" | tee runtime_evidence/cdw-sha256.txt
+            echo 'SAVE_RESULT=PASS_NATIVE_CDW_SAVED' | tee runtime_evidence/save-result.txt
+          else
+            echo 'SAVE_RESULT=NOT_CONFIRMED' | tee runtime_evidence/save-result.txt
+          fi
+
+          echo 'RESULT=PASS_REAL_DRAWING_TEXT_GUI_EXECUTED' | tee runtime_evidence/result.txt
+
+      - name: Strict execution gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
+          grep -q '^LICENSE_DIALOG_AFTER=$' runtime_evidence/license-dialog-after.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_TEXT_GUI_EXECUTED$' runtime_evidence/result.txt
+          test -s runtime_evidence/01_real_drawing_open.png
+          test -s runtime_evidence/02_real_drawing_clean.png
+          test -s runtime_evidence/03_annotation_command_search.png
+          test -s runtime_evidence/04_text_on_real_drawing.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-text-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/license-dialog-after.txt
+          grep -Eq '^LICENSE_DIALOG=[0-9]+
+          test -s runtime_evidence/02_real_drawing_clean.png
+          test -s runtime_evidence/03_annotation_command_search.png
+          test -s runtime_evidence/04_text_on_real_drawing.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-text-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "EULA_AFTER=$EULA_AFTER" | tee runtime_evidence/eula-after.txt
+          test -z "$EULA_AFTER"
+
+          # Proven repaint sequence from the successful real-Drawing run 44745479436.
+          xdotool windowactivate --sync "$MAIN"
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key --window "$MAIN" F5 || true
+          sleep 3
+          import -display :99 -window root runtime_evidence/00_home_after_eula_repaint.png
+
+          # Proven native Drawing tile route from run 44745479436.
+          xdotool mousemove --window "$MAIN" --sync 920 203
+          xdotool click --repeat 2 --delay 180 1
+          sleep 12
+          import -display :99 -window root runtime_evidence/01_real_drawing_open.png
+
+          # KOMPAS opens the real drawing even when the license manager warns that
+          # some functionality is limited. Close only that warning dialog.
+          LIC=""
+          for i in $(seq 1 20); do
+            LIC=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+            [ -n "$LIC" ] && break
+            sleep 1
+          done
+          echo "LICENSE_DIALOG=$LIC" | tee runtime_evidence/license-dialog.txt
+          if [ -n "$LIC" ]; then
+            eval "$(xdotool getwindowgeometry --shell "$LIC")"
+            CLOSE_X=$((X + WIDTH * 87 / 100))
+            CLOSE_Y=$((Y + HEIGHT - 24))
+            printf 'X=%s\nY=%s\nWIDTH=%s\nHEIGHT=%s\nCLOSE_X=%s\nCLOSE_Y=%s\n' \
+              "$X" "$Y" "$WIDTH" "$HEIGHT" "$CLOSE_X" "$CLOSE_Y" \
+              | tee runtime_evidence/license-dialog-geometry.txt
+            xdotool windowfocus --sync "$LIC"
+            xdotool mousemove --sync "$CLOSE_X" "$CLOSE_Y"
+            xdotool click 1
+            sleep 2
+          fi
+
+          LIC_AFTER=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+          echo "LICENSE_DIALOG_AFTER=$LIC_AFTER" | tee runtime_evidence/license-dialog-after.txt
+          test -z "$LIC_AFTER"
+
+          import -display :99 -window root runtime_evidence/02_real_drawing_clean.png
+
+          # Probe API7 on the already-created real GUI drawing. This is optional.
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 - <<'PY' | tee runtime_evidence/api7-probe.txt
+          import ksapi
+          app = ksapi.GetKompas()
+          print("GETKOMPAS=", app)
+          if app is None:
+              print("API7_GUI_ATTACH=UNAVAILABLE")
+          else:
+              print("API7_GUI_ATTACH=AVAILABLE")
+              try:
+                  print("APP_NAME=", app.GetApplicationName(True))
+                  print("BUILD=", app.GetBuildNumber())
+                  docs = app.GetDocuments()
+                  print("DOCS=", docs)
+                  try:
+                      print("DOCS_COUNT=", docs.GetCount())
+                  except Exception as exc:
+                      print("DOCS_COUNT_ERROR=", type(exc).__name__, str(exc))
+              except Exception as exc:
+                  print("API7_PROBE_ERROR=", type(exc).__name__, str(exc))
+          PY
+
+          # GUI fallback: use the native command search in the active drawing.
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key alt+slash
+          sleep 2
+          printf 'Надпись' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 3
+          import -display :99 -window root runtime_evidence/03_annotation_command_search.png
+          xdotool key Return
+          sleep 3
+
+          # Place text in the central blank part of the A4 sheet.
+          xdotool mousemove --window "$MAIN" --sync 1040 510
+          xdotool click 1
+          sleep 2
+          printf 'Привет, Хекслет!' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 2
+          xdotool key ctrl+Return || true
+          xdotool key Escape || true
+          sleep 5
+
+          import -display :99 -window root runtime_evidence/04_text_on_real_drawing.png
+
+          # Save probe. Do not claim save success unless a file is actually created.
+          TARGET="$GITHUB_WORKSPACE/runtime_evidence/Hexlet_KOMPAS3D.cdw"
+          xdotool key ctrl+s
+          sleep 4
+          SAVE_WID=$(xdotool search --onlyvisible --name 'Сохран|Save|Сохранение' 2>/dev/null | tail -1 || true)
+          echo "SAVE_WID=$SAVE_WID" | tee runtime_evidence/save-dialog.txt
+
+          if [ -n "$SAVE_WID" ]; then
+            xdotool windowfocus --sync "$SAVE_WID"
+            xdotool key ctrl+a || true
+            xdotool type --delay 2 "$TARGET" || true
+            xdotool key Return || true
+            sleep 8
+          fi
+
+          if [ -s "$TARGET" ]; then
+            sha256sum "$TARGET" | tee runtime_evidence/cdw-sha256.txt
+            echo 'SAVE_RESULT=PASS_NATIVE_CDW_SAVED' | tee runtime_evidence/save-result.txt
+          else
+            echo 'SAVE_RESULT=NOT_CONFIRMED' | tee runtime_evidence/save-result.txt
+          fi
+
+          echo 'RESULT=PASS_REAL_DRAWING_TEXT_GUI_EXECUTED' | tee runtime_evidence/result.txt
+
+      - name: Strict execution gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
+          grep -q '^LICENSE_DIALOG_AFTER=$' runtime_evidence/license-dialog-after.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_TEXT_GUI_EXECUTED$' runtime_evidence/result.txt
+          test -s runtime_evidence/01_real_drawing_open.png
+          test -s runtime_evidence/02_real_drawing_clean.png
+          test -s runtime_evidence/03_annotation_command_search.png
+          test -s runtime_evidence/04_text_on_real_drawing.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-text-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/license-dialog.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_TEXT_GUI_EXECUTED
+          test -s runtime_evidence/02_real_drawing_clean.png
+          test -s runtime_evidence/03_annotation_command_search.png
+          test -s runtime_evidence/04_text_on_real_drawing.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-text-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "EULA_AFTER=$EULA_AFTER" | tee runtime_evidence/eula-after.txt
+          test -z "$EULA_AFTER"
+
+          # Proven repaint sequence from the successful real-Drawing run 44745479436.
+          xdotool windowactivate --sync "$MAIN"
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key --window "$MAIN" F5 || true
+          sleep 3
+          import -display :99 -window root runtime_evidence/00_home_after_eula_repaint.png
+
+          # Proven native Drawing tile route from run 44745479436.
+          xdotool mousemove --window "$MAIN" --sync 920 203
+          xdotool click --repeat 2 --delay 180 1
+          sleep 12
+          import -display :99 -window root runtime_evidence/01_real_drawing_open.png
+
+          # KOMPAS opens the real drawing even when the license manager warns that
+          # some functionality is limited. Close only that warning dialog.
+          LIC=""
+          for i in $(seq 1 20); do
+            LIC=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+            [ -n "$LIC" ] && break
+            sleep 1
+          done
+          echo "LICENSE_DIALOG=$LIC" | tee runtime_evidence/license-dialog.txt
+          if [ -n "$LIC" ]; then
+            eval "$(xdotool getwindowgeometry --shell "$LIC")"
+            CLOSE_X=$((X + WIDTH * 87 / 100))
+            CLOSE_Y=$((Y + HEIGHT - 24))
+            printf 'X=%s\nY=%s\nWIDTH=%s\nHEIGHT=%s\nCLOSE_X=%s\nCLOSE_Y=%s\n' \
+              "$X" "$Y" "$WIDTH" "$HEIGHT" "$CLOSE_X" "$CLOSE_Y" \
+              | tee runtime_evidence/license-dialog-geometry.txt
+            xdotool windowfocus --sync "$LIC"
+            xdotool mousemove --sync "$CLOSE_X" "$CLOSE_Y"
+            xdotool click 1
+            sleep 2
+          fi
+
+          LIC_AFTER=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+          echo "LICENSE_DIALOG_AFTER=$LIC_AFTER" | tee runtime_evidence/license-dialog-after.txt
+          test -z "$LIC_AFTER"
+
+          import -display :99 -window root runtime_evidence/02_real_drawing_clean.png
+
+          # Probe API7 on the already-created real GUI drawing. This is optional.
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 - <<'PY' | tee runtime_evidence/api7-probe.txt
+          import ksapi
+          app = ksapi.GetKompas()
+          print("GETKOMPAS=", app)
+          if app is None:
+              print("API7_GUI_ATTACH=UNAVAILABLE")
+          else:
+              print("API7_GUI_ATTACH=AVAILABLE")
+              try:
+                  print("APP_NAME=", app.GetApplicationName(True))
+                  print("BUILD=", app.GetBuildNumber())
+                  docs = app.GetDocuments()
+                  print("DOCS=", docs)
+                  try:
+                      print("DOCS_COUNT=", docs.GetCount())
+                  except Exception as exc:
+                      print("DOCS_COUNT_ERROR=", type(exc).__name__, str(exc))
+              except Exception as exc:
+                  print("API7_PROBE_ERROR=", type(exc).__name__, str(exc))
+          PY
+
+          # GUI fallback: use the native command search in the active drawing.
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key alt+slash
+          sleep 2
+          printf 'Надпись' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 3
+          import -display :99 -window root runtime_evidence/03_annotation_command_search.png
+          xdotool key Return
+          sleep 3
+
+          # Place text in the central blank part of the A4 sheet.
+          xdotool mousemove --window "$MAIN" --sync 1040 510
+          xdotool click 1
+          sleep 2
+          printf 'Привет, Хекслет!' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 2
+          xdotool key ctrl+Return || true
+          xdotool key Escape || true
+          sleep 5
+
+          import -display :99 -window root runtime_evidence/04_text_on_real_drawing.png
+
+          # Save probe. Do not claim save success unless a file is actually created.
+          TARGET="$GITHUB_WORKSPACE/runtime_evidence/Hexlet_KOMPAS3D.cdw"
+          xdotool key ctrl+s
+          sleep 4
+          SAVE_WID=$(xdotool search --onlyvisible --name 'Сохран|Save|Сохранение' 2>/dev/null | tail -1 || true)
+          echo "SAVE_WID=$SAVE_WID" | tee runtime_evidence/save-dialog.txt
+
+          if [ -n "$SAVE_WID" ]; then
+            xdotool windowfocus --sync "$SAVE_WID"
+            xdotool key ctrl+a || true
+            xdotool type --delay 2 "$TARGET" || true
+            xdotool key Return || true
+            sleep 8
+          fi
+
+          if [ -s "$TARGET" ]; then
+            sha256sum "$TARGET" | tee runtime_evidence/cdw-sha256.txt
+            echo 'SAVE_RESULT=PASS_NATIVE_CDW_SAVED' | tee runtime_evidence/save-result.txt
+          else
+            echo 'SAVE_RESULT=NOT_CONFIRMED' | tee runtime_evidence/save-result.txt
+          fi
+
+          echo 'RESULT=PASS_REAL_DRAWING_TEXT_GUI_EXECUTED' | tee runtime_evidence/result.txt
+
+      - name: Strict execution gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
+          grep -q '^LICENSE_DIALOG_AFTER=$' runtime_evidence/license-dialog-after.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_TEXT_GUI_EXECUTED$' runtime_evidence/result.txt
+          test -s runtime_evidence/01_real_drawing_open.png
+          test -s runtime_evidence/02_real_drawing_clean.png
+          test -s runtime_evidence/03_annotation_command_search.png
+          test -s runtime_evidence/04_text_on_real_drawing.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-text-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/result.txt
+          test -s runtime_evidence/00_home_after_eula_repaint.png
+          test -s runtime_evidence/01_real_drawing_open.png
+          test -s runtime_evidence/02_real_drawing_clean.png
+          test -s runtime_evidence/03_annotation_command_search.png
+          test -s runtime_evidence/04_text_on_real_drawing.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-text-evidence
+          path: runtime_evidence/
+          if-no-files-found: error
+ 2>/dev/null | tail -1 || true)
+          echo "EULA_AFTER=$EULA_AFTER" | tee runtime_evidence/eula-after.txt
+          test -z "$EULA_AFTER"
+
+          # Proven repaint sequence from the successful real-Drawing run 44745479436.
+          xdotool windowactivate --sync "$MAIN"
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key --window "$MAIN" F5 || true
+          sleep 3
+          import -display :99 -window root runtime_evidence/00_home_after_eula_repaint.png
 
           # Proven native Drawing tile route from run 44745479436.
           xdotool mousemove --window "$MAIN" --sync 920 203
