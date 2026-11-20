@@ -1,0 +1,42 @@
+name: Hexlet KOMPAS SDK Official Python Samples
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-kompas3d-gui-clean
+    paths:
+      - ".github/workflows/hexlet-kompas-sdk-samples.yml"
+  workflow_dispatch:
+
+jobs:
+  sdk-samples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install official KOMPAS v25 SDK and extract Python samples
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg desktop-file-utils unzip
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+
+          mkdir -p sdk_samples/python
+          unzip -q /opt/ascon/kompas3d-v25/SDK/KsAPICLink/Python/Samples.zip -d sdk_samples/python
+          find sdk_samples/python -type f -maxdepth 5 -print | sort | tee sdk_samples/files.txt
+
+          grep -RInE 'DrawingTexts|GetDrawingTexts|ksDocumentDrawing|DocumentDrawing|Documents.*Add|AddWithDefaultSettings|Привет|Text|Drawing' \
+            sdk_samples/python 2>/dev/null | head -n 2000 | tee sdk_samples/relevant-grep.txt || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-official-python-samples
+          path: sdk_samples/
+          if-no-files-found: error

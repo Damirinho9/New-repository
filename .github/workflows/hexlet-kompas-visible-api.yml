@@ -1,0 +1,153 @@
+name: Hexlet KOMPAS Visible API Native Text
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-kompas3d-gui-clean
+    paths:
+      - "hexlet_7344445/visible_api_drawing_text.py"
+      - ".github/workflows/hexlet-kompas-visible-api.yml"
+  workflow_dispatch:
+
+jobs:
+  visible-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS v25 GUI + SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget ca-certificates gnupg desktop-file-utils \
+            xvfb openbox xdotool imagemagick x11-utils x11-xserver-utils \
+            mesa-utils libgl1-mesa-dri \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          mkdir -p visible_api
+
+      - name: Accept EULA once in real GUI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QT_OPENGL=software
+
+          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
+            >visible_api/xvfb.log 2>&1 &
+          echo $! > visible_api/xvfb.pid
+          sleep 2
+          openbox >visible_api/openbox.log 2>&1 &
+          echo $! > visible_api/openbox.pid
+          sleep 2
+
+          kompas-v25 >visible_api/first-gui.out 2>visible_api/first-gui.err &
+          FIRST=$!
+          echo "$FIRST" > visible_api/first-gui.pid
+
+          MAIN=""
+          for i in $(seq 1 90); do
+            sleep 1
+            MAIN=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$MAIN" ] && break
+          done
+          test -n "$MAIN"
+
+          EULA=""
+          for i in $(seq 1 90); do
+            sleep 1
+            EULA=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+            [ -n "$EULA" ] && break
+          done
+          test -n "$EULA"
+
+          eval "$(xdotool getwindowgeometry --shell "$EULA")"
+          ACCEPT_X=$((X + WIDTH * 65 / 100))
+          ACCEPT_Y=$((Y + HEIGHT - 42))
+          xdotool windowfocus --sync "$EULA"
+          xdotool mousemove --sync "$ACCEPT_X" "$ACCEPT_Y"
+          xdotool click 1
+          sleep 3
+
+          EULA_AFTER=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+          echo "EULA_AFTER=$EULA_AFTER" | tee visible_api/eula-after.txt
+          test -z "$EULA_AFTER"
+          import -display :99 -window root visible_api/01_eula_accepted.png
+
+          xdotool windowclose "$MAIN" || true
+          for i in $(seq 1 20); do
+            sleep 1
+            ! ps -p "$FIRST" >/dev/null 2>&1 && break
+          done
+          kill "$FIRST" 2>/dev/null || true
+          sleep 3
+
+      - name: Launch official visible OpenKompas API and create native text
+        shell: bash
+        env:
+          DISPLAY: :99
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          QT_OPENGL: software
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 hexlet_7344445/visible_api_drawing_text.py >visible_api/api.log 2>&1 &
+          PY_PID=$!
+          echo "$PY_PID" > visible_api/api.pid
+
+          for i in $(seq 1 120); do
+            sleep 1
+            [ -s visible_api/READY ] && break
+            [ -s visible_api/FAIL ] && break
+          done
+
+          cat visible_api/api.log || true
+          if [ -s visible_api/FAIL ]; then
+            cat visible_api/FAIL
+            exit 51
+          fi
+          test -s visible_api/READY
+
+          # Close a possible license warning but keep the real document open.
+          LIC=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+          echo "LICENSE_DIALOG=$LIC" | tee visible_api/license-dialog.txt
+          if [ -n "$LIC" ]; then
+            xdotool windowfocus --sync "$LIC"
+            xdotool key Escape || true
+            sleep 2
+          fi
+
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee visible_api/visible-windows.txt || true
+          import -display :99 -window root visible_api/02_visible_api_text.png
+
+          kill "$PY_PID" 2>/dev/null || true
+
+      - name: Strict visible API gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q '^EULA_AFTER=$' visible_api/eula-after.txt
+          grep -q '^RESULT=PASS_VISIBLE_API_NATIVE_TEXT$' visible_api/api.log
+          test -s visible_api/Hexlet_KOMPAS3D_Privet_Hexlet.cdw
+          test -s visible_api/02_visible_api_text.png
+          file visible_api/Hexlet_KOMPAS3D_Privet_Hexlet.cdw | tee visible_api/file-type.txt
+          sha256sum visible_api/Hexlet_KOMPAS3D_Privet_Hexlet.cdw visible_api/02_visible_api_text.png \
+            | tee visible_api/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas-visible-api-native-text
+          path: visible_api/
+          if-no-files-found: error

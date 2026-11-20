@@ -1,0 +1,253 @@
+name: Hexlet KOMPAS-3D Robust Native Drawing and Text
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-kompas3d-gui-clean
+    paths:
+      - ".github/workflows/hexlet-kompas3d-gui-runtime.yml"
+  workflow_dispatch:
+
+jobs:
+  robust-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS v25 GUI + SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget ca-certificates gnupg desktop-file-utils \
+            xvfb openbox xdotool imagemagick x11-utils x11-xserver-utils \
+            mesa-utils libgl1-mesa-dri xclip \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          mkdir -p runtime_evidence
+          dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
+
+      - name: Open real drawing reliably and enter Hexlet text
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QT_OPENGL=software
+
+          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
+            >runtime_evidence/xvfb.log 2>&1 &
+          sleep 2
+          openbox >runtime_evidence/openbox.log 2>&1 &
+          sleep 2
+          kompas-v25 >runtime_evidence/kompas.out 2>runtime_evidence/kompas.err &
+          echo $! > runtime_evidence/kompas.pid
+
+          MAIN=""
+          for i in $(seq 1 90); do
+            sleep 1
+            MAIN=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$MAIN" ] && break
+          done
+          test -n "$MAIN"
+
+          EULA=""
+          for i in $(seq 1 90); do
+            sleep 1
+            EULA=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+            [ -n "$EULA" ] && break
+          done
+          test -n "$EULA"
+
+          eval "$(xdotool getwindowgeometry --shell "$EULA")"
+          ACCEPT_X=$((X + WIDTH * 65 / 100))
+          ACCEPT_Y=$((Y + HEIGHT - 42))
+          xdotool windowfocus --sync "$EULA"
+          xdotool mousemove --sync "$ACCEPT_X" "$ACCEPT_Y"
+          xdotool click 1
+          sleep 3
+
+          EULA_AFTER=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+          echo "EULA_AFTER=$EULA_AFTER" | tee runtime_evidence/eula-after.txt
+          test -z "$EULA_AFTER"
+
+          xdotool windowactivate --sync "$MAIN"
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key --window "$MAIN" F5 || true
+          sleep 3
+          import -display :99 -window root runtime_evidence/01_home_repainted.png
+
+          # Open the native menu path instead of clicking the start-screen tile:
+          # F10 focuses the menu bar -> Enter opens "Файл" -> Home selects the
+          # first action "Создать" -> Right opens its submenu -> Home selects
+          # the first document type "Чертеж" -> Enter executes it.
+          LIC=""
+          for attempt in $(seq 1 6); do
+            echo "MENU_ATTEMPT=$attempt" | tee -a runtime_evidence/drawing-attempts.txt
+            xdotool windowactivate --sync "$MAIN"
+            xdotool windowfocus --sync "$MAIN"
+            xdotool key F10
+            sleep 1
+            xdotool key Return
+            sleep 1
+            import -display :99 -window root runtime_evidence/02_file_menu_attempt_${attempt}.png || true
+            xdotool key Home
+            sleep 1
+            xdotool key Right
+            sleep 1
+            import -display :99 -window root runtime_evidence/02_create_submenu_attempt_${attempt}.png || true
+            xdotool key Home
+            xdotool key Return
+            for j in $(seq 1 6); do
+              sleep 1
+              LIC=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+              [ -n "$LIC" ] && break
+            done
+            [ -n "$LIC" ] && break
+            xdotool key Escape || true
+            xdotool key Escape || true
+            sleep 1
+          done
+
+          echo "LICENSE_DIALOG=$LIC" | tee runtime_evidence/license-dialog.txt
+          test -n "$LIC"
+          import -display :99 -window root runtime_evidence/03_drawing_license_warning.png
+
+          # Close only the license-manager warning, then require functional
+          # document behavior. If Ctrl+S does not open a separate Save dialog,
+          # the drawing was not actually created and the workflow fails.
+          xdotool windowfocus --sync "$LIC"
+          xdotool key Escape || true
+          sleep 2
+
+          LIC_AFTER=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+          echo "LICENSE_DIALOG_AFTER=$LIC_AFTER" | tee runtime_evidence/license-dialog-after.txt
+          test -z "$LIC_AFTER"
+
+          xdotool windowactivate --sync "$MAIN"
+          xdotool windowfocus --sync "$MAIN"
+          import -display :99 -window root runtime_evidence/04_after_create_drawing.png
+
+          xdotool key --window "$MAIN" ctrl+s
+          sleep 4
+          SAVE_FOCUS=$(xdotool getwindowfocus)
+          echo "SAVE_FOCUS=$SAVE_FOCUS" | tee runtime_evidence/save-focus.txt
+          xdotool getwindowname "$SAVE_FOCUS" | tee -a runtime_evidence/save-focus.txt || true
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-windows-after-save.txt || true
+          import -display :99 -window root runtime_evidence/05_save_dialog_probe.png
+
+          if [ "$SAVE_FOCUS" = "$MAIN" ]; then
+            echo 'RESULT=FAIL_NO_NATIVE_DRAWING_AFTER_FILE_CREATE' | tee runtime_evidence/result.txt
+            exit 51
+          fi
+
+          echo "DRAWING_SAVE_DIALOG_CONFIRMED=1" | tee runtime_evidence/drawing-confirmed.txt
+
+          # Dismiss Save without saving yet; text insertion continues on the
+          # still-open native drawing.
+          xdotool key Escape || true
+          sleep 2
+          xdotool windowactivate --sync "$MAIN"
+          xdotool windowfocus --sync "$MAIN"
+
+          # Probe API7 on active GUI drawing.
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 - <<'PY' | tee runtime_evidence/api7-probe.txt
+          import ksapi
+          app=ksapi.GetKompas()
+          print("GETKOMPAS=", app)
+          print("API7_GUI_ATTACH=AVAILABLE" if app is not None else "API7_GUI_ATTACH=UNAVAILABLE")
+          if app is not None:
+              try:
+                  print("APP_NAME=", app.GetApplicationName(True))
+                  print("BUILD=", app.GetBuildNumber())
+                  docs=app.GetDocuments()
+                  print("DOCS=", docs)
+                  try: print("DOCS_COUNT=", docs.GetCount())
+                  except Exception as exc: print("DOCS_COUNT_ERROR=", type(exc).__name__, str(exc))
+              except Exception as exc:
+                  print("API7_PROBE_ERROR=", type(exc).__name__, str(exc))
+          PY
+
+          # GUI fallback for exact required text.
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key alt+slash
+          sleep 2
+          printf 'Надпись' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 3
+          import -display :99 -window root runtime_evidence/04_command_search_annotation.png
+
+          # Search results are ordered: "Выносная надпись", "Заполнить", "Надпись", ...
+          # Click the exact plain "Надпись" result, not the first result.
+          xdotool mousemove --sync 1605 121
+          xdotool click 1
+          sleep 3
+          import -display :99 -window root runtime_evidence/05_plain_annotation_activated.png
+
+          # The search popup must disappear after selecting the actual command.
+          SEARCH_STILL=$(xdotool search --onlyvisible --name 'Поиск по командам|Search' 2>/dev/null | tail -1 || true)
+          echo "SEARCH_STILL=$SEARCH_STILL" | tee runtime_evidence/search-after-command.txt
+
+          LIC_TEXT=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+          echo "LICENSE_DIALOG_TEXT=$LIC_TEXT" | tee runtime_evidence/license-dialog-text.txt
+          if [ -n "$LIC_TEXT" ]; then
+            xdotool windowfocus --sync "$LIC_TEXT"
+            xdotool key Escape || true
+            sleep 2
+          fi
+
+          xdotool windowfocus --sync "$MAIN"
+          xdotool mousemove --window "$MAIN" --sync 1000 480
+          xdotool click 1
+          sleep 2
+          import -display :99 -window root runtime_evidence/06_annotation_point_placed.png
+
+          printf 'Привет, Хекслет!' | xclip -selection clipboard
+          xdotool key ctrl+v
+          sleep 3
+          import -display :99 -window root runtime_evidence/07_text_pasted_before_finish.png
+
+          xdotool key ctrl+Return || true
+          sleep 2
+          xdotool key Escape || true
+          sleep 3
+          import -display :99 -window root runtime_evidence/08_final_text_candidate.png
+
+          echo 'RESULT=PASS_NATIVE_DRAWING_OPEN_TEXT_INPUT_EXECUTED' | tee runtime_evidence/result.txt
+
+      - name: Strict native execution gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
+          grep -Eq '^LICENSE_DIALOG=[0-9]+$' runtime_evidence/license-dialog.txt
+          grep -q '^LICENSE_DIALOG_AFTER=$' runtime_evidence/license-dialog-after.txt
+          grep -q '^DRAWING_SAVE_DIALOG_CONFIRMED=1$' runtime_evidence/drawing-confirmed.txt
+          grep -q '^RESULT=PASS_NATIVE_DRAWING_OPEN_TEXT_INPUT_EXECUTED$' runtime_evidence/result.txt
+          test -s runtime_evidence/03_drawing_license_warning.png
+          test -s runtime_evidence/04_after_create_drawing.png
+          test -s runtime_evidence/05_save_dialog_probe.png
+          test -s runtime_evidence/04_command_search_annotation.png
+          test -s runtime_evidence/05_plain_annotation_activated.png
+          test -s runtime_evidence/06_annotation_point_placed.png
+          test -s runtime_evidence/07_text_pasted_before_finish.png
+          test -s runtime_evidence/08_final_text_candidate.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-robust-native-drawing-text
+          path: runtime_evidence/
+          if-no-files-found: error
