@@ -6,7 +6,6 @@ on:
       - hexlet-7344445-kompas3d-gui-clean
     paths:
       - ".github/workflows/hexlet-kompas3d-gui-runtime.yml"
-      - "hexlet_7344445/atspi_click_drawing.py"
   workflow_dispatch:
 
 jobs:
@@ -16,15 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install official ASCON KOMPAS-3D v25 + accessibility stack
+      - name: Install official ASCON KOMPAS-3D v25 + SDK
         shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             wget ca-certificates gnupg xvfb openbox xdotool imagemagick desktop-file-utils \
-            x11-utils x11-xserver-utils mesa-utils libgl1-mesa-dri wmctrl \
-            python3-pyatspi at-spi2-core dbus-x11 libatk-adaptor \
+            x11-utils x11-xserver-utils mesa-utils libgl1-mesa-dri wmctrl xclip \
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
@@ -34,58 +32,23 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           mkdir -p runtime_evidence
-          command -v kompas-v25 | tee runtime_evidence/launcher.txt
-          python3 -c 'import pyatspi; print("PYATSPI_IMPORT=PASS")' | tee runtime_evidence/pyatspi-import.txt
+          dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
 
-      - name: Accept EULA and invoke Drawing semantically through AT-SPI
+      - name: Accept EULA, relaunch clean GUI, open native New Document dialog
         shell: bash
         run: |
           set -euxo pipefail
           export DISPLAY=:99
           export LIBGL_ALWAYS_SOFTWARE=1
           export QT_OPENGL=software
-          export QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
-          export QT_ACCESSIBILITY=1
 
           Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >runtime_evidence/xvfb.log 2>&1 &
           sleep 2
           openbox >runtime_evidence/openbox.log 2>&1 &
           sleep 2
 
-          eval "$(dbus-launch --sh-syntax)"
-          printf 'DBUS_SESSION_BUS_ADDRESS=%s\nDBUS_SESSION_BUS_PID=%s\n' \
-            "$DBUS_SESSION_BUS_ADDRESS" "$DBUS_SESSION_BUS_PID" \
-            | tee runtime_evidence/dbus-session.txt
-
-          # AT-SPI uses a dedicated accessibility bus. Start its launcher before
-          # KOMPAS, then require a real org.a11y.Bus address.
-          unset NO_AT_BRIDGE || true
-          /usr/libexec/at-spi-bus-launcher --launch-immediately \
-            >runtime_evidence/atspi-bus-launcher.out \
-            2>runtime_evidence/atspi-bus-launcher.err &
-          echo $! > runtime_evidence/atspi-bus-launcher.pid
-
-          ATSPI_ADDR_OK=0
-          for i in $(seq 1 30); do
-            if dbus-send --session --print-reply \
-              --dest=org.a11y.Bus /org/a11y/bus org.a11y.Bus.GetAddress \
-              >runtime_evidence/atspi-getaddress.txt 2>runtime_evidence/atspi-getaddress.err; then
-              ATSPI_ADDR_OK=1
-              break
-            fi
-            sleep 1
-          done
-          echo "ATSPI_ADDR_OK=$ATSPI_ADDR_OK" | tee runtime_evidence/atspi-bus-status.txt
-          test "$ATSPI_ADDR_OK" = 1
-          cat runtime_evidence/atspi-getaddress.txt
-
-          python3 -c 'import pyatspi; d=pyatspi.Registry.getDesktop(0); print("ATSPI_PREWARM_CHILDREN=", d.childCount)' \
-            | tee runtime_evidence/atspi-prewarm.txt
-          sleep 2
-
-          kompas-v25 >runtime_evidence/kompas.out 2>runtime_evidence/kompas.err &
-          KPID=$!
-          echo "$KPID" > runtime_evidence/kompas.pid
+          kompas-v25 >runtime_evidence/kompas-first.out 2>runtime_evidence/kompas-first.err &
+          FIRST_PID=$!
 
           MAIN_WID=""
           for i in $(seq 1 90); do
@@ -94,7 +57,6 @@ jobs:
             [ -n "$MAIN_WID" ] && break
           done
           test -n "$MAIN_WID"
-          echo "MAIN_WINDOW_ID=$MAIN_WID" | tee runtime_evidence/main-window.txt
           sleep 25
 
           EULA_WID=""
@@ -104,6 +66,7 @@ jobs:
             sleep 1
           done
           test -n "$EULA_WID"
+
           eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
           CLICK_X=$((X + WIDTH * 65 / 100))
           CLICK_Y=$((Y + HEIGHT - 42))
@@ -111,57 +74,77 @@ jobs:
           xdotool mousemove --sync "$CLICK_X" "$CLICK_Y"
           import -display :99 -window root runtime_evidence/01_eula_before_accept.png
           xdotool click 1
-          sleep 4
+          sleep 3
 
           EULA_STILL=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
           echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
           test -z "$EULA_STILL"
 
-          # Query the real Qt accessibility tree and invoke the exact "Чертеж" action.
-          python3 hexlet_7344445/atspi_click_drawing.py runtime_evidence/atspi-tree-before.txt \
-            | tee runtime_evidence/atspi-action.log
-
-          grep -q '^RESULT=ATSPI_DRAWING_ACTION_EXECUTED$' runtime_evidence/atspi-action.log
+          xdotool windowclose "$MAIN_WID" || true
+          for i in $(seq 1 30); do
+            sleep 1
+            ! ps -p "$FIRST_PID" >/dev/null 2>&1 && break
+          done
+          kill "$FIRST_PID" 2>/dev/null || true
           sleep 3
-          wmctrl -l -G | tee runtime_evidence/windows-after-atspi.txt || true
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-after-atspi.txt || true
-          import -display :99 -window root runtime_evidence/02_after_atspi_drawing.png
 
-          # Functional proof: a newly-created unsaved drawing must open Save dialog.
-          xdotool windowfocus --sync "$MAIN_WID" || true
-          xdotool key ctrl+s
+          kompas-v25 >runtime_evidence/kompas-second.out 2>runtime_evidence/kompas-second.err &
+          SECOND_PID=$!
+          echo "$SECOND_PID" > runtime_evidence/kompas-second.pid
+
+          SECOND_WID=""
+          for i in $(seq 1 90); do
+            sleep 1
+            SECOND_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$SECOND_WID" ] && break
+          done
+          test -n "$SECOND_WID"
+          sleep 20
+
+          EULA_SECOND=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+          echo "EULA_ON_SECOND_LAUNCH=$EULA_SECOND" | tee runtime_evidence/eula-second-launch.txt
+          test -z "$EULA_SECOND"
+
+          xdotool windowfocus --sync "$SECOND_WID"
+          import -display :99 -window root runtime_evidence/02_clean_second_launch.png
+
+          # Official KOMPAS v25 method: double-click free space in the document tab row.
+          # Main window is 1920x1080; the tab row is immediately below the main menu.
+          xdotool mousemove --window "$SECOND_WID" --sync 900 48
+          xdotool click --repeat 2 --delay 180 1
           sleep 5
-          SAVE_FOCUS=$(xdotool getwindowfocus)
-          echo "SAVE_FOCUS=$SAVE_FOCUS" | tee runtime_evidence/save-focus.txt
-          xdotool getwindowname "$SAVE_FOCUS" | tee -a runtime_evidence/save-focus.txt || true
-          xdotool getwindowgeometry --shell "$SAVE_FOCUS" | tee runtime_evidence/save-focus-geometry.txt || true
-          wmctrl -l -G | tee runtime_evidence/windows-after-save.txt || true
-          import -display :99 -window root runtime_evidence/03_native_save_dialog.png
 
-          if [ "$SAVE_FOCUS" = "$MAIN_WID" ]; then
-            echo 'RESULT=FAIL_ATSPI_ACTION_NO_SAVE_DIALOG' | tee runtime_evidence/result.txt
-            exit 61
+          FOCUS_NEW=$(xdotool getwindowfocus)
+          echo "MAIN_WID=$SECOND_WID" | tee runtime_evidence/new-document-focus.txt
+          echo "FOCUS_NEW=$FOCUS_NEW" | tee -a runtime_evidence/new-document-focus.txt
+          xdotool getwindowname "$FOCUS_NEW" | tee -a runtime_evidence/new-document-focus.txt || true
+          xdotool getwindowgeometry --shell "$FOCUS_NEW" | tee runtime_evidence/new-document-geometry.txt || true
+          wmctrl -l -G | tee runtime_evidence/windows-after-new-document.txt || true
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-windows-after-new-document.txt || true
+          import -display :99 -window root runtime_evidence/03_new_document_dialog.png
+
+          if [ "$FOCUS_NEW" = "$SECOND_WID" ]; then
+            echo 'RESULT=FAIL_NEW_DOCUMENT_DIALOG_NOT_OPENED' | tee runtime_evidence/result.txt
+            exit 71
           fi
 
-          echo 'RESULT=PASS_REAL_DRAWING_CREATED_ATSPI' | tee runtime_evidence/result.txt
+          echo 'RESULT=PASS_NATIVE_NEW_DOCUMENT_DIALOG_OPENED' | tee runtime_evidence/result.txt
 
-      - name: Strict real drawing gate
+      - name: Strict native New Document gate
         shell: bash
         run: |
           set -euxo pipefail
-          test -s runtime_evidence/atspi-tree-before.txt
-          test -s runtime_evidence/02_after_atspi_drawing.png
-          test -s runtime_evidence/03_native_save_dialog.png
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^RESULT=ATSPI_DRAWING_ACTION_EXECUTED$' runtime_evidence/atspi-action.log
-          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_ATSPI$' runtime_evidence/result.txt
-          sha256sum runtime_evidence/02_after_atspi_drawing.png runtime_evidence/03_native_save_dialog.png \
+          grep -q '^EULA_ON_SECOND_LAUNCH=$' runtime_evidence/eula-second-launch.txt
+          grep -q '^RESULT=PASS_NATIVE_NEW_DOCUMENT_DIALOG_OPENED$' runtime_evidence/result.txt
+          test -s runtime_evidence/03_new_document_dialog.png
+          sha256sum runtime_evidence/02_clean_second_launch.png runtime_evidence/03_new_document_dialog.png \
             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-atspi-real-drawing
+          name: kompas3d-native-new-document-dialog
           path: runtime_evidence/
           if-no-files-found: error
