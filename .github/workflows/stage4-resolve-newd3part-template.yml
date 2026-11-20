@@ -1,0 +1,93 @@
+name: KOMPAS Stage 4 resolve NewD3PartByTemplate native route
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-resolve-newd3part-template.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Resolve template factory and callers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-newd3part-template
+          mkdir -p "$OUT"
+          R="$OUT/map.txt"
+          : > "$R"
+
+          {
+            echo "=== RAW IMPORT NAME ==="
+            nm -D "$BIN/libk3DAppA.so" | grep -E 'NewD3PartByTemplate|NewD3AssemblyByTemplate' || true
+            echo
+            echo "=== OWNER ACROSS RUNTIME ==="
+          } | tee -a "$R"
+
+          raw=$(nm -D "$BIN/libk3DAppA.so" | awk '/NewD3PartByTemplate/{print $2; exit}')
+          echo "RAW=$raw" | tee -a "$R"
+          if [ -n "$raw" ]; then
+            while IFS= read -r f; do
+              h=$(readelf -Ws "$f" 2>/dev/null | grep -F "$raw" || true)
+              if [ -n "$h" ]; then
+                echo "--- $f" | tee -a "$R"
+                echo "$h" | c++filt | tee -a "$R"
+              fi
+            done < <(find "$BIN" /opt/ascon/common -type f 2>/dev/null | sort -u)
+          fi
+
+          {
+            echo
+            echo "=== TEMPLATE REGISTRY / ACCESSORS ==="
+            for f in "$BIN/libkHost.so" "$BIN/libk3DAppA.so" "$BIN/libk3DApp.so" "$BIN/kKompas" "$BIN/ksinvisible"; do
+              [ -f "$f" ] || continue
+              echo "--- $f"
+              readelf -Ws "$f" 2>/dev/null | c++filt | grep -Ei                 '(Get|Find|Create|New|Register|Add).*(DocTemplate|DocumentTemplate)|(DocTemplate|DocumentTemplate).*(Get|Find|Create|New|Register|Add)|PartDocTemplate::PartDocTemplate|BaseDocTemplate::BaseDocTemplate' || true
+            done
+            echo
+            echo "=== CALLERS IN k3DAppA ==="
+            objdump -drC "$BIN/libk3DAppA.so" | grep -B80 -A35 -E               'NewD3PartByTemplate\(|NewD3AssemblyByTemplate\(' | head -4000 || true
+          } | tee -a "$R"
+
+          echo "RESULT=NEWD3PART_TEMPLATE_ROUTE_RESOLVED" | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-newd3part-template-route
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-newd3part-template/**
