@@ -233,22 +233,8 @@ jobs:
           grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
           grep -Eq '^LICENSE_DIALOG=[0-9]+$' runtime_evidence/license-dialog.txt
           grep -q '^LICENSE_DIALOG_AFTER=$' runtime_evidence/license-dialog-after.txt
+          grep -q '^DRAWING_SAVE_DIALOG_CONFIRMED=1$' runtime_evidence/drawing-confirmed.txt
           grep -q '^RESULT=PASS_NATIVE_DRAWING_OPEN_TEXT_INPUT_EXECUTED$' runtime_evidence/result.txt
-          grep -q '^DRAWING_SAVE_DIALOG_CONFIRMED=1
-          test -s runtime_evidence/04_command_search_annotation.png
-          test -s runtime_evidence/05_plain_annotation_activated.png
-          test -s runtime_evidence/06_annotation_point_placed.png
-          test -s runtime_evidence/07_text_pasted_before_finish.png
-          test -s runtime_evidence/08_final_text_candidate.png
-          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kompas3d-robust-native-drawing-text
-          path: runtime_evidence/
-          if-no-files-found: error
- runtime_evidence/drawing-confirmed.txt
           test -s runtime_evidence/03_drawing_license_warning.png
           test -s runtime_evidence/04_after_create_drawing.png
           test -s runtime_evidence/05_save_dialog_probe.png
