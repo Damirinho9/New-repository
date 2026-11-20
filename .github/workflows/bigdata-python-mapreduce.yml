@@ -343,7 +343,7 @@ jobs:
           hdfs dfs -cat "$HDFS_BASE/output"/part-* > "$LAB/output-actual.tsv"
           hdfs dfs -get "$HDFS_BASE/output" "$LAB/output-from-hdfs"
           cmp "$LAB/output-actual.tsv" "$LAB/output-from-hdfs"/part-*
-          test -s "$LAB/output-from-hdfs/_SUCCESS"
+          test -f "$LAB/output-from-hdfs/_SUCCESS"
           python3 - <<'PY'
           from collections import Counter
           from pathlib import Path
