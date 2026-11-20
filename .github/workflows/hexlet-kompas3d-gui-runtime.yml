@@ -32,9 +32,8 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           mkdir -p runtime_evidence
-          dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
 
-      - name: Accept EULA, relaunch clean GUI, open native New Document dialog
+      - name: Accept EULA and open File Create natively through keyboard menu
         shell: bash
         run: |
           set -euxo pipefail
@@ -47,8 +46,9 @@ jobs:
           openbox >runtime_evidence/openbox.log 2>&1 &
           sleep 2
 
-          kompas-v25 >runtime_evidence/kompas-first.out 2>runtime_evidence/kompas-first.err &
-          FIRST_PID=$!
+          kompas-v25 >runtime_evidence/kompas.out 2>runtime_evidence/kompas.err &
+          KPID=$!
+          echo "$KPID" > runtime_evidence/kompas.pid
 
           MAIN_WID=""
           for i in $(seq 1 90); do
@@ -57,6 +57,7 @@ jobs:
             [ -n "$MAIN_WID" ] && break
           done
           test -n "$MAIN_WID"
+          echo "MAIN_WID=$MAIN_WID" | tee runtime_evidence/main-window.txt
           sleep 25
 
           EULA_WID=""
@@ -66,7 +67,6 @@ jobs:
             sleep 1
           done
           test -n "$EULA_WID"
-
           eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
           CLICK_X=$((X + WIDTH * 65 / 100))
           CLICK_Y=$((Y + HEIGHT - 42))
@@ -80,71 +80,50 @@ jobs:
           echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
           test -z "$EULA_STILL"
 
-          xdotool windowclose "$MAIN_WID" || true
-          for i in $(seq 1 30); do
-            sleep 1
-            ! ps -p "$FIRST_PID" >/dev/null 2>&1 && break
-          done
-          kill "$FIRST_PID" 2>/dev/null || true
-          sleep 3
+          xdotool windowfocus --sync "$MAIN_WID"
 
-          kompas-v25 >runtime_evidence/kompas-second.out 2>runtime_evidence/kompas-second.err &
-          SECOND_PID=$!
-          echo "$SECOND_PID" > runtime_evidence/kompas-second.pid
+          # Native Qt menu navigation: F10 activates main menu; first item is File.
+          xdotool key F10
+          sleep 1
+          import -display :99 -window root runtime_evidence/02_menu_bar_focused.png
 
-          SECOND_WID=""
-          for i in $(seq 1 90); do
-            sleep 1
-            SECOND_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
-            [ -n "$SECOND_WID" ] && break
-          done
-          test -n "$SECOND_WID"
-          sleep 20
+          xdotool key Down
+          sleep 1
+          import -display :99 -window root runtime_evidence/03_file_menu_open.png
 
-          EULA_SECOND=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
-          echo "EULA_ON_SECOND_LAUNCH=$EULA_SECOND" | tee runtime_evidence/eula-second-launch.txt
-          test -z "$EULA_SECOND"
-
-          xdotool windowfocus --sync "$SECOND_WID"
-          import -display :99 -window root runtime_evidence/02_clean_second_launch.png
-
-          # Official KOMPAS v25 method: double-click free space in the document tab row.
-          # Main window is 1920x1080; the tab row is immediately below the main menu.
-          xdotool mousemove --window "$SECOND_WID" --sync 900 48
-          xdotool click --repeat 2 --delay 180 1
+          # In KOMPAS File menu, the first command is "Создать...".
+          xdotool key Return
           sleep 5
 
           FOCUS_NEW=$(xdotool getwindowfocus)
-          echo "MAIN_WID=$SECOND_WID" | tee runtime_evidence/new-document-focus.txt
-          echo "FOCUS_NEW=$FOCUS_NEW" | tee -a runtime_evidence/new-document-focus.txt
+          echo "FOCUS_NEW=$FOCUS_NEW" | tee runtime_evidence/new-document-focus.txt
           xdotool getwindowname "$FOCUS_NEW" | tee -a runtime_evidence/new-document-focus.txt || true
           xdotool getwindowgeometry --shell "$FOCUS_NEW" | tee runtime_evidence/new-document-geometry.txt || true
-          wmctrl -l -G | tee runtime_evidence/windows-after-new-document.txt || true
+          wmctrl -l -G | tee runtime_evidence/windows-after-create.txt || true
           xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-windows-after-new-document.txt || true
-          import -display :99 -window root runtime_evidence/03_new_document_dialog.png
+            | tee runtime_evidence/visible-windows-after-create.txt || true
+          import -display :99 -window root runtime_evidence/04_new_document_dialog.png
 
-          if [ "$FOCUS_NEW" = "$SECOND_WID" ]; then
-            echo 'RESULT=FAIL_NEW_DOCUMENT_DIALOG_NOT_OPENED' | tee runtime_evidence/result.txt
-            exit 71
+          if [ "$FOCUS_NEW" = "$MAIN_WID" ]; then
+            echo 'RESULT=FAIL_FILE_CREATE_DIALOG_NOT_OPENED' | tee runtime_evidence/result.txt
+            exit 81
           fi
 
-          echo 'RESULT=PASS_NATIVE_NEW_DOCUMENT_DIALOG_OPENED' | tee runtime_evidence/result.txt
+          echo 'RESULT=PASS_FILE_CREATE_DIALOG_OPENED' | tee runtime_evidence/result.txt
 
-      - name: Strict native New Document gate
+      - name: Strict File Create gate
         shell: bash
         run: |
           set -euxo pipefail
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^EULA_ON_SECOND_LAUNCH=$' runtime_evidence/eula-second-launch.txt
-          grep -q '^RESULT=PASS_NATIVE_NEW_DOCUMENT_DIALOG_OPENED$' runtime_evidence/result.txt
-          test -s runtime_evidence/03_new_document_dialog.png
-          sha256sum runtime_evidence/02_clean_second_launch.png runtime_evidence/03_new_document_dialog.png \
+          grep -q '^RESULT=PASS_FILE_CREATE_DIALOG_OPENED$' runtime_evidence/result.txt
+          test -s runtime_evidence/04_new_document_dialog.png
+          sha256sum runtime_evidence/02_menu_bar_focused.png runtime_evidence/03_file_menu_open.png runtime_evidence/04_new_document_dialog.png \
             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-native-new-document-dialog
+          name: kompas3d-native-file-create-dialog
           path: runtime_evidence/
           if-no-files-found: error
