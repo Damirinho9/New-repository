@@ -221,7 +221,6 @@ jobs:
 
           run_gui() {
             local port="$1" tag="$2" script="$3"
-            rm -f "$HOME/.config/ascon/KOMPAS-3D/25/QtResources.bin" 2>/dev/null || true
             xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"               dbus-run-session -- "$LAUNCHER" -APIServer="$port" >"result/$tag/kompas.out" 2>"result/$tag/kompas.err" &
             local kp=$!
             local found=0
