@@ -1,0 +1,85 @@
+name: KOMPAS Stage 4 map PartDocTemplate and D3PartHost native factory
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-map-part-template-factory.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  map:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Map exact template and host factories
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          F=/opt/ascon/kompas3d-v25/Bin/libk3DAppA.so
+          OUT=result/stage4-part-template-factory
+          mkdir -p "$OUT"
+          {
+            echo "=== ALL RELEVANT DYNAMIC SYMBOLS ==="
+            nm -D -C "$F" | grep -E               'PartDocTemplate|D3PartHost|D3DocumentHost|AssemblyDocTemplate|D3AssemblyHost|BaseDocTemplate' || true
+            echo
+            echo "=== SORTED SYMBOLS AROUND 0x13e000-0x13f500 ==="
+            nm -n -C "$F" | awk '
+              /^[0-9a-fA-F]+/ {
+                x=strtonum("0x"$1);
+                if (x>=strtonum("0x13e000") && x<=strtonum("0x13f500")) print
+              }' || true
+            echo
+            echo "=== READELF FUNC SYMBOLS AROUND 0x13e000-0x13f500 ==="
+            readelf -Ws "$F" | c++filt | awk '
+              $2 ~ /^[0-9a-fA-F]+$/ {
+                x=strtonum("0x"$2);
+                if (x>=strtonum("0x13e000") && x<=strtonum("0x13f500")) print
+              }' || true
+            echo
+            echo "=== PART TEMPLATE METHODS ==="
+            readelf -Ws "$F" | c++filt | grep -E               '(PartDocTemplate|AssemblyDocTemplate)::.*(New|Create|Open|Document|Host|Template|Frame)' || true
+            echo
+            echo "=== D3 PART HOST METHODS ==="
+            readelf -Ws "$F" | c++filt | grep -E               '(D3PartHost|D3AssemblyHost)::.*(New|Create|Open|Document|Host|Read|Write)' || true
+            echo
+            echo "=== MACHINE CODE 0x13ebe0-0x13ef20 ==="
+            objdump -d -C --start-address=0x13ebe0 --stop-address=0x13ef20 "$F"
+          } | tee "$OUT/map.txt"
+          echo "RESULT=PART_TEMPLATE_FACTORY_MAPPED" | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-part-template-factory-map
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-part-template-factory/**
