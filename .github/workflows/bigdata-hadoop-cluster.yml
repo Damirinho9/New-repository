@@ -559,7 +559,8 @@ jobs:
           export HADOOP_HOME=/usr/local/hadoop
           export HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
           export HADOOP_MAPRED_HOME=$HADOOP_HOME
-          export PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
+          export PATH=$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$JAVA_HOME/bin:$PATH
+          cd "$HOME"
           exec "$@"
           SCRIPT
           chmod 755 /tmp/cluster-user.sh
@@ -609,7 +610,7 @@ jobs:
             if curl -fsS --max-time 3 http://localhost:8088/ws/v1/cluster/nodes >/tmp/yarn-nodes.json && python3 -c 'import json; a=json.load(open("/tmp/yarn-nodes.json"))["nodes"]["node"]; assert len(a)==1 and a[0]["state"]=="RUNNING"'; then break; fi
             sleep 2
           done
-          sudo -H -u hduser /tmp/cluster-user.sh yarn node -list -all | tee /tmp/yarn-node-list.txt
+          sudo -H -u hduser /tmp/cluster-user.sh /usr/local/hadoop/bin/yarn node -list -all | tee /tmp/yarn-node-list.txt
           grep -Fq 'Total Nodes:1' /tmp/yarn-node-list.txt
           grep -Fq RUNNING /tmp/yarn-node-list.txt
           echo YARN_START_PASS
