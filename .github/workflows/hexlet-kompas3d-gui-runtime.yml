@@ -89,11 +89,10 @@ jobs:
           xdotool windowfocus --sync "$MAIN"
           sleep 1
 
-          eval "$(xdotool getwindowgeometry --shell "$MAIN")"
-          FILE_X=$((X + 18))
-          FILE_Y=$((Y + 25))
-          echo "FILE_X=$FILE_X FILE_Y=$FILE_Y" | tee runtime_evidence/file-menu-target.txt
-          xdotool mousemove --sync "$FILE_X" "$FILE_Y"
+          echo "FILE_REL_X=18 FILE_REL_Y=25" | tee runtime_evidence/file-menu-target.txt
+          xdotool windowfocus --sync "$MAIN"
+          xdotool mousemove --window "$MAIN" --sync 18 25
+          xdotool getmouselocation --shell | tee runtime_evidence/file-menu-mouse.txt
           xdotool click 1
           sleep 2
           import -display :99 -window root runtime_evidence/02_file_menu.png
