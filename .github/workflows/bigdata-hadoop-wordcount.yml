@@ -173,18 +173,52 @@ jobs:
             echo 'Using SHA-512 verified cached distribution'
           else
             rm -f "$file"
-            for base in https://repo.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1 https://mirrors.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1 https://archive.apache.org/dist/hadoop/common/hadoop-3.3.1; do
-              echo "Trying $base/$file"
-              if timeout --kill-after=5s 180s wget -4 -nv --dns-timeout=15 --connect-timeout=15 --read-timeout=30 --tries=1 "$base/$file" -O "$file.partial"; then
-                mv "$file.partial" "$file"
-                if sha512sum -c "$file.sha512"; then
-                  downloaded=1
-                  echo "Verified download source: $base/$file"
-                  break
+            # Independent providers are raced, not trusted until the official digest matches.
+            bases=(
+              https://apache.root.lu/hadoop/core/hadoop-3.3.1
+              https://repo.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1
+              https://archive.apache.org/dist/hadoop/common/hadoop-3.3.1
+              https://mirrors.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1
+            )
+            pids=()
+            download_one() {
+              local i="$1" base="$2" p="$file.mirror-$1"
+              printf 'Trying %s/%s\n' "$base" "$file"
+              if timeout --kill-after=5s 180s curl -4 -fL --connect-timeout 15 --max-time 175 --speed-limit 10240 --speed-time 30 --retry 0 --output "$p.partial" "$base/$file"; then
+                if printf '%s  %s\n' "$(cut -d' ' -f1 "$file.sha512")" "$p.partial" | sha512sum -c -; then
+                  mv "$p.partial" "$p.verified"
+                  printf '%s\n' "$base/$file" >"$p.source"
+                  return 0
                 fi
               fi
-              rm -f "$file.partial" "$file"
+              rm -f "$p.partial"
+              return 1
+            }
+            for i in "${!bases[@]}"; do
+              download_one "$i" "${bases[$i]}" >"mirror-$i.log" 2>&1 &
+              pids+=("$!")
             done
+            for attempt in {1..190}; do
+              for i in "${!bases[@]}"; do
+                p="$file.mirror-$i"
+                if test -f "$p.verified" && test -s "$p.source"; then
+                  mv "$p.verified" "$file"
+                  echo "Verified download source: $(cat "$p.source")"
+                  downloaded=1
+                  break 2
+                fi
+              done
+              live=0
+              for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && live=1 || true; done
+              test "$live" = 1 || break
+              sleep 1
+            done
+            for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+            for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+            for log in mirror-*.log; do echo "=== $log ==="; tail -c 1800 "$log"; echo; done
+            test "$downloaded" = 1
+            sha512sum -c "$file.sha512"
+            rm -f "$file".mirror-*
           fi
           test "$downloaded" = 1
           python3 - "$file" <<'PY'
