@@ -1,0 +1,115 @@
+name: KOMPAS Study Linux official smoke
+
+"on":
+  push:
+    branches:
+      - kompas-linux-probe-run
+    paths:
+      - '.github/workflows/kompas-study-official-smoke.yml'
+      - 'kompas-linux/**'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host X11 tools
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb xserver-xephyr openbox procps iproute2
+
+      - name: Add official ASCON repositories from ReadMe v25
+        run: |
+          set -euxo pipefail
+          wget -O /tmp/ascon-personal-deb.sh https://repo.ascon.ru/personal/scripts/ascon-personal-deb.sh
+          wget -O /tmp/ascon-stable-deb.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          echo '=== personal script head ==='
+          sed -n '1,120p' /tmp/ascon-personal-deb.sh
+          echo '=== stable script head ==='
+          sed -n '1,120p' /tmp/ascon-stable-deb.sh
+          sudo bash /tmp/ascon-personal-deb.sh
+          sudo bash /tmp/ascon-stable-deb.sh
+          sudo apt-get update
+
+      - name: Inspect and install minimal packages
+        run: |
+          set -euxo pipefail
+          apt-cache policy ascon-kompas-graphic-v25 ascon-kompas-study-v25 ascon-kompas-sdk-v25 | tee /tmp/apt-policy.txt
+          sudo apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-study-v25 ascon-kompas-sdk-v25
+          dpkg -l | grep -E 'ascon-kompas|ascon-help' | tee /tmp/ascon-packages.txt
+          find /opt/ascon -maxdepth 3 -type f -name 'ksapi.py' -o -name 'kStudy' -o -name 'kompas-study-v25' | tee /tmp/ascon-files.txt || true
+
+      - name: Start X11 and KOMPAS Study
+        env:
+          HTTP_PROXY: ''
+          HTTPS_PROXY: ''
+          http_proxy: ''
+          https_proxy: ''
+        run: |
+          set -euxo pipefail
+          Xvfb :99 -screen 0 1600x1000x24 > /tmp/xvfb.log 2>&1 &
+          sleep 2
+          DISPLAY=:99 Xephyr :5 -screen 1400x900 -ac > /tmp/xephyr.log 2>&1 &
+          sleep 2
+          DISPLAY=:5 openbox > /tmp/openbox.log 2>&1 &
+          sleep 2
+          DISPLAY=:5 nohup kompas-study-v25 >/tmp/kompas.log 2>&1 &
+          echo $! >/tmp/kompas-launcher.pid
+          set +e
+          for i in $(seq 1 75); do
+            if ss -ltnp | grep -Eq 'kStudy|kKompas|kHome'; then
+              echo "API SOCKET FOUND"
+              break
+            fi
+            sleep 2
+          done
+          echo '=== processes ==='
+          ps aux | grep -E '[k]Study|[k]Kompas|[k]Home' | tee /tmp/processes.txt
+          echo '=== sockets ==='
+          ss -ltnp | grep -E 'kStudy|kKompas|kHome' | tee /tmp/sockets.txt
+          echo '=== KOMPAS log ==='
+          tail -200 /tmp/kompas.log
+          test -s /tmp/sockets.txt
+
+      - name: API attach test
+        env:
+          DISPLAY: :5
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          test -f "$BIN/ksapi.py"
+          cd "$BIN"
+          python3 - <<'PY'
+          import sys, time
+          sys.path.insert(0,'.')
+          import ksapi
+          app=None
+          for _ in range(30):
+              app=ksapi.GetKompas()
+              if app is not None: break
+              time.sleep(2)
+          if app is None:
+              raise SystemExit('GetKompas() returned None')
+          print('APP=',app.GetApplicationName(True))
+          print('DOCS=',app.GetDocuments().GetCount())
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas-study-official-smoke
+          path: |
+            /tmp/ascon-personal-deb.sh
+            /tmp/ascon-stable-deb.sh
+            /tmp/apt-policy.txt
+            /tmp/ascon-packages.txt
+            /tmp/ascon-files.txt
+            /tmp/xvfb.log
+            /tmp/xephyr.log
+            /tmp/openbox.log
+            /tmp/kompas.log
+            /tmp/processes.txt
+            /tmp/sockets.txt
