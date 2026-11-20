@@ -183,7 +183,8 @@ def verify_saved_cards(root,xmlio,refs=None):
         c=_find_component(root,xmlio,ref);m=_find_model(root,c);a,b=_cards(c,m,xmlio)
         for x in (xmlio.text(a.get("String")),xmlio.text(b.get("Value"))):
             _validate(x)
-            if ref=="VT3" and "KP707V2_CONTINUOUS" not in x: raise RuntimeError("VT3: KP707V2 continuous model lost")\n            if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": gate reference lost")
+            if ref=="VT3" and "KP707V2_CONTINUOUS" not in x: raise RuntimeError("VT3: KP707V2 continuous model lost")
+            if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": gate reference lost")
     if "VD1" in refs:
         c=_find_component(root,xmlio,"VD1")
         cards=[raw for _,_,raw in _embedded_spice(c,xmlio)]
