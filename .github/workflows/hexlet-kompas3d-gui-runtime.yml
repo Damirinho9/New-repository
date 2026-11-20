@@ -148,36 +148,38 @@ jobs:
           xdotool key ctrl+v
           sleep 3
           import -display :99 -window root runtime_evidence/04_command_search_annotation.png
-          xdotool key Return
-          sleep 3
 
-          # If the command triggers another license warning, close it and retry once.
+          # Search results are ordered: "Выносная надпись", "Заполнить", "Надпись", ...
+          # Click the exact plain "Надпись" result, not the first result.
+          xdotool mousemove --sync 1605 103
+          xdotool click 1
+          sleep 3
+          import -display :99 -window root runtime_evidence/05_plain_annotation_activated.png
+
           LIC_TEXT=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
           echo "LICENSE_DIALOG_TEXT=$LIC_TEXT" | tee runtime_evidence/license-dialog-text.txt
           if [ -n "$LIC_TEXT" ]; then
             xdotool windowfocus --sync "$LIC_TEXT"
             xdotool key Escape || true
             sleep 2
-            xdotool windowfocus --sync "$MAIN"
-            xdotool key alt+slash
-            sleep 2
-            printf 'Надпись' | xclip -selection clipboard
-            xdotool key ctrl+v
-            xdotool key Return
-            sleep 3
           fi
 
+          xdotool windowfocus --sync "$MAIN"
           xdotool mousemove --window "$MAIN" --sync 1000 480
           xdotool click 1
           sleep 2
+          import -display :99 -window root runtime_evidence/06_annotation_point_placed.png
+
           printf 'Привет, Хекслет!' | xclip -selection clipboard
           xdotool key ctrl+v
-          sleep 2
-          xdotool key ctrl+Return || true
-          xdotool key Escape || true
-          sleep 5
+          sleep 3
+          import -display :99 -window root runtime_evidence/07_text_pasted_before_finish.png
 
-          import -display :99 -window root runtime_evidence/05_final_text_candidate.png
+          xdotool key ctrl+Return || true
+          sleep 2
+          xdotool key Escape || true
+          sleep 3
+          import -display :99 -window root runtime_evidence/08_final_text_candidate.png
 
           echo 'RESULT=PASS_NATIVE_DRAWING_OPEN_TEXT_INPUT_EXECUTED' | tee runtime_evidence/result.txt
 
@@ -192,7 +194,10 @@ jobs:
           test -s runtime_evidence/02_real_drawing_with_warning.png
           test -s runtime_evidence/03_real_drawing_clean.png
           test -s runtime_evidence/04_command_search_annotation.png
-          test -s runtime_evidence/05_final_text_candidate.png
+          test -s runtime_evidence/05_plain_annotation_activated.png
+          test -s runtime_evidence/06_annotation_point_placed.png
+          test -s runtime_evidence/07_text_pasted_before_finish.png
+          test -s runtime_evidence/08_final_text_candidate.png
           sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
 
       - uses: actions/upload-artifact@v4
