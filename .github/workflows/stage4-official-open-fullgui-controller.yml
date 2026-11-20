@@ -1,0 +1,198 @@
+name: KOMPAS Stage 4 official OpenKompas full-GUI controller gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-official-open-fullgui-controller.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+      - name: Install controller prerequisites only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            xvfb xauth dbus procps python3 \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
+            libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
+            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
+      - name: Launch full GUI through official controller bootstrap
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat >/tmp/open_gui_gate.py <<'PY'
+          import math, os, pathlib, sys, time, traceback
+          import ksapi
+          from constants import constants as c
+
+          outdir=pathlib.Path(os.environ["GITHUB_WORKSPACE"])/"result/open-fullgui-controller"
+          outdir.mkdir(parents=True,exist_ok=True)
+          logp=outdir/"gate.log"
+          def log(s):
+              s=str(s); print(s,flush=True)
+              with logp.open("a",encoding="utf-8") as f: f.write(s+"\n")
+          def req(v,m):
+              if not v: raise RuntimeError(m)
+              return v
+          def pump(app,n=30):
+              for _ in range(n):
+                  try: app.PumpWaitingMessages()
+                  except BaseException: pass
+                  time.sleep(.1)
+
+          app=None
+          try:
+              BIN="/opt/ascon/kompas3d-v25/Bin"
+              ksapi.SetKompasPath(BIN)
+              log("BOOTSTRAP=OpenKompas")
+              app=req(ksapi.OpenKompas(),"OpenKompas returned null")
+              pump(app,30)
+              log("APP=1")
+              try: log("VISIBLE="+str(int(bool(app.IsVisible()))))
+              except BaseException as e: log("VISIBLE_EXCEPTION="+repr(e))
+              try: log("MAIN_WINDOW="+str(app.GetMainWindowHandle()))
+              except BaseException as e: log("MAIN_WINDOW_EXCEPTION="+repr(e))
+
+              lm=req(app.GetApplicationLicenseManager(),"license manager")
+              b2=bool(lm.IsKompasModuleActive(c.ksKompasModule2D))
+              b3=bool(lm.IsKompasModuleActive(c.ksKompasModule3D))
+              log("LICENSE_2D_BEFORE="+str(int(b2)))
+              log("LICENSE_3D_BEFORE="+str(int(b3)))
+              if not b2:
+                  try: lm.SetKompasModuleActive(c.ksKompasModule2D,True)
+                  except BaseException as e: log("SET_2D_EXCEPTION="+repr(e))
+              if not b3:
+                  try: lm.SetKompasModuleActive(c.ksKompasModule3D,True)
+                  except BaseException as e: log("SET_3D_EXCEPTION="+repr(e))
+              pump(app,10)
+              l2=bool(lm.IsKompasModuleActive(c.ksKompasModule2D))
+              l3=bool(lm.IsKompasModuleActive(c.ksKompasModule3D))
+              log("LICENSE_2D_AFTER="+str(int(l2)))
+              log("LICENSE_3D_AFTER="+str(int(l3)))
+              req(l2 and l3,"full GUI controller session has no official 2D/3D license")
+
+              docs=req(app.GetDocuments(),"documents")
+              f=docs.AddWithDefaultSettings(c.ksDocumentFragment,True)
+              p=docs.AddWithDefaultSettings(c.ksDocumentPart,True)
+              log("FRAGMENT_CREATED="+str(int(bool(f))))
+              log("PART_CREATED="+str(int(bool(p))))
+              req(f and p,"full GUI document creation failed")
+
+              d2=req(ksapi.IKompasDocument2D(f),"fragment cast")
+              vm=req(d2.GetViewsAndLayersManager(),"2d vm")
+              vs=req(vm.GetViews(),"2d views")
+              view=req(vs.GetActiveView(),"2d active view")
+              dc=req(ksapi.IDrawingContainer(view),"2d dc")
+              lines=req(dc.GetLineSegments(),"2d lines")
+              seg=req(lines.Add(),"2d line add")
+              seg.SetX1(0);seg.SetY1(0);seg.SetX2(50);seg.SetY2(0);seg.SetStyle(c.ksCSNormal)
+              req(seg.Update(),"2d update")
+              p2="/tmp/OpenKompas_Controller_2D.frw"
+              pathlib.Path(p2).unlink(missing_ok=True)
+              req(f.SaveAs(p2),"2d save")
+              req(f.Close(c.kdDoNotSaveChanges),"2d close")
+
+              d3=req(ksapi.IKompasDocument3D(p),"part cast")
+              top=req(d3.GetTopPart(),"top part")
+              log("TOP_PART=1")
+              # For this gate creation of a real editable 3D model is proven by non-null top part.
+              p3="/tmp/OpenKompas_Controller_3D.m3d"
+              pathlib.Path(p3).unlink(missing_ok=True)
+              req(p.SaveAs(p3),"3d save")
+              req(p.Close(c.kdDoNotSaveChanges),"3d close")
+
+              rf=req(docs.Open(p2,True,False),"2d reopen")
+              rp=req(docs.Open(p3,True,False),"3d reopen")
+              rd2=req(ksapi.IKompasDocument2D(rf),"reopen 2d cast")
+              rvm=req(rd2.GetViewsAndLayersManager(),"reopen 2d vm")
+              rvs=req(rvm.GetViews(),"reopen 2d views")
+              rv=req(rvs.GetActiveView(),"reopen 2d view")
+              rdc=req(ksapi.IDrawingContainer(rv),"reopen 2d dc")
+              rlines=req(rdc.GetLineSegments(),"reopen 2d lines")
+              log("REOPEN_2D_LINES="+str(rlines.GetCount()))
+              req(rlines.GetCount()>=1,"2d reopen line absent")
+              rd3=req(ksapi.IKompasDocument3D(rp),"reopen 3d cast")
+              rtop=req(rd3.GetTopPart(),"reopen top part")
+              log("REOPEN_TOP_PART=1")
+              req(rf.Close(c.kdDoNotSaveChanges),"reopen 2d close")
+              req(rp.Close(c.kdDoNotSaveChanges),"reopen 3d close")
+              for src in (p2,p3):
+                  q=pathlib.Path(src); dst=outdir/q.name; dst.write_bytes(q.read_bytes())
+                  log("OUTPUT="+dst.name+" bytes="+str(dst.stat().st_size))
+              log("RESULT=PASS_OFFICIAL_OPENKOMPAS_FULLGUI_CONTROLLER")
+          except BaseException as e:
+              log("EXCEPTION="+type(e).__name__+":"+repr(e))
+              traceback.print_exc()
+              log("RESULT=FAIL_OFFICIAL_OPENKOMPAS_FULLGUI_CONTROLLER")
+              sys.exit(2)
+          finally:
+              try:
+                  if app: app.Quit()
+              except BaseException as e: log("QUIT_EXCEPTION="+repr(e))
+          PY
+
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          export HOME="$RUNNER_TEMP/open-fullgui-controller-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25" result/open-fullgui-controller
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/QtResources.bin"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          set +e
+          timeout 160s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- python3 -u /tmp/open_gui_gate.py \
+            >result/open-fullgui-controller/stdout.txt 2>result/open-fullgui-controller/stderr.txt
+          RC=$?
+          set -e
+          cat result/open-fullgui-controller/stdout.txt || true
+          cat result/open-fullgui-controller/gate.log || true
+          cat result/open-fullgui-controller/stderr.txt || true
+          grep -qx 'RESULT=PASS_OFFICIAL_OPENKOMPAS_FULLGUI_CONTROLLER' result/open-fullgui-controller/gate.log
+          test "$RC" -eq 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-official-open-fullgui-controller
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/open-fullgui-controller/**
