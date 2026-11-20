@@ -1,0 +1,78 @@
+name: KOMPAS Stage 4 trace CreateDocument3D callers
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-trace-createdocument3d-callers.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Trace callers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-create3d-callers
+          mkdir -p "$OUT"
+          F="$BIN/libPipelineObject3D.so"
+          objdump -drC "$F" > "$OUT/pipeline.disasm"
+          python3 - <<'PY' > "$OUT/callers.txt"
+          from pathlib import Path
+          lines=Path("result/stage4-create3d-callers/pipeline.disasm").read_text(errors="replace").splitlines()
+          needle="KompasAppl::CreateDocument3D"
+          idx=[i for i,l in enumerate(lines) if needle in l]
+          print("CALLSITE_COUNT="+str(len(idx)))
+          for n,i in enumerate(idx):
+              print("\n===== CALLSITE",n,"line",i,"=====")
+              for l in lines[max(0,i-90):min(len(lines),i+35)]:
+                  print(l)
+          PY
+          {
+            echo "=== RELEVANT STRING TABLE ==="
+            strings -a -t x "$F" | grep -Ei 'm3d|a3d|part|assembly|document|template|detail|детал|сборк|new' | head -1000 || true
+          } >> "$OUT/callers.txt"
+          cat "$OUT/callers.txt"
+          echo "RESULT=CREATE3D_CALLERS_TRACED" | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-create3d-callers
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            result/stage4-create3d-callers/callers.txt
+            result/stage4-create3d-callers/result.txt
