@@ -198,7 +198,7 @@ jobs:
           sudo -H -u hduser /tmp/cluster-user.sh start-dfs.sh
           ready=0
           for i in {1..90}; do
-            if curl -fsS --max-time 3 http://localhost:9870/jmx?qry=Hadoop:service:NameNode,name=FSNamesystemState >/tmp/python-hdfs-state.json; then
+            if curl -fsS --max-time 3 http://localhost:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState >/tmp/python-hdfs-state.json; then
               if python3 -c 'import json; x=json.load(open("/tmp/python-hdfs-state.json"))["beans"][0]; assert int(x["NumLiveDataNodes"]) == 1'; then ready=1; break; fi
             fi
             sleep 2
