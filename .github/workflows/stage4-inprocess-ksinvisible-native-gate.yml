@@ -273,19 +273,22 @@ jobs:
           PY
 
           BIN=/opt/ascon/kompas3d-v25/Bin
-          export PYTHONPATH="$BIN"
-          export LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
-          export HOME="$RUNNER_TEMP/inproc-home"
-          export XDG_CONFIG_HOME="$HOME/.config"
-          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8
-          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25"
+          HOST_HOME="$RUNNER_TEMP/inproc-home"
+          HOST_XDG="$HOST_HOME/.config"
+          mkdir -p "$HOST_XDG/ascon/KOMPAS-3D Invisible/25"
           RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
-          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          [ -z "$RES" ] || cp -f "$RES" "$HOST_XDG/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
           rm -f /tmp/inproc_ksinvisible_gate.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
           unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
           timeout 140s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
-            dbus-run-session -- python3 -u /tmp/controller.py \
+            dbus-run-session -- env \
+              PYTHONPATH="$BIN" \
+              LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD" \
+              HOME="$HOST_HOME" \
+              XDG_CONFIG_HOME="$HOST_XDG" \
+              QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8 \
+              python3 -u /tmp/controller.py \
             >result/inprocess-ksinvisible/stdout.txt 2>result/inprocess-ksinvisible/stderr.txt || true
 
           cp /tmp/inproc_ksinvisible_gate.log result/inprocess-ksinvisible/inprocess.log 2>/dev/null || true
