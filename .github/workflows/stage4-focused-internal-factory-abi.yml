@@ -1,0 +1,98 @@
+name: KOMPAS Stage 4 focused internal factory ABI probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-focused-internal-factory-abi.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Probe focused ABI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-focused-factory
+          mkdir -p "$OUT"
+          R="$OUT/abi.txt"
+          : > "$R"
+          libs=(
+            "$BIN/libk2DAppA.so"
+            "$BIN/libk2DDoc.so"
+            "$BIN/libk3DAppA.so"
+            "$BIN/libEquipmentObject.so"
+            "$BIN/libPipelineObject3D.so"
+            "$BIN/libKompasAppsHelper.so"
+            "$BIN/libksAPI.so"
+            "$BIN/libksAPIC.so"
+            "$BIN/libksAPICLink.so"
+          )
+          for f in "${libs[@]}"; do
+            [ -f "$f" ] || continue
+            {
+              echo "===== $f ====="
+              echo "--- defined target/accessor symbols"
+              nm -D -C --defined-only "$f" 2>/dev/null | grep -E                 'CreateDocument|NewDocument|GrDocumentReader|KompasAppl|DocumentHost|GetKompas|GetApplication|GetInstance|instance\(\)|Singleton|DocumentReader' || true
+              echo "--- undefined target/accessor symbols"
+              nm -D -C --undefined-only "$f" 2>/dev/null | grep -E                 'CreateDocument|NewDocument|GrDocumentReader|KompasAppl|DocumentHost|GetKompas|GetApplication|GetInstance|instance\(\)|Singleton|DocumentReader' || true
+              echo "--- dynamic globals/objects likely to hold app state"
+              nm -D -C "$f" 2>/dev/null | grep -E                 ' [BDRV] .*([Kk]ompas|Application|DocumentReader|DocumentHost|AppInstance|Singleton)' || true
+              echo
+            } | tee -a "$R"
+          done
+
+          echo "=== exact mangled targets ===" | tee -a "$R"
+          for f in "${libs[@]}"; do
+            [ -f "$f" ] || continue
+            nm -D --defined-only "$f" 2>/dev/null | grep -E               '_ZN16GrDocumentReader14CreateDocument|_ZN10KompasAppl16CreateDocument3D|_Z22CreateDocument2DEvents' | sed "s#^#$f | #" || true
+          done | tee -a "$R"
+
+          target2d=$(grep -c '_ZN16GrDocumentReader14CreateDocument' "$R" || true)
+          target3d=$(grep -c '_ZN10KompasAppl16CreateDocument3D' "$R" || true)
+          event2d=$(grep -c '_Z22CreateDocument2DEvents' "$R" || true)
+          echo "TARGET_2D=$target2d" | tee "$OUT/result.txt"
+          echo "TARGET_3D=$target3d" | tee -a "$OUT/result.txt"
+          echo "EVENT_2D=$event2d" | tee -a "$OUT/result.txt"
+          echo "RESULT=FOCUSED_ABI_MAPPED" | tee -a "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-focused-internal-factory-abi
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-focused-factory/**
