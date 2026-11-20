@@ -151,10 +151,14 @@ jobs:
 
           # Search results are ordered: "Выносная надпись", "Заполнить", "Надпись", ...
           # Click the exact plain "Надпись" result, not the first result.
-          xdotool mousemove --sync 1605 103
+          xdotool mousemove --sync 1605 121
           xdotool click 1
           sleep 3
           import -display :99 -window root runtime_evidence/05_plain_annotation_activated.png
+
+          # The search popup must disappear after selecting the actual command.
+          SEARCH_STILL=$(xdotool search --onlyvisible --name 'Поиск по командам|Search' 2>/dev/null | tail -1 || true)
+          echo "SEARCH_STILL=$SEARCH_STILL" | tee runtime_evidence/search-after-command.txt
 
           LIC_TEXT=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
           echo "LICENSE_DIALOG_TEXT=$LIC_TEXT" | tee runtime_evidence/license-dialog-text.txt
