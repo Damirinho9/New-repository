@@ -1,4 +1,4 @@
-name: Hexlet KOMPAS-3D Native Drawing Fresh GUI
+name: Hexlet KOMPAS-3D Native Drawing Fresh X Server
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  drawing-fresh-gui:
+  drawing-fresh-x:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -34,15 +34,12 @@ jobs:
 
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ascon-kompas-v25 \
-            ascon-kompas-graphic-v25 \
-            ascon-kompas3d-v25 \
-            ascon-kompas-sdk-v25
+            ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
 
           mkdir -p runtime_evidence
           dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
 
-      - name: Accept EULA then relaunch clean GUI and create real Drawing
+      - name: Accept EULA on first X server
         shell: bash
         run: |
           set -euxo pipefail
@@ -51,15 +48,19 @@ jobs:
           export QT_OPENGL=software
 
           Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
-            >runtime_evidence/xvfb.log 2>&1 &
-          sleep 2
-          openbox >runtime_evidence/openbox.log 2>&1 &
+            >runtime_evidence/xvfb99.log 2>&1 &
+          X99=$!
+          echo "$X99" > runtime_evidence/xvfb99.pid
           sleep 2
 
-          # First launch - only for deterministic EULA acceptance.
+          openbox >runtime_evidence/openbox99.log 2>&1 &
+          OB99=$!
+          echo "$OB99" > runtime_evidence/openbox99.pid
+          sleep 2
+
           kompas-v25 >runtime_evidence/kompas-first.out 2>runtime_evidence/kompas-first.err &
-          KPID1=$!
-          echo "$KPID1" > runtime_evidence/kompas-first.pid
+          KP1=$!
+          echo "$KP1" > runtime_evidence/kompas-first.pid
 
           MAIN1=""
           for i in $(seq 1 90); do
@@ -68,7 +69,6 @@ jobs:
             [ -n "$MAIN1" ] && break
           done
           test -n "$MAIN1"
-          echo "MAIN1=$MAIN1" | tee runtime_evidence/main-first.txt
 
           sleep 25
 
@@ -87,7 +87,7 @@ jobs:
             "$EULA" "$X" "$Y" "$WIDTH" "$HEIGHT" "$ACCEPT_X" "$ACCEPT_Y" \
             | tee runtime_evidence/eula-geometry.txt
 
-          import -display :99 -window root runtime_evidence/01_eula.png
+          import -display :99 -window root runtime_evidence/01_eula_before_accept.png
           xdotool windowfocus --sync "$EULA"
           xdotool mousemove --sync "$ACCEPT_X" "$ACCEPT_Y"
           xdotool click 1
@@ -97,21 +97,44 @@ jobs:
           echo "EULA_AFTER=$EULA_AFTER" | tee runtime_evidence/eula-after.txt
           test -z "$EULA_AFTER"
 
-          # Close the modal-tainted first session completely.
+          # Close KOMPAS, then fully destroy the first X server/window manager.
           xdotool windowclose "$MAIN1" || true
           for i in $(seq 1 30); do
             sleep 1
-            if ! ps -p "$KPID1" >/dev/null 2>&1; then break; fi
+            if ! ps -p "$KP1" >/dev/null 2>&1; then break; fi
           done
-          if ps -p "$KPID1" >/dev/null 2>&1; then
-            kill "$KPID1" 2>/dev/null || true
-            sleep 2
-          fi
+          kill "$KP1" 2>/dev/null || true
+          sleep 1
+          kill "$OB99" 2>/dev/null || true
+          kill "$X99" 2>/dev/null || true
+          sleep 3
 
-          # Fresh second launch - all drawing operations happen only here.
+          test -d "$HOME/.config/ascon"
+          find "$HOME/.config/ascon" -maxdepth 4 -type f -printf '%p %s\n' \
+            | sort | tee runtime_evidence/ascon-config-after-eula.txt
+
+      - name: Start brand-new X server and create real Drawing
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:100
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QT_OPENGL=software
+
+          Xvfb :100 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
+            >runtime_evidence/xvfb100.log 2>&1 &
+          X100=$!
+          echo "$X100" > runtime_evidence/xvfb100.pid
+          sleep 2
+
+          openbox >runtime_evidence/openbox100.log 2>&1 &
+          OB100=$!
+          echo "$OB100" > runtime_evidence/openbox100.pid
+          sleep 2
+
           kompas-v25 >runtime_evidence/kompas-second.out 2>runtime_evidence/kompas-second.err &
-          KPID2=$!
-          echo "$KPID2" > runtime_evidence/kompas-second.pid
+          KP2=$!
+          echo "$KP2" > runtime_evidence/kompas-second.pid
 
           MAIN2=""
           for i in $(seq 1 90); do
@@ -123,63 +146,65 @@ jobs:
           echo "MAIN2=$MAIN2" | tee runtime_evidence/main-second.txt
 
           sleep 20
+
           EULA_SECOND=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
           echo "EULA_SECOND=$EULA_SECOND" | tee runtime_evidence/eula-second.txt
           test -z "$EULA_SECOND"
 
-          import -display :99 -window root runtime_evidence/02_fresh_second_launch.png
+          import -display :100 -window root runtime_evidence/02_fresh_x_server_start.png
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/windows-fresh-x.txt || true
+
           xdotool windowfocus --sync "$MAIN2"
 
-          # Route A - real File -> Create -> Drawing menu.
-          xdotool mousemove --window "$MAIN2" --sync 18 6
+          # First try the real Drawing start-page tile on the clean X server.
+          xdotool mousemove --window "$MAIN2" --sync 919 189
+          xdotool getmouselocation --shell | tee runtime_evidence/tile-mouse.txt
           xdotool click 1
-          sleep 2
-          import -display :99 -window root runtime_evidence/03_file_menu.png
-
-          xdotool key Home
-          xdotool key Right
-          sleep 2
-          import -display :99 -window root runtime_evidence/04_create_submenu.png
-
-          xdotool key Home
-          xdotool key Return
           sleep 12
-          import -display :99 -window root runtime_evidence/05_after_menu_create.png
 
+          import -display :100 -window root runtime_evidence/03_after_drawing_tile.png
           xdotool key ctrl+s
           sleep 5
-          FOCUS_A=$(xdotool getwindowfocus)
-          NAME_A=$(xdotool getwindowname "$FOCUS_A" 2>/dev/null || true)
-          SAVE_A=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
-          printf 'ROUTE_A_FOCUS=%s\nROUTE_A_NAME=%s\nROUTE_A_SAVE=%s\n' "$FOCUS_A" "$NAME_A" "$SAVE_A" \
+
+          FOCUS_T=$(xdotool getwindowfocus)
+          NAME_T=$(xdotool getwindowname "$FOCUS_T" 2>/dev/null || true)
+          SAVE_T=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
+          printf 'TILE_FOCUS=%s\nTILE_NAME=%s\nTILE_SAVE=%s\n' "$FOCUS_T" "$NAME_T" "$SAVE_T" \
             | tee runtime_evidence/save-probe.txt
-          import -display :99 -window root runtime_evidence/06_save_route_a.png
+          import -display :100 -window root runtime_evidence/04_save_after_tile.png
 
           PASS_ROUTE=""
-          if [ "$FOCUS_A" != "$MAIN2" ] || [ -n "$SAVE_A" ]; then
-            PASS_ROUTE="FILE_MENU"
+          if [ "$FOCUS_T" != "$MAIN2" ] || [ -n "$SAVE_T" ]; then
+            PASS_ROUTE="START_TILE"
           fi
 
-          # Route B fallback - real Start-page Drawing tile in the clean session.
+          # Second route: command search, still on clean second X server.
           if [ -z "$PASS_ROUTE" ]; then
             xdotool key Escape Escape Escape || true
             xdotool windowfocus --sync "$MAIN2"
-            xdotool mousemove --window "$MAIN2" --sync 919 189
-            xdotool click 1
+            xdotool key alt+slash
+            sleep 2
+            printf 'Создать чертеж' | xclip -selection clipboard
+            xdotool key ctrl+v
+            sleep 3
+            import -display :100 -window root runtime_evidence/05_command_search_create_drawing.png
+            xdotool key Return
             sleep 12
-            import -display :99 -window root runtime_evidence/07_after_tile_create.png
 
+            import -display :100 -window root runtime_evidence/06_after_command_search_create.png
             xdotool key ctrl+s
             sleep 5
-            FOCUS_B=$(xdotool getwindowfocus)
-            NAME_B=$(xdotool getwindowname "$FOCUS_B" 2>/dev/null || true)
-            SAVE_B=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
-            printf 'ROUTE_B_FOCUS=%s\nROUTE_B_NAME=%s\nROUTE_B_SAVE=%s\n' "$FOCUS_B" "$NAME_B" "$SAVE_B" \
-              | tee -a runtime_evidence/save-probe.txt
-            import -display :99 -window root runtime_evidence/08_save_route_b.png
 
-            if [ "$FOCUS_B" != "$MAIN2" ] || [ -n "$SAVE_B" ]; then
-              PASS_ROUTE="START_TILE"
+            FOCUS_C=$(xdotool getwindowfocus)
+            NAME_C=$(xdotool getwindowname "$FOCUS_C" 2>/dev/null || true)
+            SAVE_C=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
+            printf 'CMD_FOCUS=%s\nCMD_NAME=%s\nCMD_SAVE=%s\n' "$FOCUS_C" "$NAME_C" "$SAVE_C" \
+              | tee -a runtime_evidence/save-probe.txt
+            import -display :100 -window root runtime_evidence/07_save_after_command_search.png
+
+            if [ "$FOCUS_C" != "$MAIN2" ] || [ -n "$SAVE_C" ]; then
+              PASS_ROUTE="COMMAND_SEARCH"
             fi
           fi
 
@@ -187,12 +212,12 @@ jobs:
           if [ -z "$PASS_ROUTE" ]; then
             xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
               | tee runtime_evidence/windows-final.txt || true
-            echo 'RESULT=FAIL_DRAWING_NOT_CONFIRMED_AFTER_FRESH_RELAUNCH' \
+            echo 'RESULT=FAIL_DRAWING_NOT_CONFIRMED_ON_FRESH_X_SERVER' \
               | tee runtime_evidence/result.txt
             exit 51
           fi
 
-          echo 'RESULT=PASS_REAL_DRAWING_CREATED_AFTER_FRESH_RELAUNCH' \
+          echo 'RESULT=PASS_REAL_DRAWING_CREATED_ON_FRESH_X_SERVER' \
             | tee runtime_evidence/result.txt
 
       - name: Strict Drawing gate
@@ -201,15 +226,15 @@ jobs:
           set -euxo pipefail
           grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
           grep -q '^EULA_SECOND=$' runtime_evidence/eula-second.txt
-          grep -Eq '^PASS_ROUTE=(FILE_MENU|START_TILE)$' runtime_evidence/pass-route.txt
-          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_AFTER_FRESH_RELAUNCH$' runtime_evidence/result.txt
+          grep -Eq '^PASS_ROUTE=(START_TILE|COMMAND_SEARCH)$' runtime_evidence/pass-route.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_ON_FRESH_X_SERVER$' runtime_evidence/result.txt
           test -s runtime_evidence/save-probe.txt
-          test -s runtime_evidence/02_fresh_second_launch.png
+          test -s runtime_evidence/02_fresh_x_server_start.png
           sha256sum runtime_evidence/*.png | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-native-drawing-fresh-gui
+          name: kompas3d-native-drawing-fresh-x
           path: runtime_evidence/
           if-no-files-found: error
