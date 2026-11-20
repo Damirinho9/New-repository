@@ -86,30 +86,45 @@ jobs:
           sleep 3
           import -display :99 -window root runtime_evidence/01_home_repainted.png
 
-          # Retry the proven native Drawing tile until KOMPAS confirms opening
-          # the real document by showing its license-manager warning.
+          # Open the native menu path instead of clicking the start-screen tile:
+          # F10 focuses the menu bar -> Enter opens "Файл" -> Home selects the
+          # first action "Создать" -> Right opens its submenu -> Home selects
+          # the first document type "Чертеж" -> Enter executes it.
           LIC=""
-          for attempt in $(seq 1 12); do
-            echo "ATTEMPT=$attempt" | tee -a runtime_evidence/drawing-attempts.txt
+          for attempt in $(seq 1 6); do
+            echo "MENU_ATTEMPT=$attempt" | tee -a runtime_evidence/drawing-attempts.txt
             xdotool windowactivate --sync "$MAIN"
             xdotool windowfocus --sync "$MAIN"
-            xdotool mousemove --window "$MAIN" --sync 920 203
-            xdotool click --repeat 2 --delay 220 1
-            for j in $(seq 1 4); do
+            xdotool key F10
+            sleep 1
+            xdotool key Return
+            sleep 1
+            import -display :99 -window root runtime_evidence/02_file_menu_attempt_${attempt}.png || true
+            xdotool key Home
+            sleep 1
+            xdotool key Right
+            sleep 1
+            import -display :99 -window root runtime_evidence/02_create_submenu_attempt_${attempt}.png || true
+            xdotool key Home
+            xdotool key Return
+            for j in $(seq 1 6); do
               sleep 1
               LIC=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
               [ -n "$LIC" ] && break
             done
             [ -n "$LIC" ] && break
             xdotool key Escape || true
+            xdotool key Escape || true
             sleep 1
           done
 
           echo "LICENSE_DIALOG=$LIC" | tee runtime_evidence/license-dialog.txt
           test -n "$LIC"
-          import -display :99 -window root runtime_evidence/02_real_drawing_with_warning.png
+          import -display :99 -window root runtime_evidence/03_drawing_license_warning.png
 
-          # Close the warning; Escape is proven to leave the Drawing open.
+          # Close only the license-manager warning, then require functional
+          # document behavior. If Ctrl+S does not open a separate Save dialog,
+          # the drawing was not actually created and the workflow fails.
           xdotool windowfocus --sync "$LIC"
           xdotool key Escape || true
           sleep 2
@@ -118,8 +133,32 @@ jobs:
           echo "LICENSE_DIALOG_AFTER=$LIC_AFTER" | tee runtime_evidence/license-dialog-after.txt
           test -z "$LIC_AFTER"
 
+          xdotool windowactivate --sync "$MAIN"
           xdotool windowfocus --sync "$MAIN"
-          import -display :99 -window root runtime_evidence/03_real_drawing_clean.png
+          import -display :99 -window root runtime_evidence/04_after_create_drawing.png
+
+          xdotool key --window "$MAIN" ctrl+s
+          sleep 4
+          SAVE_FOCUS=$(xdotool getwindowfocus)
+          echo "SAVE_FOCUS=$SAVE_FOCUS" | tee runtime_evidence/save-focus.txt
+          xdotool getwindowname "$SAVE_FOCUS" | tee -a runtime_evidence/save-focus.txt || true
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-windows-after-save.txt || true
+          import -display :99 -window root runtime_evidence/05_save_dialog_probe.png
+
+          if [ "$SAVE_FOCUS" = "$MAIN" ]; then
+            echo 'RESULT=FAIL_NO_NATIVE_DRAWING_AFTER_FILE_CREATE' | tee runtime_evidence/result.txt
+            exit 51
+          fi
+
+          echo "DRAWING_SAVE_DIALOG_CONFIRMED=1" | tee runtime_evidence/drawing-confirmed.txt
+
+          # Dismiss Save without saving yet; text insertion continues on the
+          # still-open native drawing.
+          xdotool key Escape || true
+          sleep 2
+          xdotool windowactivate --sync "$MAIN"
+          xdotool windowfocus --sync "$MAIN"
 
           # Probe API7 on active GUI drawing.
           export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
@@ -195,8 +234,24 @@ jobs:
           grep -Eq '^LICENSE_DIALOG=[0-9]+$' runtime_evidence/license-dialog.txt
           grep -q '^LICENSE_DIALOG_AFTER=$' runtime_evidence/license-dialog-after.txt
           grep -q '^RESULT=PASS_NATIVE_DRAWING_OPEN_TEXT_INPUT_EXECUTED$' runtime_evidence/result.txt
-          test -s runtime_evidence/02_real_drawing_with_warning.png
-          test -s runtime_evidence/03_real_drawing_clean.png
+          grep -q '^DRAWING_SAVE_DIALOG_CONFIRMED=1
+          test -s runtime_evidence/04_command_search_annotation.png
+          test -s runtime_evidence/05_plain_annotation_activated.png
+          test -s runtime_evidence/06_annotation_point_placed.png
+          test -s runtime_evidence/07_text_pasted_before_finish.png
+          test -s runtime_evidence/08_final_text_candidate.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/screenshots-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-robust-native-drawing-text
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/drawing-confirmed.txt
+          test -s runtime_evidence/03_drawing_license_warning.png
+          test -s runtime_evidence/04_after_create_drawing.png
+          test -s runtime_evidence/05_save_dialog_probe.png
           test -s runtime_evidence/04_command_search_annotation.png
           test -s runtime_evidence/05_plain_annotation_activated.png
           test -s runtime_evidence/06_annotation_point_placed.png
