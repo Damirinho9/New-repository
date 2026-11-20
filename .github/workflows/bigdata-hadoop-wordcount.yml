@@ -734,7 +734,7 @@ jobs:
           sudo -H -u hduser /tmp/cluster-user.sh bash /tmp/wc-input-user.sh
           SCRIPT
           /tmp/capture-stage 25_wordcount_input /tmp/wc-input.sh
-          sudo cp /home/hduser/books/*.txt evidence/wordcount/input/
+          sudo cp -a /home/hduser/books/. evidence/wordcount/input/
           sudo chown -R "$(id -u):$(id -g)" evidence/wordcount
       - name: Execute standard Hadoop MapReduce WordCount on YARN
         shell: bash
@@ -768,7 +768,8 @@ jobs:
           python3 - <<'PY'
           from collections import Counter
           from pathlib import Path
-          files = sorted(Path('/home/hduser/books').glob('*.txt'))
+          import os
+          files = sorted((Path(os.environ['EVIDENCE']) / 'wordcount' / 'input').glob('*.txt'))
           assert len(files) == 3
           expected = Counter(w for f in files for w in f.read_text().split())
           rows = [line.split('\t') for line in Path('/tmp/wordcount-actual.tsv').read_text().splitlines()]
