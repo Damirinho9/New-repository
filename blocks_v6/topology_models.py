@@ -107,6 +107,33 @@ def _retarget_vto(card,vto):
     if n[1]!=1: raise RuntimeError("VT3 vendor VTO not found exactly once")
     return n[0]
 
+
+def _kp707v2_params(vth_test=1.5, ith=0.025, rds_on=3.0):
+    # Engineering approximation using two documented limits for 2P707V2:
+    # threshold-test point at the listed initial drain current 25mA (assumption documented),
+    # and Rds(on)<=3 ohm at strong gate drive.
+    # Solve .5*KP*(Vth_test-VTO)^2=Ith and KP*(10-VTO)=1/Rds.
+    def f(vto):
+        kp=1.0/(rds_on*(10.0-vto))
+        return 0.5*kp*(vth_test-vto)**2-ith
+    lo=-5.0; hi=vth_test-1e-6; flo=f(lo)
+    for _ in range(120):
+        mid=(lo+hi)/2.0; fm=f(mid)
+        if flo*fm<=0: hi=mid
+        else: lo=mid; flo=fm
+    vto=(lo+hi)/2.0; kp=1.0/(rds_on*(10.0-vto))
+    return vto,kp
+
+def _kp707v2_card(alias,vth_test=1.5):
+    vto,kp=_kp707v2_params(vth_test)
+    return chr(10).join([
+        f".SUBCKT {alias} 1 2 3",
+        f"* KP707V2_CONTINUOUS threshold-test={vth_test:.6g}V assumed Id=25mA Rds10V=3ohm",
+        "MCH 1 2 3 3 MKP707V2 L=100u W=100u",
+        f".MODEL MKP707V2 NMOS LEVEL=1 VTO={vto:.9g} KP={kp:.9g} LAMBDA=0.001 IS=1e-30 CBD=0 CBS=0 CGSO=500p CGDO=80p",
+        f".ENDS {alias}",
+    ])
+
 def patch_models(root,xmlio,refs=None):
     notes={}
     refs=set(refs or ("VT1","VT2","VT3","VS1","VS2","VD1","VD3","VD4","VD5"))
@@ -124,15 +151,11 @@ def patch_models(root,xmlio,refs=None):
                 s,t=vendor_card(src,n1,expected),vendor_card(src,n2,expected)
                 notes[ref]="ZVN2120G official vendor electrical proxy for KP501A prototype; not exact KP501A"
             else:
-                src="vendor/SIHFBE30.lib"; expected="SIHFBE30"
-                try:
-                    vto=float(os.environ.get("KP707_VTO","1.5"))
-                    if not (1.5 <= vto <= 6.0): raise RuntimeError("KP707_VTO outside documented 1.5..6.0V")
-                    s,t=vendor_card(src,n1,expected),vendor_card(src,n2,expected)
-                    s,t=_retarget_vto(s,vto),_retarget_vto(t,vto)
-                    notes[ref]=f"{expected} 800V vendor electrical proxy retargeted only in VTO to KP707V2 documented threshold {vto:g}V"
-                except (OSError,ValueError,StopIteration) as exc:
-                    raise RuntimeError("VT3 vendor model unavailable: "+str(exc))
+                vth=float(os.environ.get("KP707_VTO","1.5"))
+                if not (1.5 <= vth <= 6.0): raise RuntimeError("KP707 threshold-test voltage outside documented 1.5..6.0V")
+                s,t=_kp707v2_card(n1,vth),_kp707v2_card(n2,vth)
+                vto,kp=_kp707v2_params(vth)
+                notes[ref]=f"KP707V2 continuous engineering model threshold-test={vth:g}V VTO={vto:.4g} KP={kp:.4g}; calibrated to 25mA/3ohm assumptions"
         else:
             s,t=_relative(x),_relative(y)
             notes[ref]="Functional cathode-referenced NI SCR, not manufacturer T123-250"
@@ -160,7 +183,7 @@ def verify_saved_cards(root,xmlio,refs=None):
         c=_find_component(root,xmlio,ref);m=_find_model(root,c);a,b=_cards(c,m,xmlio)
         for x in (xmlio.text(a.get("String")),xmlio.text(b.get("Value"))):
             _validate(x)
-            if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": gate reference lost")
+            if ref=="VT3" and "KP707V2_CONTINUOUS" not in x: raise RuntimeError("VT3: KP707V2 continuous model lost")\n            if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": gate reference lost")
     if "VD1" in refs:
         c=_find_component(root,xmlio,"VD1")
         cards=[raw for _,_,raw in _embedded_spice(c,xmlio)]
