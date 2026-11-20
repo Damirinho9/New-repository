@@ -86,11 +86,9 @@ jobs:
           echo "EULA_AFTER=$EULA2" | tee runtime_evidence/eula-after.txt
           test -z "$EULA2"
 
-          # Refocus actual KOMPAS top-level window.
           xdotool windowfocus --sync "$MAIN"
           sleep 1
 
-          # Open real File menu by its top-left menu-bar position.
           eval "$(xdotool getwindowgeometry --shell "$MAIN")"
           FILE_X=$((X + 18))
           FILE_Y=$((Y + 25))
@@ -101,8 +99,6 @@ jobs:
           import -display :99 -window root runtime_evidence/02_file_menu.png
           xwininfo -root -tree > runtime_evidence/xwin-tree-file-menu.txt
 
-          # In KOMPAS File menu the first command is "Создать"; its first submenu
-          # document type is "Чертеж". Navigate the real QMenu, not the start tile.
           xdotool key Home
           sleep 1
           xdotool key Right
@@ -117,7 +113,6 @@ jobs:
             | tee runtime_evidence/windows-after-create.txt || true
           import -display :99 -window root runtime_evidence/04_after_create_drawing.png
 
-          # Functional proof: an unsaved Drawing must respond to Save with a modal dialog.
           BEFORE_FOCUS=$(xdotool getwindowfocus)
           echo "BEFORE_SAVE_FOCUS=$BEFORE_FOCUS" | tee runtime_evidence/save-probe.txt
           xdotool key ctrl+s
@@ -129,7 +124,6 @@ jobs:
             | tee runtime_evidence/windows-after-save.txt || true
           import -display :99 -window root runtime_evidence/05_save_dialog.png
 
-          # Require a distinct focused top-level window OR a visible Save-named window.
           SAVE_NAMED=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
           echo "SAVE_NAMED=$SAVE_NAMED" | tee -a runtime_evidence/save-probe.txt
           if [ "$AFTER_FOCUS" = "$MAIN" ] && [ -z "$SAVE_NAMED" ]; then
