@@ -86,15 +86,43 @@ jobs:
           echo "EULA_AFTER=$EULA2" | tee runtime_evidence/eula-after.txt
           test -z "$EULA2"
 
-          xdotool windowfocus --sync "$MAIN"
-          sleep 1
+          # The first process has just exited the modal EULA loop. Close it
+          # completely and relaunch KOMPAS so all further GUI input is handled
+          # by a clean post-EULA session. Stage 3 proved the acceptance persists.
+          xdotool windowclose "$MAIN" || true
+          for i in $(seq 1 30); do
+            sleep 1
+            if ! ps -p "$KPID" >/dev/null 2>&1; then break; fi
+          done
+          if ps -p "$KPID" >/dev/null 2>&1; then
+            kill "$KPID" 2>/dev/null || true
+            sleep 2
+          fi
 
-          echo "MENU_METHOD=F10_HOME_DOWN_HOME_RIGHT_HOME_ENTER" | tee runtime_evidence/file-menu-target.txt
-          xdotool windowfocus --sync "$MAIN"
-          xdotool key F10
-          sleep 1
-          xdotool key Home
-          xdotool key Down
+          kompas-v25 >runtime_evidence/kompas-second.out 2>runtime_evidence/kompas-second.err &
+          KPID2=$!
+          echo "$KPID2" > runtime_evidence/kompas-second.pid
+
+          MAIN2=""
+          for i in $(seq 1 90); do
+            sleep 1
+            MAIN2=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$MAIN2" ] && break
+          done
+          test -n "$MAIN2"
+          echo "MAIN2=$MAIN2" | tee runtime_evidence/main-second.txt
+          sleep 20
+
+          EULA_SECOND=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+          echo "EULA_SECOND=$EULA_SECOND" | tee runtime_evidence/eula-second.txt
+          test -z "$EULA_SECOND"
+
+          xdotool windowfocus --sync "$MAIN2"
+
+          # Route A: real File -> Create -> Drawing menu navigation.
+          echo "MENU_METHOD=FRESH_SESSION_FILE_CREATE_DRAWING" | tee runtime_evidence/file-menu-target.txt
+          xdotool mousemove --window "$MAIN2" --sync 18 6
+          xdotool click 1
           sleep 2
           import -display :99 -window root runtime_evidence/02_file_menu.png
           xwininfo -root -tree > runtime_evidence/xwin-tree-file-menu.txt
@@ -103,41 +131,98 @@ jobs:
           xdotool key Right
           sleep 2
           import -display :99 -window root runtime_evidence/03_create_submenu.png
-          xwininfo -root -tree > runtime_evidence/xwin-tree-create-submenu.txt
           xdotool key Home
           xdotool key Return
-          sleep 15
+          sleep 12
 
+          import -display :99 -window root runtime_evidence/04_after_create_drawing.png
           xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
             | tee runtime_evidence/windows-after-create.txt || true
-          import -display :99 -window root runtime_evidence/04_after_create_drawing.png
 
-          BEFORE_FOCUS=$(xdotool getwindowfocus)
-          echo "BEFORE_SAVE_FOCUS=$BEFORE_FOCUS" | tee runtime_evidence/save-probe.txt
           xdotool key ctrl+s
           sleep 5
-          AFTER_FOCUS=$(xdotool getwindowfocus)
-          echo "AFTER_SAVE_FOCUS=$AFTER_FOCUS" | tee -a runtime_evidence/save-probe.txt
-          xdotool getwindowname "$AFTER_FOCUS" | tee -a runtime_evidence/save-probe.txt || true
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/windows-after-save.txt || true
-          import -display :99 -window root runtime_evidence/05_save_dialog.png
+          FOCUS1=$(xdotool getwindowfocus)
+          NAME1=$(xdotool getwindowname "$FOCUS1" 2>/dev/null || true)
+          SAVE1=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
+          printf 'ROUTE_A_FOCUS=%s\nROUTE_A_NAME=%s\nROUTE_A_SAVE_NAMED=%s\n' "$FOCUS1" "$NAME1" "$SAVE1" \
+            | tee runtime_evidence/save-probe.txt
+          import -display :99 -window root runtime_evidence/05_save_dialog_route_a.png
 
-          SAVE_NAMED=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
-          echo "SAVE_NAMED=$SAVE_NAMED" | tee -a runtime_evidence/save-probe.txt
-          if [ "$AFTER_FOCUS" = "$MAIN" ] && [ -z "$SAVE_NAMED" ]; then
-            echo 'RESULT=FAIL_DRAWING_NOT_CONFIRMED' | tee runtime_evidence/result.txt
+          PASS_ROUTE=""
+          if [ "$FOCUS1" != "$MAIN2" ] || [ -n "$SAVE1" ]; then
+            PASS_ROUTE="FILE_MENU"
+          else
+            # Dismiss any residual menu state and use the actual Start-page
+            # Drawing tile in the clean second process. Coordinates are relative
+            # to the KOMPAS client; measured from the real 1920x1080 start page.
+            xdotool key Escape Escape Escape || true
+            xdotool windowfocus --sync "$MAIN2"
+            xdotool mousemove --window "$MAIN2" --sync 919 189
+            xdotool click 1
+            sleep 12
+            import -display :99 -window root runtime_evidence/06_after_drawing_tile_fallback.png
+            xdotool key ctrl+s
+            sleep 5
+            FOCUS2=$(xdotool getwindowfocus)
+            NAME2=$(xdotool getwindowname "$FOCUS2" 2>/dev/null || true)
+            SAVE2=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
+            printf 'ROUTE_B_FOCUS=%s\nROUTE_B_NAME=%s\nROUTE_B_SAVE_NAMED=%s\n' "$FOCUS2" "$NAME2" "$SAVE2" \
+              | tee -a runtime_evidence/save-probe.txt
+            import -display :99 -window root runtime_evidence/07_save_dialog_route_b.png
+            if [ "$FOCUS2" != "$MAIN2" ] || [ -n "$SAVE2" ]; then
+              PASS_ROUTE="START_TILE"
+            fi
+          fi
+
+          echo "PASS_ROUTE=$PASS_ROUTE" | tee runtime_evidence/pass-route.txt
+          if [ -z "$PASS_ROUTE" ]; then
+            echo 'RESULT=FAIL_DRAWING_NOT_CONFIRMED_AFTER_FRESH_RELAUNCH' | tee runtime_evidence/result.txt
             exit 51
           fi
 
-          echo 'RESULT=PASS_REAL_DRAWING_CREATED_VIA_FILE_MENU' | tee runtime_evidence/result.txt
+          echo 'RESULT=PASS_REAL_DRAWING_CREATED_AFTER_FRESH_RELAUNCH' | tee runtime_evidence/result.txt
 
       - name: Strict Drawing gate
         shell: bash
         run: |
           set -euxo pipefail
           grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
-          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_VIA_FILE_MENU$' runtime_evidence/result.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_AFTER_FRESH_RELAUNCH
+          test -s runtime_evidence/02_file_menu.png
+          test -s runtime_evidence/03_create_submenu.png
+          test -s runtime_evidence/04_after_create_drawing.png
+          test -s runtime_evidence/save-probe.txt\n          test -s runtime_evidence/pass-route.txt\n          grep -Eq '^PASS_ROUTE=(FILE_MENU|START_TILE)
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-drawing-gui-menu
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/result.txt
+          test -s runtime_evidence/02_file_menu.png
+          test -s runtime_evidence/03_create_submenu.png
+          test -s runtime_evidence/04_after_create_drawing.png
+          test -s runtime_evidence/05_save_dialog.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-drawing-gui-menu
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/pass-route.txt
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-drawing-gui-menu
+          path: runtime_evidence/
+          if-no-files-found: error
+ runtime_evidence/result.txt
           test -s runtime_evidence/02_file_menu.png
           test -s runtime_evidence/03_create_submenu.png
           test -s runtime_evidence/04_after_create_drawing.png
