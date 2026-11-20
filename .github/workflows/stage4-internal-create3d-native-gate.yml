@@ -194,7 +194,10 @@ jobs:
 
           /usr/bin/clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" /tmp/internal_create3d.cpp -L"$BIN" -Wl,-rpath,"$BIN"             -lksAPI -lc++abi -ldl -o /tmp/writer_variant06.so
 
-          sed 's/ms(now)-ms(g_start)<30000/ms(now)-ms(g_start)<8000/'             kompas-linux/bootstrap_variant06_poll.cpp >/tmp/internal_bootstrap.cpp
+          sed \
+            -e 's/ms(now)-ms(g_start)<30000/ms(now)-ms(g_start)<1000/' \
+            -e 's#if(!g_enabled||g_done||g_in_writer||!pthread_equal(pthread_self(),g_main_thread)) return;#if(!g_enabled||g_done||g_in_writer||!pthread_equal(pthread_self(),g_main_thread)) return; if(access("/tmp/controller_app_ready",F_OK)!=0) return;#' \
+            kompas-linux/bootstrap_variant06_poll.cpp >/tmp/internal_bootstrap.cpp
           /usr/bin/clang++-18 -std=c++20 -O2 -fPIC -shared -pthread             /tmp/internal_bootstrap.cpp -ldl -o /tmp/internal_bootstrap.so
 
           ldd /tmp/writer_variant06.so | tee /tmp/writer.ldd
@@ -225,6 +228,8 @@ jobs:
               log("CONTROLLER_APP=1")
               lm=app.GetApplicationLicenseManager()
               log("CONTROLLER_LICENSE_3D="+str(int(bool(lm and lm.IsKompasModuleActive(c.ksKompasModule3D)))))
+              pathlib.Path("/tmp/controller_app_ready").write_text("READY\n",encoding="ascii")
+              log("CONTROLLER_READY_HANDSHAKE=1")
               for i in range(180):
                   try: app.PumpWaitingMessages()
                   except BaseException: pass
@@ -259,7 +264,7 @@ jobs:
           mkdir -p "$HOST_XDG/ascon/KOMPAS-3D Invisible/25"
           RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
           [ -z "$RES" ] || cp -f "$RES" "$HOST_XDG/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
-          rm -f /tmp/internal_create3d_gate.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/InternalFactory_Native_3D.m3d
+          rm -f /tmp/internal_create3d_gate.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/controller_app_ready /tmp/InternalFactory_Native_3D.m3d
           unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
 
           timeout 160s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"             dbus-run-session -- env               PYTHONPATH="$BIN"               LD_LIBRARY_PATH="$BIN"               HOME="$HOST_HOME"               XDG_CONFIG_HOME="$HOST_XDG"               QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8               python3 -u /tmp/controller.py             >"$OUT/stdout.txt" 2>"$OUT/stderr.txt" || true
