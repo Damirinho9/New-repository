@@ -1,0 +1,106 @@
+name: Inject native parametric Work1 into KOMPAS
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/inject-native-work1.yml'
+      - 'kompas-linux/inject_writer.cpp'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      image: alt:p11
+    timeout-minutes: 20
+    steps:
+      - name: Install KOMPAS v25 + SDK + compiler
+        shell: bash
+        run: |
+          set -u
+          apt-get update
+          apt-get install -y wget ca-certificates
+          bash -c "$(wget -O - https://repo.ascon.ru/scripts/ascon-stable-alt.sh)"
+          apt-get update
+          apt-get install -y fontconfig glibc-i18ndata libxcbutil-icccm libxcbutil-keysyms libxcbutil-image libxcb-render-util libXv libXScrnSaver libxkbfile libfontenc || true
+          apt-get install -y ascon-kompas-graphic-v25 ascon-kompas-v25 ascon-kompas-sdk-v25 || true
+          apt-get install -y clang18.1 libcxx-devel libcxxabi-devel dbus procps iproute2 file python3 curl
+          test -f /opt/ascon/kompas3d-v25/SDK/KsAPI/Include/KsAPI.h
+          test -f /opt/ascon/kompas3d-v25/Bin/libksAPI.so
+          test -x /opt/ascon/kompas3d-v25/Bin/kKompas
+
+      - name: Fetch and build injected writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL -o /tmp/inject_writer.cpp             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/inject_writer.cpp'
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          clang++-18 -std=c++20 -stdlib=libc++ -fPIC -shared -pthread             -I"$INC" /tmp/inject_writer.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/inject_writer.so
+          file /tmp/inject_writer.so
+          ldd /tmp/inject_writer.so | head -120 || true
+
+      - name: Launch KOMPAS with injected native writer
+        shell: bash
+        run: |
+          set +e
+          rm -f /tmp/work1_inject.log /tmp/Work1_Parametric_Native.frw
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+          export QT_QPA_PLATFORM=offscreen
+          unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          export LD_LIBRARY_PATH=/opt/ascon/kompas3d-v25/Bin
+          export LD_PRELOAD=/tmp/inject_writer.so
+          cd /opt/ascon/kompas3d-v25/Bin
+          dbus-run-session -- ./kKompas >/tmp/kompas_inject.log 2>&1 &
+          KP=$!
+          echo "KOMPAS_PID=$KP"
+
+          for i in $(seq 1 90); do
+            echo "poll=$i"
+            cat /tmp/work1_inject.log 2>/dev/null || true
+            if grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_FRW' /tmp/work1_inject.log 2>/dev/null; then
+              echo "PASS marker found"
+              break
+            fi
+            if ! kill -0 "$KP" 2>/dev/null; then
+              echo "KOMPAS exited"
+              break
+            fi
+            sleep 2
+          done
+
+          echo "=== INJECT LOG ==="
+          cat /tmp/work1_inject.log 2>/dev/null || true
+          echo "=== KOMPAS LOG TAIL ==="
+          tail -200 /tmp/kompas_inject.log 2>/dev/null || true
+
+          if [ ! -s /tmp/Work1_Parametric_Native.frw ]; then
+            echo "NO_FRW"
+            exit 20
+          fi
+
+          echo "=== NATIVE FRW ==="
+          ls -l /tmp/Work1_Parametric_Native.frw
+          file /tmp/Work1_Parametric_Native.frw
+          sha256sum /tmp/Work1_Parametric_Native.frw
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('/tmp/Work1_Parametric_Native.frw')
+          print('size',p.stat().st_size)
+          print('sha256',hashlib.sha256(p.read_bytes()).hexdigest())
+          print('is_zip',zipfile.is_zipfile(p))
+          with zipfile.ZipFile(p) as z:
+              print('members',[(i.filename,i.file_size) for i in z.infolist()])
+              assert 'Contents' in z.namelist()
+          PY
+
+          if ! grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_FRW' /tmp/work1_inject.log; then
+            echo "FRW exists but parametric verification did not pass"
+            exit 21
+          fi
+
+          echo "=== FRW_BASE64_BEGIN ==="
+          base64 -w 76 /tmp/Work1_Parametric_Native.frw
+          echo "=== FRW_BASE64_END ==="
+          exit 0

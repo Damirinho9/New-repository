@@ -1,0 +1,188 @@
+name: Prove and export clean Ubuntu KOMPAS v25 rootfs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/export-kompas-ubuntu-rootfs.yml'
+
+jobs:
+  prove-export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Build clean Ubuntu 24.04 KOMPAS environment and prove lifecycle
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          cat > /tmp/probe.py <<'PY'
+          import os, sys, glob
+          BIN="/opt/ascon/kompas3d-v25/Bin"
+          sys.path.insert(0,BIN)
+          import ksapi
+          from constants import constants
+          app=ksapi.OpenKompasInvisible()
+          if not app: raise SystemExit("OPEN_KOMPAS_INVISIBLE_FAIL")
+          try: app.SetHideMessage(constants.ksHideMessageYes)
+          except Exception: pass
+          print("KOMPAS_OPEN_PASS")
+          print("VERSION",app.GetSystemVersion(0,0,0,0))
+          lm=app.GetApplicationLicenseManager()
+          print("VARIANT",lm.GetKompasVariant() if lm else None)
+          print("ACTIVE3D",lm.IsKompasModuleActive(constants.ksKompasModule3D) if lm else None)
+          docs=app.GetDocuments()
+          print("DOCS",bool(docs))
+          preferred="/opt/ascon/kompas3d-v25/Samples/Models/Bracket.m3d"
+          candidates=[preferred] if os.path.isfile(preferred) else glob.glob("/opt/ascon/kompas3d-v25/Samples/**/*.m3d",recursive=True)
+          print("M3D_CANDIDATES",len(candidates))
+          if not candidates: raise SystemExit("NO_PRODUCT_M3D")
+          sample=candidates[0]
+          print("SAMPLE",sample,os.path.getsize(sample))
+          doc=docs.Open(sample,False,False)
+          if not doc:
+              e=app.GetKompasError()
+              print("OPEN_ERROR",e.GetCode(),repr(e.GetDescription()),e.IsError3D())
+              raise SystemExit("DOCUMENT_OPEN_FAIL")
+          print("DOCUMENT_OPEN_PASS",doc.GetFullPath(),doc.GetDocumentType())
+          d3=ksapi.IKompasDocument3D(doc)
+          if not d3: raise SystemExit("CAST_3D_FAIL")
+          if not d3.RebuildDocument(): raise SystemExit("REBUILD_DOCUMENT_FAIL")
+          top=d3.GetTopPart()
+          if not top or not top.RebuildModel(False): raise SystemExit("REBUILD_MODEL_FAIL")
+          print("REBUILD_PASS",top.GetMass())
+          if not doc.Save(): raise SystemExit("SAVE_FAIL")
+          print("SAVE_PASS")
+          if not doc.Close(constants.kdDoNotSaveChanges): raise SystemExit("CLOSE_FAIL")
+          print("CLOSE_PASS")
+          doc2=docs.Open(sample,False,False)
+          if not doc2: raise SystemExit("REOPEN_FAIL")
+          d32=ksapi.IKompasDocument3D(doc2)
+          if not d32 or not d32.RebuildDocument(): raise SystemExit("REOPEN_REBUILD_DOCUMENT_FAIL")
+          top2=d32.GetTopPart()
+          if not top2 or not top2.RebuildModel(False): raise SystemExit("REOPEN_REBUILD_MODEL_FAIL")
+          print("REOPEN_REBUILD_PASS")
+          doc2.Close(constants.kdDoNotSaveChanges)
+          app.Quit()
+          print("RESULT=UBUNTU_CONTAINER_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS")
+          PY
+
+          docker run --name kompas-ubuntu -d ubuntu:24.04 sleep infinity
+          docker exec kompas-ubuntu bash -lc '
+            set -euxo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y wget curl ca-certificates gnupg lsb-release xvfb xauth dbus procps python3 zstd locales fontconfig qt6-base-dev \
+              libxcb-res0 libxcb-dri2-0 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 \
+              libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libunwind8 libxcb-xkb1 libxkbcommon-x11-0 \
+              libxcb-util1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render0 libxcb-shm0 \
+              libxcb-sync1 libxcb-xfixes0
+            wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+            bash /tmp/ascon.sh || true
+            rm -f /etc/apt/sources.list.d/ascon.list
+            echo "deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main" > /etc/apt/sources.list.d/ascon.list
+            test -s /etc/apt/trusted.gpg.d/ascon.gpg
+            apt-get update
+            apt-get install -y ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+            dpkg -l "ascon-kompas*"
+          '
+          docker cp /tmp/probe.py kompas-ubuntu:/root/probe.py
+          docker exec kompas-ubuntu bash -lc '
+            set -euxo pipefail
+            export HOME=/root XDG_CONFIG_HOME=/root/.config
+            mkdir -p /root/.config/ascon/KOMPAS-3D/25 /root/.config/ascon/"KOMPAS-3D Invisible"/25
+            if [ -d /etc/ascon/KOMPAS-3D/25 ]; then
+              cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/KOMPAS-3D/25/
+              cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/"KOMPAS-3D Invisible"/25/
+            fi
+            RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+            [ -z "$RES" ] || cp -f "$RES" /root/.config/ascon/"KOMPAS-3D Invisible"/25/QtResources.bin
+            mkdir -p /tmp/.X11-unix
+            chmod 1777 /tmp/.X11-unix
+            rm -f /tmp/.X11-unix/X105
+            Xvfb :105 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
+            XV=$!
+            trap "kill $XV 2>/dev/null || true" EXIT
+            sleep 2
+            test -S /tmp/.X11-unix/X105
+            export DISPLAY=:105 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+            export LANG=C.UTF-8 LC_ALL=C.UTF-8
+            export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+            export LD_LIBRARY_PATH=/opt/ascon/kompas3d-v25/Bin
+            timeout 90s dbus-run-session -- python3 /root/probe.py | tee /root/installed-probe.txt
+            grep -q "RESULT=UBUNTU_CONTAINER_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS" /root/installed-probe.txt
+          '
+
+      - name: Export installed rootfs for local native acceptance
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          docker exec kompas-ubuntu bash -lc 'apt-get clean; rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /tmp/* /var/tmp/* || true'
+          docker export kompas-ubuntu | zstd -T0 -7 -o out/kompas-ubuntu2404-v25-rootfs.tar.zst
+          docker cp kompas-ubuntu:/root/installed-probe.txt out/installed-probe.txt
+          sha256sum out/kompas-ubuntu2404-v25-rootfs.tar.zst | tee out/rootfs-SHA256.txt
+          split -b 330M -d -a 2 out/kompas-ubuntu2404-v25-rootfs.tar.zst out/rootfs.part-
+          sha256sum out/rootfs.part-* | tee out/rootfs-parts-SHA256.txt
+          ls -lh out/rootfs.part-*
+
+      - name: Upload part 00
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part00, path: out/rootfs.part-00, compression-level: 0, retention-days: 3}
+      - name: Upload part 01
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part01, path: out/rootfs.part-01, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 02
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part02, path: out/rootfs.part-02, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 03
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part03, path: out/rootfs.part-03, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 04
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part04, path: out/rootfs.part-04, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 05
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part05, path: out/rootfs.part-05, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 06
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part06, path: out/rootfs.part-06, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 07
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part07, path: out/rootfs.part-07, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 08
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part08, path: out/rootfs.part-08, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload part 09
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: kompas-ubuntu-rootfs-part09, path: out/rootfs.part-09, compression-level: 0, retention-days: 3, if-no-files-found: ignore}
+      - name: Upload proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-ubuntu-rootfs-proof
+          path: |
+            out/installed-probe.txt
+            out/rootfs-SHA256.txt
+            out/rootfs-parts-SHA256.txt
+          retention-days: 3
+
+      - name: Enforce native proof after rootfs export
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s out/installed-probe.txt
+          grep -q 'RESULT=UBUNTU_CONTAINER_KOMPAS_OPEN_REBUILD_SAVE_REOPEN_PASS' out/installed-probe.txt

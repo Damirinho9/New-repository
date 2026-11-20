@@ -1,0 +1,68 @@
+name: KOMPAS Stage 4 KompasAppl focused machine-code probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-kompasappl-focused-code.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Inspect only known code ranges
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          F=/opt/ascon/kompas3d-v25/Bin/libEquipmentObject.so
+          OUT=result/stage4-kompasappl-focused-code
+          mkdir -p "$OUT"
+          {
+            echo "=== SYMBOLS ==="
+            nm -D -C "$F" | grep -E 'KompasAppl::(GetKompas\(\)|SetKompas\(|CreateDocument3D\()' || true
+            echo "=== GET 0x627750 ==="
+            objdump -d -C --start-address=0x627740 --stop-address=0x6277d0 "$F"
+            echo "=== CREATE3D 0x63fc40 ==="
+            objdump -d -C --start-address=0x63fc30 --stop-address=0x63fe20 "$F"
+            echo "=== SET 0x65d910 ==="
+            objdump -d -C --start-address=0x65d900 --stop-address=0x65d980 "$F"
+          } | tee "$OUT/code.txt"
+          echo "RESULT=FOCUSED_CODE_READY" | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-kompasappl-focused-code
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-kompasappl-focused-code/**

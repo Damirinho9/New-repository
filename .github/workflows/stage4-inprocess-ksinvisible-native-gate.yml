@@ -1,0 +1,318 @@
+name: KOMPAS Stage 4 in-process ksinvisible native gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-inprocess-ksinvisible-native-gate.yml'
+      - 'kompas-linux/bootstrap_variant06_poll.cpp'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then
+            sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+          fi
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+
+      - name: Install exact compiler and controller prerequisites
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang-18 libc++-18-dev libc++abi-18-dev libunwind-18-dev \
+            xvfb xauth dbus procps python3 \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
+            libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
+            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0 \
+            libxcb-composite0 libxcb-shape0 libxv1 libopengl0 libglu1-mesa
+
+      - name: Compile in-process native writer and preload bootstrap
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+
+          cat >/tmp/inproc_writer.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <fstream>
+          #include <string>
+          #include <cmath>
+          using namespace ksapi;
+
+          static std::ofstream lg("/tmp/inproc_ksinvisible_gate.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){ lg<<s<<std::endl; lg.flush(); }
+          static IKompasDocumentPtr fdoc{};
+          static IKompasDocumentPtr pdoc{};
+          static int tries=0;
+
+          extern "C" int run_variant06_writer(){
+            try{
+              IApplication& app=GetKompasApplication();
+              if(tries==0) log("IN_PROCESS_GET_KOMPAS_APPLICATION=1");
+
+              int ma=0,mi=0,re=0,bu=0;
+              app.GetSystemVersion(ma,mi,re,bu);
+              if(tries==0) log("KOMPAS_VERSION="+std::to_string(ma)+"."+std::to_string(mi)+"."+std::to_string(re)+"."+std::to_string(bu));
+
+              auto lm=app.GetApplicationLicenseManager();
+              if(!lm){ log("FAIL_LICENSE_MANAGER"); return 1; }
+              bool l2=lm->IsKompasModuleActive(ksKompasModule2D);
+              bool l3=lm->IsKompasModuleActive(ksKompasModule3D);
+              if(tries==0){
+                log(std::string("LICENSE_2D_IN_PROCESS=")+(l2?"1":"0"));
+                log(std::string("LICENSE_3D_IN_PROCESS=")+(l3?"1":"0"));
+              }
+              if(!l2||!l3){ log("RESULT=FAIL_IN_PROCESS_LICENSE"); return 1; }
+
+              auto docs=app.GetDocuments();
+              if(!docs){ log("FAIL_DOCUMENTS"); return 1; }
+              if(tries==0) log("DOC_COUNT_INITIAL="+std::to_string(docs->GetCount()));
+
+              // In-process creation is deliberately the only changed variable.
+              if(!fdoc){
+                fdoc=docs->AddWithDefaultSettings(ksDocumentFragment,true);
+                log(std::string("IN_PROCESS_FRAGMENT_ADD_DEFAULT=")+(fdoc?"1":"0"));
+                if(!fdoc){
+                  fdoc=docs->Add(ksDocumentFragment,true);
+                  log(std::string("IN_PROCESS_FRAGMENT_ADD=")+(fdoc?"1":"0"));
+                }
+              }
+              if(!pdoc){
+                pdoc=docs->AddWithDefaultSettings(ksDocumentPart,true);
+                log(std::string("IN_PROCESS_PART_ADD_DEFAULT=")+(pdoc?"1":"0"));
+                if(!pdoc){
+                  pdoc=docs->Add(ksDocumentPart,true);
+                  log(std::string("IN_PROCESS_PART_ADD=")+(pdoc?"1":"0"));
+                }
+              }
+
+              log("DOC_COUNT_AFTER_CREATE="+std::to_string(docs->GetCount()));
+              if(!fdoc||!pdoc){
+                if(++tries<8) return 3;
+                log("RESULT=FAIL_IN_PROCESS_CREATE_NULL");
+                return 1;
+              }
+
+              IKompasDocument2DPtr d2=fdoc;
+              IKompasDocument3DPtr d3=pdoc;
+              auto vm=d2?d2->GetViewsAndLayersManager():IViewsAndLayersManagerPtr{};
+              auto views=vm?vm->GetViews():IViewsPtr{};
+              auto view=views?views->GetActiveView():IViewPtr{};
+              IDrawingContainerPtr dc=view;
+              auto lines=dc?dc->GetLineSegments():ILineSegmentsPtr{};
+              auto top=d3?d3->GetTopPart():IPartPtr{};
+
+              log(std::string("FRAGMENT_CAST=")+(d2?"1":"0"));
+              log("FRAGMENT_VIEWS="+std::to_string(views?views->GetCount():-1));
+              log(std::string("FRAGMENT_ACTIVE_VIEW=")+(view?"1":"0"));
+              log(std::string("FRAGMENT_LINE_COLLECTION=")+(lines?"1":"0"));
+              log(std::string("PART_CAST=")+(d3?"1":"0"));
+              log(std::string("PART_TOP_PART=")+(top?"1":"0"));
+
+              if(!view||!lines||!top){
+                if(++tries<20) return 3;
+                log("RESULT=FAIL_IN_PROCESS_DOCUMENT_CONTEXT");
+                return 1;
+              }
+
+              auto seg=lines->Add();
+              if(!seg){ log("FAIL_LINE_ADD"); return 1; }
+              seg->SetX1(0); seg->SetY1(0); seg->SetX2(50); seg->SetY2(0); seg->SetStyle(ksCSNormal);
+              if(!seg->Update()){ log("FAIL_LINE_UPDATE"); return 1; }
+              log("LINE_ADD_PASS=1");
+
+              const std::wstring p2=L"/tmp/InProcess_Ksinvisible_2D.frw";
+              const std::wstring p3=L"/tmp/InProcess_Ksinvisible_3D.m3d";
+              if(!fdoc->SaveAs(p2)){ log("FAIL_2D_SAVEAS"); return 1; }
+              if(!pdoc->SaveAs(p3)){ log("FAIL_3D_SAVEAS"); return 1; }
+              log("SAVEAS_2D_PASS=1");
+              log("SAVEAS_3D_PASS=1");
+
+              if(!fdoc->Close(kdDoNotSaveChanges)){ log("FAIL_2D_CLOSE"); return 1; }
+              if(!pdoc->Close(kdDoNotSaveChanges)){ log("FAIL_3D_CLOSE"); return 1; }
+              fdoc={}; pdoc={};
+              log("CLOSE_2D_PASS=1");
+              log("CLOSE_3D_PASS=1");
+
+              auto rf=docs->Open(p2,true,false);
+              auto rp=docs->Open(p3,true,false);
+              log(std::string("REOPEN_2D=")+(rf?"1":"0"));
+              log(std::string("REOPEN_3D=")+(rp?"1":"0"));
+              if(!rf||!rp){ log("RESULT=FAIL_IN_PROCESS_REOPEN"); return 1; }
+
+              IKompasDocument2DPtr rd2=rf;
+              IKompasDocument3DPtr rd3=rp;
+              auto rvm=rd2?rd2->GetViewsAndLayersManager():IViewsAndLayersManagerPtr{};
+              auto rvs=rvm?rvm->GetViews():IViewsPtr{};
+              auto rv=rvs?rvs->GetActiveView():IViewPtr{};
+              IDrawingContainerPtr rdc=rv;
+              auto rlines=rdc?rdc->GetLineSegments():ILineSegmentsPtr{};
+              auto rtop=rd3?rd3->GetTopPart():IPartPtr{};
+              int lc=rlines?rlines->GetCount():-1;
+              log("REOPEN_2D_LINE_COUNT="+std::to_string(lc));
+              log(std::string("REOPEN_3D_TOP_PART=")+(rtop?"1":"0"));
+              if(lc<1||!rtop){ log("RESULT=FAIL_IN_PROCESS_REOPEN_CONTEXT"); return 1; }
+
+              rf->Save(); rp->Save();
+              rf->Close(kdDoNotSaveChanges); rp->Close(kdDoNotSaveChanges);
+              log("RESULT=PASS_IN_PROCESS_KSINVISIBLE_NATIVE_2D_3D");
+              return 0;
+            }catch(const std::exception&e){
+              log(std::string("EXCEPTION=")+e.what());
+            }catch(...){
+              log("EXCEPTION=unknown");
+            }
+            return 1;
+          }
+          CPP
+
+          /usr/bin/clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread \
+            -I"$INC" /tmp/inproc_writer.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi \
+            -o /tmp/writer_variant06.so
+
+          # Reuse the already-proven main-thread poll bootstrap, but shorten the
+          # initial delay from 30 s to 8 s for this isolated gate.
+          sed 's/ms(now)-ms(g_start)<30000/ms(now)-ms(g_start)<8000/' \
+            kompas-linux/bootstrap_variant06_poll.cpp >/tmp/inproc_bootstrap.cpp
+          /usr/bin/clang++-18 -std=c++20 -O2 -fPIC -shared -pthread \
+            /tmp/inproc_bootstrap.cpp -ldl -o /tmp/inproc_bootstrap.so
+
+          ldd /tmp/writer_variant06.so | tee /tmp/writer.ldd
+          ! grep -q 'not found' /tmp/writer.ldd
+
+      - name: Launch official licensed backend with child-only preload
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p result/inprocess-ksinvisible
+          cat >/tmp/controller.py <<'PY'
+          import os,pathlib,time,traceback,ksapi
+          from constants import constants as c
+          out=pathlib.Path(os.environ["GITHUB_WORKSPACE"])/"result/inprocess-ksinvisible"
+          ctl=out/"controller.log"
+          def log(s):
+              print(s,flush=True)
+              with ctl.open("a",encoding="utf-8") as f:f.write(str(s)+"\n")
+          app=None
+          try:
+              ksapi.SetKompasPath("/opt/ascon/kompas3d-v25/Bin")
+              # Set preload only now: the current Python process is already
+              # running; only executables spawned by OpenKompasInvisible inherit it.
+              os.environ["LD_PRELOAD"]="/tmp/inproc_bootstrap.so"
+              log("CALL=OpenKompasInvisible")
+              app=ksapi.OpenKompasInvisible()
+              if not app: raise RuntimeError("OpenKompasInvisible returned null")
+              log("CONTROLLER_APP=1")
+              lm=app.GetApplicationLicenseManager()
+              log("CONTROLLER_LICENSE_2D="+str(int(bool(lm and lm.IsKompasModuleActive(c.ksKompasModule2D)))))
+              log("CONTROLLER_LICENSE_3D="+str(int(bool(lm and lm.IsKompasModuleActive(c.ksKompasModule3D)))))
+              for i in range(150):
+                  try: app.PumpWaitingMessages()
+                  except BaseException: pass
+                  p=pathlib.Path("/tmp/inproc_ksinvisible_gate.log")
+                  if p.exists():
+                      t=p.read_text(errors="replace")
+                      if "RESULT=PASS_" in t or "RESULT=FAIL_" in t:
+                          break
+                  time.sleep(.5)
+              p=pathlib.Path("/tmp/inproc_ksinvisible_gate.log")
+              if p.exists():
+                  text=p.read_text(errors="replace")
+                  (out/"inprocess.log").write_text(text,encoding="utf-8")
+                  log(text)
+              else:
+                  log("INPROCESS_LOG_MISSING")
+              bp=pathlib.Path("/tmp/work1_bootstrap.log")
+              if bp.exists():
+                  (out/"bootstrap.log").write_text(bp.read_text(errors="replace"),encoding="utf-8")
+          except BaseException as e:
+              log("CONTROLLER_EXCEPTION="+type(e).__name__+":"+repr(e))
+              traceback.print_exc()
+          finally:
+              try:
+                  if app: app.Quit()
+              except BaseException as e: log("QUIT_EXCEPTION="+repr(e))
+          PY
+
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          HOST_HOME="$RUNNER_TEMP/inproc-home"
+          HOST_XDG="$HOST_HOME/.config"
+          mkdir -p "$HOST_XDG/ascon/KOMPAS-3D Invisible/25"
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$HOST_XDG/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          rm -f /tmp/inproc_ksinvisible_gate.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock
+          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+          timeout 140s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- env \
+              PYTHONPATH="$BIN" \
+              LD_LIBRARY_PATH="$BIN" \
+              HOME="$HOST_HOME" \
+              XDG_CONFIG_HOME="$HOST_XDG" \
+              QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8 \
+              python3 -u /tmp/controller.py \
+            >result/inprocess-ksinvisible/stdout.txt 2>result/inprocess-ksinvisible/stderr.txt || true
+
+          cp /tmp/inproc_ksinvisible_gate.log result/inprocess-ksinvisible/inprocess.log 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log result/inprocess-ksinvisible/bootstrap.log 2>/dev/null || true
+          cat result/inprocess-ksinvisible/controller.log || true
+          cat result/inprocess-ksinvisible/inprocess.log || true
+          cat result/inprocess-ksinvisible/bootstrap.log || true
+          cat result/inprocess-ksinvisible/stderr.txt || true
+          ps -eo pid,ppid,comm,args | grep -E 'ksinvisible|kKompas|python3' | tee result/inprocess-ksinvisible/processes.txt || true
+
+          grep -qx 'RESULT=PASS_IN_PROCESS_KSINVISIBLE_NATIVE_2D_3D' result/inprocess-ksinvisible/inprocess.log
+
+          test -s /tmp/InProcess_Ksinvisible_2D.frw
+          test -s /tmp/InProcess_Ksinvisible_3D.m3d
+          cp /tmp/InProcess_Ksinvisible_2D.frw result/inprocess-ksinvisible/
+          cp /tmp/InProcess_Ksinvisible_3D.m3d result/inprocess-ksinvisible/
+          sha256sum result/inprocess-ksinvisible/InProcess_Ksinvisible_2D.frw \
+                    result/inprocess-ksinvisible/InProcess_Ksinvisible_3D.m3d \
+            | tee result/inprocess-ksinvisible/SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-inprocess-ksinvisible-native-gate
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/inprocess-ksinvisible/**

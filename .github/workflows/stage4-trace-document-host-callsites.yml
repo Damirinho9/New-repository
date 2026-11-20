@@ -1,0 +1,100 @@
+name: KOMPAS Stage 4 trace document host callsites
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-trace-document-host-callsites.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Trace real host callsites and host-related symbols
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-host-callsites
+          mkdir -p "$OUT"
+
+          for f in "$BIN/libk2DDoc.so" "$BIN/libk3DAppA.so" "$BIN/libk2DAppA.so"; do
+            b=$(basename "$f")
+            objdump -drC "$f" > "$OUT/$b.disasm"
+            python3 - "$OUT/$b.disasm" "$b" <<'PY' >> "$OUT/callsites.txt"
+          import sys
+          from pathlib import Path
+          p=Path(sys.argv[1]); name=sys.argv[2]
+          lines=p.read_text(errors="replace").splitlines()
+          needles=[
+            "ItDocumentHost::CreateNewDocument()",
+            "ItDocumentHost::CreateKompasDocument",
+            "ItDocumentHost::OnCreateDocument()"
+          ]
+          print("\n==========",name,"==========")
+          seen=set()
+          for needle in needles:
+            idx=[i for i,l in enumerate(lines) if needle in l and ("call" in l or "@plt" in l)]
+            print("NEEDLE",needle,"COUNT",len(idx))
+            for n,i in enumerate(idx[:30]):
+              key=(needle,i)
+              if key in seen: continue
+              seen.add(key)
+              print("\n===== CALLSITE",needle,n,"line",i,"=====")
+              for l in lines[max(0,i-70):min(len(lines),i+25)]:
+                print(l)
+          PY
+          done
+
+          {
+            echo "=== HOST / APP / ACCESSOR DYNAMIC SYMBOLS ==="
+            for f in "$BIN/libkHost.so" "$BIN/libk2DDoc.so" "$BIN/libk3DAppA.so" "$BIN/libk2DAppA.so"; do
+              echo "===== $f ====="
+              nm -D -C "$f" 2>/dev/null | grep -Ei                 'DocumentHost|Get.*Host|Host.*Get|Current.*Host|Active.*Host|Document.*Host|Create.*Host|New.*Host|Get.*Document|Current.*Document|Active.*Document|Get.*Application|Get.*App' | head -2500 || true
+            done
+          } > "$OUT/symbols.txt"
+
+          cat "$OUT/callsites.txt"
+          cat "$OUT/symbols.txt"
+          echo "RESULT=HOST_CALLSITES_TRACED" | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-host-callsites
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            result/stage4-host-callsites/callsites.txt
+            result/stage4-host-callsites/symbols.txt
+            result/stage4-host-callsites/result.txt

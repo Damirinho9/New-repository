@@ -1,0 +1,78 @@
+name: KOMPAS Stage 4 inspect noarg NewD3PartByTemplate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-inspect-noarg-newd3part.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Inspect noarg factory and native caller
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-noarg-newd3part
+          mkdir -p "$OUT"
+          {
+            echo "=== OWNER NOARG ==="
+            for f in "$BIN"/* /opt/ascon/common/*; do
+              [ -f "$f" ] || continue
+              h=$(readelf -Ws "$f" 2>/dev/null | grep '_Z19NewD3PartByTemplatev' || true)
+              if [ -n "$h" ]; then echo "--- $f"; echo "$h" | c++filt; fi
+            done
+            echo
+            echo "=== libk3DDocument NOARG DISASM ==="
+            nm -D /opt/ascon/kompas3d-v25/Bin/libk3DDocument.so | grep '_Z19NewD3PartByTemplatev' || true
+            addr=$(nm -D /opt/ascon/kompas3d-v25/Bin/libk3DDocument.so | awk '$3=="_Z19NewD3PartByTemplatev"{print $1; exit}')
+            if [ -n "$addr" ]; then
+              start=$((16#$addr))
+              stop=$((start+512))
+              objdump -d -C --start-address=$start --stop-address=$stop /opt/ascon/kompas3d-v25/Bin/libk3DDocument.so
+            fi
+            echo
+            echo "=== NATIVE CALLER AROUND f97d0 ==="
+            objdump -d -C --start-address=0xf9700 --stop-address=0xf9900 "$BIN/libk3DAppA.so"
+          } | tee "$OUT/inspect.txt"
+          echo "RESULT=NOARG_NEWD3PART_INSPECTED" | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-noarg-newd3part-inspect
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-noarg-newd3part/**

@@ -1,0 +1,58 @@
+parameter,value,unit,status,source_or_formula
+variant,19,,given,task selection
+scheme,1,,given,first digit of variant
+column,9,,given,second digit of variant
+material,Steel 60,,given,table 3
+sigma_b,680,MPa,given,table 3
+D1,80,mm,given,table 3 column 9
+D2,70,mm,given,table 3 column 9
+D3,50,mm,given,table 3 column 9
+part_l1,8,mm,given,table 3 column 9
+part_l2,22,mm,given,table 3 column 9
+part_l3,12,mm,given,table 3 column 9
+part_l4,14,mm,given,table 3 column 9
+L_part,75,mm,given,table 3 column 9
+R_part,21,mm,given,table 3 column 9
+S,0.04,mm/rev,given,table 3 column 9
+gamma,10,deg,calculated/selected,table 4 for steel sigma_b 680 MPa
+alpha,10,deg,selected,method range for round cutter 10...12 deg
+v,27,m/min,table lookup,table 5 at S=0.04
+p_z,190,N/mm,table lookup,table 5 at S=0.04
+cutoff_edge,5,mm,selected,method range 4...5; worked example uses 5
+cutoff_angle,15,deg,selected,method range 15...20; worked example uses 15
+l_i_prime,80,mm,calculated,L_part + cutoff_edge
+Pz,15200,N,calculated,p_z*l_i_prime
+mounting_type,bilateral,,calculated,l_i_prime > 30 mm
+d_calc,64.123837,mm,calculated,1.36*l_i_prime^0.33*Pz^0.25
+d_adopted,65,mm,selected,next larger adopted mounting-hole size
+t,15,mm,calculated,(Dmax-Dmin)/2
+a,8,mm,selected,method range 3...8; worked example uses 8
+e_min,32.5,mm,calculated,0.5*d
+e_adopted,35,mm,selected,>=e_min
+d_a_calc,181,mm,calculated,2*(t+a+e+d/2)
+axis_distance_x,115.5,mm,calculated,Dmax/2+a+e+d/2
+OA_horizontal,90.5,mm,calculated,axis_distance_x-Dmin/2
+axis_offset_y,15.957592,mm,calculated,OA_horizontal*tan(alpha)
+OA,91.896108,mm,calculated,OA_horizontal/cos(alpha)
+guide_diameter,183.792217,mm,calculated,2*OA
+overlap,2,mm,selected,method range 1...2
+end_belt,2,mm,selected,method range 1...2
+flange_width,5,mm,selected,method range 3...5
+flange_d_min,97.5,mm,calculated,1.5*d
+flange_d_max,110.5,mm,calculated,1.7*d
+flange_d_adopted,100,mm,selected,inside 1.5d...1.7d
+mount_recess_d,80,mm,selected,d+15; allowed d+10...15
+mount_recess_length,15,mm,selected,allowed 10...15
+tech_recess_d,67,mm,calculated,d+2
+overall_length,89,mm,calculated,L_part+5+2+2+5
+chamfer,1x45,deg/mm,given by method,section 2.6.7
+chip_space_fillet_R,2,mm,given by method,section 2.6.9
+rifling_z,32,pcs,selected,method range 32...34 and worked example uses 32
+rifling_profile_angle,90,deg,given by method,normal section
+rifling_side_angle,45,deg,calculated,symmetric 90 deg profile
+rifling_beta,5.607032,deg,calculated,atan(pi/z)
+rifling_beta_dms,5deg36min25sec,,calculated,atan(pi/32)
+rifling_angular_pitch,11.25,deg,calculated,360/z
+rifling_circ_pitch_at_flange_od,9.817477,mm,calculated,pi*flange_d/z
+rifling_profile_offset_1,1.5,mm,given by method,figure 25
+rifling_profile_offset_2,0.25,mm,given by method,figure 25

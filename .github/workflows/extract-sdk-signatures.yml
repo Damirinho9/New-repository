@@ -1,0 +1,28 @@
+name: Extract KOMPAS SDK C signatures
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/extract-sdk-signatures.yml'
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sudo apt-get update && sudo apt-get install -y rpm2cpio cpio
+      - name: Download and inspect SDK RPM
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 5 --retry-delay 2 -o sdk.rpm             'https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
+          mkdir root
+          (cd root && rpm2cpio ../sdk.rpm | cpio -idm --quiet)
+          echo '=== HEADER FILES ==='
+          find root -type f | grep -Ei '\.(h|hpp|hh|inc)$' | head -500
+          echo '=== QueryInterface ==='
+          grep -RIn --include='*.h' --include='*.hpp' --include='*.hh'             'IAPIObject_QueryInterface\|QueryInterface' root/opt/ascon 2>/dev/null | head -300 || true
+          echo '=== DrawingContainer ==='
+          grep -RIn --include='*.h' --include='*.hpp' --include='*.hh'             'IDrawingContainer\|GetLineSegments\|ILineSegments_Add' root/opt/ascon 2>/dev/null | head -500 || true
+          echo '=== API object type drawing ==='
+          grep -RIn --include='*.h' --include='*.hpp' --include='*.hh'             'ksObject.*Drawing\|DrawingContainer' root/opt/ascon 2>/dev/null | head -500 || true

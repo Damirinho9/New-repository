@@ -1,0 +1,200 @@
+name: KOMPAS Stage 4 existing native FRW seed mutation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-existing-frw-seed-mutation.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  native2d:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+
+      - name: Fetch known native FRW seed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import urllib.request,hashlib,pathlib
+          u='https://raw.githubusercontent.com/SergeySklyarov/Kompas3D-MCP/523b6bc7162fddb1290d00a2dfd52f03110dd6a2/tests/Unit/KompasMcp.Unit/Data/g2-reference-contour.frw'
+          p=pathlib.Path('/tmp/Stage4_KnownNative_Seed.frw')
+          urllib.request.urlretrieve(u,p)
+          print(p.stat().st_size,hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+          file /tmp/Stage4_KnownNative_Seed.frw
+
+      - name: Compile seed mutation gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb dbus g++ clang libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          CXXV1=$(find /usr/include /usr/lib/llvm-* -path '*/c++/v1/memory' -print -quit 2>/dev/null || true)
+          if [ -z "$CXXV1" ]; then
+            for v in 22 21 20 19 18; do
+              if apt-cache show "libc++-$v-dev" >/dev/null 2>&1 && apt-cache show "libc++abi-$v-dev" >/dev/null 2>&1; then
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libc++-$v-dev" "libc++abi-$v-dev"
+                break
+              fi
+            done
+          fi
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          CXXV1=$(find /usr/include /usr/lib/llvm-* -path '*/c++/v1/memory' -print -quit 2>/dev/null)
+          CXXV1=$(dirname "$CXXV1")
+          cat >/tmp/seed_gate.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <fstream>
+          #include <string>
+          #include <cmath>
+          using namespace ksapi;
+          static std::ofstream lg("/tmp/existing_seed_gate.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          static int tries=0;
+          static IKompasDocumentPtr doc{};
+
+          extern "C" int run_variant06_writer(){
+            try{
+              IApplication& app=GetKompasApplication();
+              app.SetHideMessage(ksHideMessageYes);
+              auto lm=app.GetApplicationLicenseManager();
+              if(!lm){log("FAIL_LICENSE_MANAGER");return 1;}
+              bool l2=lm->IsKompasModuleActive(ksKompasModule2D);
+              log(std::string("LICENSE_2D_ACTIVE=")+(l2?"1":"0"));
+              if(!l2){log("FAIL_LICENSE");return 1;}
+              auto docs=app.GetDocuments(); if(!docs){log("FAIL_DOCUMENTS");return 1;}
+              if(!doc){
+                doc=docs->Open(L"/tmp/Stage4_KnownNative_Seed.frw",true,false);
+                log(std::string("OPEN_DOC=")+(doc?"1":"0"));
+              }
+              IKompasDocument2DPtr d2=doc;
+              if(d2) d2->SetParametricMode(true);
+              auto vm=d2?d2->GetViewsAndLayersManager():IViewsAndLayersManagerPtr{};
+              auto views=vm?vm->GetViews():IViewsPtr{};
+              auto view=views?views->GetActiveView():IViewPtr{};
+              IDrawingContainerPtr dc=view;
+              auto lines=dc?dc->GetLineSegments():ILineSegmentsPtr{};
+              log("STATE d2="+std::string(d2?"1":"0")+
+                  " vm="+(vm?"1":"0")+" views="+(views?"1":"0")+
+                  " count="+std::to_string(views?views->GetCount():-1)+
+                  " view="+(view?"1":"0")+" lines="+(lines?"1":"0"));
+              if(lines){
+                auto s=lines->Add();
+                if(!s){log("FAIL_LINE_ADD");return 1;}
+                s->SetX1(1000);s->SetY1(1000);s->SetX2(1025);s->SetY2(1000);s->SetStyle(ksCSConstruction);
+                if(!s->Update()){log("FAIL_LINE_UPDATE");return 1;}
+                log("LINE_ADD_UPDATE_PASS");
+                if(!doc->SaveAs(L"/tmp/Stage4_KnownNative_Mutated.frw")){log("FAIL_SAVEAS");return 1;}
+                log("SAVEAS_PASS");
+                if(!doc->Close(kdDoNotSaveChanges)){log("FAIL_CLOSE");return 1;}
+                doc={};
+                auto r=docs->Open(L"/tmp/Stage4_KnownNative_Mutated.frw",true,false);
+                if(!r){log("FAIL_REOPEN");return 1;}
+                IKompasDocument2DPtr rd2=r;
+                auto rvm=rd2?rd2->GetViewsAndLayersManager():IViewsAndLayersManagerPtr{};
+                auto rviews=rvm?rvm->GetViews():IViewsPtr{};
+                auto rv=rviews?rviews->GetActiveView():IViewPtr{};
+                IDrawingContainerPtr rdc=rv;
+                auto rlines=rdc?rdc->GetLineSegments():ILineSegmentsPtr{};
+                log("REOPEN_STATE view="+std::string(rv?"1":"0")+
+                    " lines="+(rlines?"1":"0")+" count="+std::to_string(rlines?rlines->GetCount():-1));
+                if(!rv||!rlines){log("FAIL_REOPEN_EDITABLE");return 1;}
+                if(!r->Save()){log("FAIL_REOPEN_SAVE");return 1;}
+                if(!r->Close(kdDoNotSaveChanges)){log("FAIL_REOPEN_CLOSE");return 1;}
+                log("RESULT=PASS_EXISTING_NATIVE_FRW_LICENSED_MUTATION_REOPEN");
+                return 0;
+              }
+              if(++tries<30)return 3;
+              log("RESULT=FAIL_EXISTING_NATIVE_FRW_NOT_EDITABLE");
+              return 1;
+            }catch(const std::exception&e){log(std::string("EXCEPTION=")+e.what());}
+             catch(...){log("EXCEPTION=unknown");}
+            return 1;
+          }
+          CPP
+          /usr/bin/clang++ -std=c++20 -stdlib=libc++ -nostdinc++ -I"$CXXV1" -O2 -fPIC -shared -pthread -I"$INC" \
+            /tmp/seed_gate.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread kompas-linux/bootstrap_variant06_poll.cpp -ldl -o /tmp/stage4_bootstrap.so
+
+      - name: Run exact licensed native mutation and reopen gate
+        shell: bash
+        run: |
+          set -uxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export HOME="$RUNNER_TEMP/existing-seed-home" XDG_CONFIG_HOME="$HOME/.config"
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25" result/existing-frw-seed
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          export DISPLAY=:120 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          sudo mkdir -p /tmp/.X11-unix; sudo chmod 1777 /tmp/.X11-unix
+          Xvfb :120 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb120.out 2>/tmp/xvfb120.err &
+          XV=$!; trap 'kill "$XV" 2>/dev/null || true' EXIT
+          sleep 2
+          rm -f /tmp/existing_seed_gate.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/Stage4_KnownNative_Mutated.frw
+          setsid dbus-run-session -- env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" DISPLAY=:120 QT_QPA_PLATFORM=xcb \
+            LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$LD_LIBRARY_PATH" LD_PRELOAD=/tmp/stage4_bootstrap.so \
+            "$BIN/ksinvisible" -automation >result/existing-frw-seed/kompas.out 2>result/existing-frw-seed/kompas.err &
+          KP=$!
+          ok=0
+          for i in $(seq 1 150); do
+            sleep 1
+            if grep -q '^RESULT=PASS_EXISTING_NATIVE_FRW_LICENSED_MUTATION_REOPEN$' /tmp/existing_seed_gate.log 2>/dev/null; then ok=1;break;fi
+            if grep -q '^RESULT=FAIL_' /tmp/existing_seed_gate.log 2>/dev/null; then break;fi
+            if grep -q 'POLL_BOOTSTRAP_RETRY_LIMIT' /tmp/work1_bootstrap.log 2>/dev/null; then break;fi
+            kill -0 "$KP" 2>/dev/null || break
+          done
+          cp /tmp/existing_seed_gate.log result/existing-frw-seed/gate.log 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log result/existing-frw-seed/bootstrap.log 2>/dev/null || true
+          cp /tmp/Stage4_KnownNative_Mutated.frw result/existing-frw-seed/ 2>/dev/null || true
+          cat result/existing-frw-seed/gate.log 2>/dev/null || true
+          kill -TERM -- "-$KP" 2>/dev/null || true
+          wait "$KP" 2>/dev/null || true
+          test "$ok" = 1
+          test -s result/existing-frw-seed/Stage4_KnownNative_Mutated.frw
+          sha256sum result/existing-frw-seed/Stage4_KnownNative_Mutated.frw | tee result/existing-frw-seed/SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-existing-frw-seed-mutation
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/existing-frw-seed/**

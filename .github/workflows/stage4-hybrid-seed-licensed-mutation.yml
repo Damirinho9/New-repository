@@ -1,0 +1,357 @@
+name: KOMPAS Stage 4 hybrid full-GUI seed to licensed invisible mutation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-hybrid-seed-licensed-mutation.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  make-seeds:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install full official KOMPAS GUI and SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            wget ca-certificates gnupg xvfb xauth dbus procps desktop-file-utils \
+            clang-18 libc++-18-dev libc++abi-18-dev \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
+            libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
+            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh >/tmp/ascon-script.out 2>/tmp/ascon-script.err || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-v25=25.0.5.2780 \
+            ascon-kompas-graphic-v25=25.0.5.2780 \
+            ascon-kompas3d-v25=25.0.5.2780 \
+            ascon-kompas-sdk-v25=25.0.5.2780
+
+      - name: Compile full-GUI native seed creator
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          cat >/tmp/seed_creator.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <fstream>
+          #include <string>
+          using namespace ksapi;
+          static std::ofstream lg("/tmp/stage4_seed_creator.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          static IKompasDocumentPtr fdoc{},pdoc{};
+          static bool fsaved=false,psaved=false;
+          static int tries=0;
+
+          extern "C" int run_variant06_writer(){
+            try{
+              IApplication& app=GetKompasApplication();
+              app.SetHideMessage(ksHideMessageYes);
+              int a=0,b=0,c=0,d=0; app.GetSystemVersion(a,b,c,d);
+              if(tries==0){
+                log("KOMPAS_VERSION="+std::to_string(a)+"."+std::to_string(b)+"."+std::to_string(c));
+                auto lm=app.GetApplicationLicenseManager();
+                if(lm){
+                  log(std::string("FULLGUI_LICENSE_2D=")+(lm->IsKompasModuleActive(ksKompasModule2D)?"1":"0"));
+                  log(std::string("FULLGUI_LICENSE_3D=")+(lm->IsKompasModuleActive(ksKompasModule3D)?"1":"0"));
+                }
+              }
+              auto docs=app.GetDocuments();
+              if(!docs){log("FAIL_NO_DOCUMENTS");return 1;}
+
+              if(!fsaved){
+                if(!fdoc){
+                  fdoc=docs->AddWithDefaultSettings(ksDocumentFragment,true);
+                  log(std::string("FRAGMENT_ADD=")+(fdoc?"1":"0"));
+                }
+                if(fdoc){
+                  IKompasDocument2DPtr d2=fdoc;
+                  auto vm=d2?d2->GetViewsAndLayersManager():IViewsAndLayersManagerPtr{};
+                  auto views=vm?vm->GetViews():IViewsPtr{};
+                  auto view=views?views->GetActiveView():IViewPtr{};
+                  IDrawingContainerPtr dc=view;
+                  auto lines=dc?dc->GetLineSegments():ILineSegmentsPtr{};
+                  log("FRAGMENT_STATE d2="+std::string(d2?"1":"0")+
+                      " vm="+(vm?"1":"0")+" views="+(views?"1":"0")+
+                      " view="+(view?"1":"0")+" lines="+(lines?"1":"0"));
+                  if(d2&&view&&lines){
+                    if(fdoc->SaveAs(L"/tmp/Stage4_FullGUI_Seed.frw")){
+                      fsaved=true;log("FRAGMENT_SEED_SAVE_PASS");
+                    }else log("FRAGMENT_SEED_SAVE_FALSE");
+                  }
+                }
+              }
+
+              if(!psaved){
+                if(!pdoc){
+                  pdoc=docs->AddWithDefaultSettings(ksDocumentPart,true);
+                  log(std::string("PART_ADD=")+(pdoc?"1":"0"));
+                }
+                if(pdoc){
+                  IKompasDocument3DPtr d3=pdoc;
+                  auto top=d3?d3->GetTopPart():IPartPtr{};
+                  auto mc=top?top->GetModelContainer():IModelContainerPtr{};
+                  log("PART_STATE d3="+std::string(d3?"1":"0")+
+                      " top="+(top?"1":"0")+" model="+(mc?"1":"0"));
+                  if(d3&&top&&mc){
+                    if(pdoc->SaveAs(L"/tmp/Stage4_FullGUI_Seed.m3d")){
+                      psaved=true;log("PART_SEED_SAVE_PASS");
+                    }else log("PART_SEED_SAVE_FALSE");
+                  }
+                }
+              }
+
+              if(fsaved&&psaved){
+                log("RESULT=PASS_FULLGUI_NATIVE_SEEDS_CREATED");
+                return 0;
+              }
+              if(++tries<40) return 3;
+              log("RESULT=FAIL_FULLGUI_NATIVE_SEEDS");
+              return 1;
+            }catch(const std::exception&e){log(std::string("EXCEPTION=")+e.what());}
+             catch(...){log("EXCEPTION=unknown");}
+            return 1;
+          }
+          CPP
+          /usr/bin/clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC" \
+            /tmp/seed_creator.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread kompas-linux/bootstrap_variant06_poll.cpp -ldl -o /tmp/stage4_bootstrap.so
+
+      - name: Create fully initialized blank native seeds in full GUI
+        shell: bash
+        run: |
+          set -uxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export HOME="$RUNNER_TEMP/fullgui-seed-home" XDG_CONFIG_HOME="$HOME/.config"
+          export LD_LIBRARY_PATH="$BIN${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25" result/fullgui-seeds
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit)
+          test -s "$RES"
+          cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/QtResources.bin"
+          rm -f /tmp/stage4_seed_creator.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock \
+                /tmp/Stage4_FullGUI_Seed.frw /tmp/Stage4_FullGUI_Seed.m3d
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- env LD_PRELOAD=/tmp/stage4_bootstrap.so "$BIN/kKompas" -automation \
+            >result/fullgui-seeds/kompas.out 2>result/fullgui-seeds/kompas.err &
+          KP=$!
+          ok=0
+          for i in $(seq 1 180); do
+            sleep 1
+            if grep -q '^RESULT=PASS_FULLGUI_NATIVE_SEEDS_CREATED$' /tmp/stage4_seed_creator.log 2>/dev/null; then ok=1;break;fi
+            if grep -q '^RESULT=FAIL_FULLGUI_NATIVE_SEEDS$' /tmp/stage4_seed_creator.log 2>/dev/null; then break;fi
+            kill -0 "$KP" 2>/dev/null || break
+          done
+          cp /tmp/stage4_seed_creator.log result/fullgui-seeds/seed-creator.log 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log result/fullgui-seeds/bootstrap.log 2>/dev/null || true
+          cp /tmp/Stage4_FullGUI_Seed.frw result/fullgui-seeds/ 2>/dev/null || true
+          cp /tmp/Stage4_FullGUI_Seed.m3d result/fullgui-seeds/ 2>/dev/null || true
+          cat result/fullgui-seeds/seed-creator.log 2>/dev/null || true
+          kill "$KP" 2>/dev/null || true
+          pkill -TERM -x kKompas 2>/dev/null || true
+          test "$ok" = 1
+          test -s result/fullgui-seeds/Stage4_FullGUI_Seed.frw
+          test -s result/fullgui-seeds/Stage4_FullGUI_Seed.m3d
+          sha256sum result/fullgui-seeds/Stage4_FullGUI_Seed.* | tee result/fullgui-seeds/SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-fullgui-native-seeds
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/fullgui-seeds/**
+
+  licensed-open-gate:
+    needs: make-seeds
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: 7335493-stage4-fullgui-native-seeds
+          path: seed
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+
+      - name: Compile licensed seed-open gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb dbus g++ clang libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          CXXV1=$(find /usr/include /usr/lib/llvm-* -path '*/c++/v1/memory' -print -quit 2>/dev/null || true)
+          if [ -z "$CXXV1" ]; then
+            for v in 22 21 20 19 18; do
+              if apt-cache show "libc++-$v-dev" >/dev/null 2>&1 && apt-cache show "libc++abi-$v-dev" >/dev/null 2>&1; then
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libc++-$v-dev" "libc++abi-$v-dev"
+                break
+              fi
+            done
+          fi
+          cp seed/Stage4_FullGUI_Seed.frw /tmp/Stage4_FullGUI_Seed.frw
+          cp seed/Stage4_FullGUI_Seed.m3d /tmp/Stage4_FullGUI_Seed.m3d
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          CXXV1=$(find /usr/include /usr/lib/llvm-* -path '*/c++/v1/memory' -print -quit 2>/dev/null)
+          CXXV1=$(dirname "$CXXV1")
+          cat >/tmp/licensed_seed_gate.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <fstream>
+          #include <string>
+          #include <thread>
+          #include <chrono>
+          using namespace ksapi;
+          static std::ofstream lg("/tmp/licensed_seed_gate.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          static int tries=0;
+          static IKompasDocumentPtr fdoc{},pdoc{};
+
+          extern "C" int run_variant06_writer(){
+            try{
+              IApplication& app=GetKompasApplication();
+              app.SetHideMessage(ksHideMessageYes);
+              auto lm=app.GetApplicationLicenseManager();
+              if(!lm){log("FAIL_LICENSE_MANAGER");return 1;}
+              bool l2=lm->IsKompasModuleActive(ksKompasModule2D);
+              bool l3=lm->IsKompasModuleActive(ksKompasModule3D);
+              log(std::string("LICENSE_2D_ACTIVE=")+(l2?"1":"0"));
+              log(std::string("LICENSE_3D_ACTIVE=")+(l3?"1":"0"));
+              if(!l2||!l3){log("FAIL_LICENSE");return 1;}
+              auto docs=app.GetDocuments();
+              if(!docs){log("FAIL_DOCUMENTS");return 1;}
+
+              if(!fdoc) fdoc=docs->Open(L"/tmp/Stage4_FullGUI_Seed.frw",true,false);
+              IKompasDocument2DPtr d2=fdoc;
+              auto vm=d2?d2->GetViewsAndLayersManager():IViewsAndLayersManagerPtr{};
+              auto views=vm?vm->GetViews():IViewsPtr{};
+              auto view=views?views->GetActiveView():IViewPtr{};
+              IDrawingContainerPtr dc=view;
+              auto lines=dc?dc->GetLineSegments():ILineSegmentsPtr{};
+              log("FRW_OPEN doc="+std::string(fdoc?"1":"0")+" d2="+(d2?"1":"0")+
+                  " views="+(views?"1":"0")+" count="+std::to_string(views?views->GetCount():-1)+
+                  " view="+(view?"1":"0")+" lines="+(lines?"1":"0"));
+              if(lines){
+                auto s=lines->Add();
+                if(s){
+                  s->SetX1(10);s->SetY1(10);s->SetX2(30);s->SetY2(10);s->SetStyle(ksCSNormal);
+                  if(s->Update()){
+                    log("FRW_LINE_MUTATION_PASS");
+                    if(!fdoc->SaveAs(L"/tmp/Stage4_Licensed_Mutated.frw")){log("FAIL_FRW_SAVE");return 1;}
+                    log("FRW_SAVE_PASS");
+                  }else{log("FAIL_FRW_LINE_UPDATE");return 1;}
+                }else{log("FAIL_FRW_LINE_ADD");return 1;}
+              }
+
+              if(!pdoc) pdoc=docs->Open(L"/tmp/Stage4_FullGUI_Seed.m3d",true,false);
+              IKompasDocument3DPtr d3=pdoc;
+              auto top=d3?d3->GetTopPart():IPartPtr{};
+              auto mc=top?top->GetModelContainer():IModelContainerPtr{};
+              log("M3D_OPEN doc="+std::string(pdoc?"1":"0")+" d3="+(d3?"1":"0")+
+                  " top="+(top?"1":"0")+" model="+(mc?"1":"0"));
+
+              if(lines&&d3&&top&&mc){
+                log("RESULT=PASS_LICENSED_OPEN_EDITABLE_FULLGUI_SEEDS");
+                return 0;
+              }
+              if(++tries<30)return 3;
+              log("RESULT=FAIL_LICENSED_OPEN_EDITABLE_FULLGUI_SEEDS");
+              return 1;
+            }catch(const std::exception&e){log(std::string("EXCEPTION=")+e.what());}
+             catch(...){log("EXCEPTION=unknown");}
+            return 1;
+          }
+          CPP
+          /usr/bin/clang++ -std=c++20 -stdlib=libc++ -nostdinc++ -I"$CXXV1" -O2 -fPIC -shared -pthread -I"$INC" \
+            /tmp/licensed_seed_gate.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread kompas-linux/bootstrap_variant06_poll.cpp -ldl -o /tmp/stage4_bootstrap.so
+
+      - name: Open and mutate full-GUI seeds in exact licensed invisible runtime
+        shell: bash
+        run: |
+          set -uxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export HOME="$RUNNER_TEMP/licensed-seed-home" XDG_CONFIG_HOME="$HOME/.config"
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25" result/licensed-seed-gate
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          export DISPLAY=:119 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          sudo mkdir -p /tmp/.X11-unix; sudo chmod 1777 /tmp/.X11-unix
+          Xvfb :119 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb119.out 2>/tmp/xvfb119.err &
+          XV=$!; trap 'kill "$XV" 2>/dev/null || true' EXIT
+          sleep 2
+          rm -f /tmp/licensed_seed_gate.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/Stage4_Licensed_Mutated.frw
+          setsid dbus-run-session -- env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" DISPLAY=:119 QT_QPA_PLATFORM=xcb \
+            LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$LD_LIBRARY_PATH" LD_PRELOAD=/tmp/stage4_bootstrap.so \
+            "$BIN/ksinvisible" -automation >result/licensed-seed-gate/kompas.out 2>result/licensed-seed-gate/kompas.err &
+          KP=$!
+          ok=0
+          for i in $(seq 1 150); do
+            sleep 1
+            if grep -q '^RESULT=PASS_LICENSED_OPEN_EDITABLE_FULLGUI_SEEDS$' /tmp/licensed_seed_gate.log 2>/dev/null; then ok=1;break;fi
+            if grep -q '^RESULT=FAIL_' /tmp/licensed_seed_gate.log 2>/dev/null; then break;fi
+            if grep -q 'POLL_BOOTSTRAP_RETRY_LIMIT' /tmp/work1_bootstrap.log 2>/dev/null; then break;fi
+            kill -0 "$KP" 2>/dev/null || break
+          done
+          cp /tmp/licensed_seed_gate.log result/licensed-seed-gate/gate.log 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log result/licensed-seed-gate/bootstrap.log 2>/dev/null || true
+          cp /tmp/Stage4_Licensed_Mutated.frw result/licensed-seed-gate/ 2>/dev/null || true
+          cat result/licensed-seed-gate/gate.log 2>/dev/null || true
+          kill -TERM -- "-$KP" 2>/dev/null || true
+          wait "$KP" 2>/dev/null || true
+          test "$ok" = 1
+          test -s result/licensed-seed-gate/Stage4_Licensed_Mutated.frw
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-hybrid-licensed-seed-gate
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/licensed-seed-gate/**

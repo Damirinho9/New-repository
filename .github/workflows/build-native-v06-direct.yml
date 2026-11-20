@@ -1,0 +1,113 @@
+name: Native Work1 V06 direct RPM extract
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/build-native-v06-direct.yml'
+  workflow_dispatch:
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Install small host dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm2cpio cpio curl dbus-x11 file python3 strace locales             libxcb1 libxcb-render0 libxcb-shape0 libxcb-xfixes0 libxcb-keysyms1             libxcb-image0 libxcb-icccm4 libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0             libx11-6 libxext6 libxrender1 libxi6 libxrandr2 libxfixes3 libxkbfile1             libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3             libc++1-18 libc++abi1-18 libunwind-18 libglu1-mesa libopengl0             libxcb-res0 libxcb-ewmh2 libxcb-composite0 libxcb-dri2-0             libxcb-cursor0 libxcb-xinerama0 libxcb-render-util0 libxv1 libxres1 || true
+          sudo localedef -i ru_RU -f CP1251 ru_RU.CP1251
+          locale -a | grep -Ei 'ru_RU.*1251' || true
+
+      - name: Download and extract official KOMPAS-Graphic RPM
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BASE='https://repo.ascon.ru/stable/rpm/redos/8.0'
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/graphic.rpm "$BASE/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm"
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/core.rpm "$BASE/ascon-kompas-v25-25.0.5.2780-0.x86_64.rpm"
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/common.rpm "$BASE/ascon-kompas-common-1.0.0.7-0.x86_64.rpm"
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/fonts.rpm "$BASE/ascon-kompas-fonts-1.0.0.8-0.x86_64.rpm"
+          curl -fL --retry 5 --retry-delay 2 -o /tmp/kactivation.rpm "$BASE/ascon-kompas-kactivation-v25-4.3.9.134-1.red80.x86_64.rpm"
+
+          for r in /tmp/graphic.rpm /tmp/core.rpm /tmp/common.rpm /tmp/fonts.rpm /tmp/kactivation.rpm; do
+            echo "Extracting $r into /"
+            rpm2cpio "$r" | (cd / && sudo cpio -idmu --quiet)
+          done
+
+          KOMPAS_BIN="/opt/ascon/kompas3d-v25/Bin/kKompas"
+          KSAPI_LIB="/opt/ascon/kompas3d-v25/Bin/libksAPI.so"
+          test -x "$KOMPAS_BIN"
+          test -f "$KSAPI_LIB"
+          dirname "$KOMPAS_BIN" > /tmp/kompas_bin_dir.txt
+          echo "=== RPMs ==="; ls -lh /tmp/graphic.rpm /tmp/core.rpm /tmp/common.rpm /tmp/fonts.rpm /tmp/kactivation.rpm
+          echo "=== KOMPAS ==="; file "$KOMPAS_BIN"; ls -lh "$KOMPAS_BIN"
+          echo "=== unresolved ==="
+          LD_LIBRARY_PATH="$(dirname "$KOMPAS_BIN"):/usr/lib/llvm-18/lib:/usr/lib/x86_64-linux-gnu" ldd "$KOMPAS_BIN" | grep 'not found' || true
+
+      - name: Download precompiled injector
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 5 -o /tmp/inject_variant06.so             'https://raw.githubusercontent.com/Damirinho9/New-repository/kompas-7335493-native-work1/kompas-linux/bin/inject_variant06.so'
+          file /tmp/inject_variant06.so
+          BIN="$(cat /tmp/kompas_bin_dir.txt)"
+          LD_LIBRARY_PATH="$BIN:/usr/lib/llvm-18/lib:/usr/lib/x86_64-linux-gnu" ldd /tmp/inject_variant06.so | grep 'not found' || true
+
+      - name: Run extracted KOMPAS with native injector
+        shell: bash
+        run: |
+          set +e
+          BIN="$(cat /tmp/kompas_bin_dir.txt)"
+          rm -f /tmp/work1_v6_inject.log /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw /tmp/kompas_v6.log
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+          export QT_QPA_PLATFORM=offscreen
+          export LD_LIBRARY_PATH="$BIN:/usr/lib/llvm-18/lib:/usr/lib/x86_64-linux-gnu"
+          unset LD_PRELOAD
+          unset DISPLAY HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          cd "$BIN"
+          mkdir -p /tmp/xdg-runtime
+          chmod 700 /tmp/xdg-runtime
+          export XDG_RUNTIME_DIR=/tmp/xdg-runtime
+
+          echo "=== PLAIN KOMPAS DIAGNOSTIC ==="
+          timeout 6s strace -ff -e trace=file,process -o /tmp/kplain.strace ./kKompas >/tmp/kplain.log 2>&1
+          echo "plain_rc=$?"
+          tail -100 /tmp/kplain.log || true
+          tail -120 /tmp/kplain.strace* 2>/dev/null || true
+
+          dbus-run-session -- env LD_PRELOAD=/tmp/inject_variant06.so ./kKompas >/tmp/kompas_v6.log 2>&1 &
+          KP=$!
+          echo "KOMPAS_PID=$KP"
+          for i in $(seq 1 75); do
+            cat /tmp/work1_v6_inject.log 2>/dev/null || true
+            grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_inject.log 2>/dev/null && break
+            grep -q 'THREAD_DONE_FAIL' /tmp/work1_v6_inject.log 2>/dev/null && break
+            kill -0 "$KP" 2>/dev/null || break
+            sleep 2
+          done
+          kill "$KP" 2>/dev/null || true
+          sleep 1
+
+          echo "=== INJECT ==="; cat /tmp/work1_v6_inject.log 2>/dev/null || true
+          echo "=== KOMPAS ==="; tail -200 /tmp/kompas_v6.log 2>/dev/null || true
+
+          test -s /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw || exit 20
+          file /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          sha256sum /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          python3 -c "import zipfile,pathlib; p=pathlib.Path('/tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw'); assert zipfile.is_zipfile(p); z=zipfile.ZipFile(p); print([(i.filename,i.file_size) for i in z.infolist()]); assert 'Contents' in z.namelist(); z.close()"
+          grep -q 'RESULT=PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/work1_v6_inject.log || exit 21
+
+      - name: Emit result as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-v06-direct-native
+          if-no-files-found: ignore
+          path: |
+            /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+            /tmp/work1_v6_inject.log
+            /tmp/kompas_v6.log
+            /tmp/kplain.log
+            /tmp/kplain.strace*

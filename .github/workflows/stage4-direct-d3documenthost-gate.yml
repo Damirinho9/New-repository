@@ -1,0 +1,234 @@
+name: KOMPAS Stage 4 direct D3DocumentHost native creation gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-direct-d3documenthost-gate.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+
+      - name: Install build/runtime prerequisites
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             clang-18 libc++-18-dev libc++abi-18-dev libunwind-18-dev             xvfb xauth dbus procps python3             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1             libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0             libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0             libxcb-composite0 libxcb-shape0 libxv1 libopengl0 libglu1-mesa
+
+      - name: Compile direct D3DocumentHost writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          cat >/tmp/direct_d3host.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <dlfcn.h>
+          #include <fstream>
+          #include <string>
+          #include <filesystem>
+          #include <new>
+          using namespace ksapi;
+          static std::ofstream lg("/tmp/direct_d3host.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          static bool attempted=false;
+          static int tries=0;
+          using CtorFn=void(*)(void*);
+          using CreateNewFn=void(*)(void*);
+          using DtorFn=void(*)(void*);
+          extern "C" int run_variant06_writer(){
+            try{
+              IApplication& app=GetKompasApplication();
+              auto lm=app.GetApplicationLicenseManager();
+              if(!lm){log("RESULT=FAIL_NO_LICENSE_MANAGER");return 1;}
+              bool l3=lm->IsKompasModuleActive(ksKompasModule3D);
+              log(std::string("LICENSE_3D_ACTIVE=")+(l3?"1":"0"));
+              if(!l3){log("RESULT=FAIL_LICENSE_3D");return 1;}
+              auto docs=app.GetDocuments();
+              if(!docs){log("RESULT=FAIL_NO_DOCUMENTS");return 1;}
+              log("DOC_COUNT_BEFORE="+std::to_string(docs->GetCount()));
+
+              if(!attempted){
+                attempted=true;
+                void* h3=dlopen("/opt/ascon/kompas3d-v25/Bin/libk3DAppA.so",RTLD_NOW|RTLD_GLOBAL);
+                void* hh=dlopen("/opt/ascon/kompas3d-v25/Bin/libkHost.so",RTLD_NOW|RTLD_GLOBAL);
+                log(std::string("DLOPEN_3D=")+(h3?"1":"0"));
+                log(std::string("DLOPEN_HOST=")+(hh?"1":"0"));
+                if(!h3||!hh){log("RESULT=FAIL_DLOPEN");return 1;}
+
+                CtorFn ctor=nullptr;
+                const char* ctors[]={"_ZN14D3DocumentHostC1Ev","_ZN14D3DocumentHostC2Ev"};
+                for(auto n:ctors){ctor=reinterpret_cast<CtorFn>(dlsym(h3,n)); if(ctor){log(std::string("CTOR_SYMBOL=")+n);break;}}
+                auto create=reinterpret_cast<CreateNewFn>(dlsym(hh,"_ZN14ItDocumentHost17CreateNewDocumentEv"));
+                log(std::string("SYM_D3_CTOR=")+(ctor?"1":"0"));
+                log(std::string("SYM_CREATE_NEW=")+(create?"1":"0"));
+                if(!ctor||!create){log("RESULT=FAIL_HOST_SYMBOLS");return 1;}
+
+                constexpr size_t D3_HOST_SIZE=0x220;
+                void* host=::operator new(D3_HOST_SIZE);
+                log("D3_HOST_ALLOC_SIZE=0x220");
+                log("D3_HOST_ALLOC=1");
+                ctor(host);
+                log("D3_HOST_CTOR_RETURNED=1");
+                create(host);
+                log("D3_HOST_CREATE_NEW_RETURNED=1");
+                // Deliberately keep host alive through save/reopen. ksinvisible teardown owns process lifetime.
+              }
+
+              app.PumpWaitingMessages();
+              log("DOC_COUNT_AFTER="+std::to_string(docs->GetCount()));
+              auto active=app.GetActiveDocument();
+              log(std::string("ACTIVE_DOCUMENT=")+(active?"1":"0"));
+              if(!active){
+                if(++tries<30) return 3;
+                log("RESULT=FAIL_D3HOST_NO_ACTIVE_DOCUMENT");
+                return 1;
+              }
+              IKompasDocument3DPtr d3=active;
+              log(std::string("ACTIVE_CAST_3D=")+(d3?"1":"0"));
+              auto top=d3?d3->GetTopPart():IPartPtr{};
+              log(std::string("TOP_PART=")+(top?"1":"0"));
+              if(!d3||!top){log("RESULT=FAIL_D3HOST_CONTEXT");return 1;}
+
+              const std::wstring path=L"/tmp/D3DocumentHost_Native.m3d";
+              std::filesystem::remove(path);
+              bool saved=active->SaveAs(path);
+              log(std::string("SAVEAS=")+(saved?"1":"0"));
+              if(!saved){log("RESULT=FAIL_D3HOST_SAVEAS");return 1;}
+              bool closed=active->Close(kdDoNotSaveChanges);
+              log(std::string("CLOSE=")+(closed?"1":"0"));
+              if(!closed){log("RESULT=FAIL_D3HOST_CLOSE");return 1;}
+              auto reopened=docs->Open(path,true,false);
+              log(std::string("REOPEN=")+(reopened?"1":"0"));
+              if(!reopened){log("RESULT=FAIL_D3HOST_REOPEN");return 1;}
+              IKompasDocument3DPtr rd3=reopened;
+              auto rtop=rd3?rd3->GetTopPart():IPartPtr{};
+              log(std::string("REOPEN_CAST_3D=")+(rd3?"1":"0"));
+              log(std::string("REOPEN_TOP_PART=")+(rtop?"1":"0"));
+              if(!rd3||!rtop){log("RESULT=FAIL_D3HOST_REOPEN_CONTEXT");return 1;}
+              reopened->Save();
+              reopened->Close(kdDoNotSaveChanges);
+              log("RESULT=PASS_DIRECT_D3DOCUMENTHOST_SAVE_CLOSE_REOPEN");
+              return 0;
+            }catch(const std::exception&e){
+              log(std::string("EXCEPTION=")+e.what());
+              log("RESULT=FAIL_D3HOST_EXCEPTION"); return 1;
+            }catch(...){log("EXCEPTION=unknown");log("RESULT=FAIL_D3HOST_EXCEPTION");return 1;}
+          }
+          CPP
+          /usr/bin/clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" /tmp/direct_d3host.cpp -L"$BIN" -Wl,-rpath,"$BIN"             -lksAPI -lc++abi -ldl -o /tmp/writer_variant06.so
+
+          sed             -e 's/ms(now)-ms(g_start)<30000/ms(now)-ms(g_start)<1000/'             -e 's#if(!g_enabled||g_done||g_in_writer||!pthread_equal(pthread_self(),g_main_thread)) return;#if(!g_enabled||g_done||g_in_writer||!pthread_equal(pthread_self(),g_main_thread)) return; if(access("/tmp/controller_app_ready",F_OK)!=0) return;#'             kompas-linux/bootstrap_variant06_poll.cpp >/tmp/direct_d3host_bootstrap.cpp
+          /usr/bin/clang++-18 -std=c++20 -O2 -fPIC -shared -pthread             /tmp/direct_d3host_bootstrap.cpp -ldl -o /tmp/direct_d3host_bootstrap.so
+          ldd /tmp/writer_variant06.so | tee /tmp/writer.ldd
+          ! grep -q 'not found' /tmp/writer.ldd
+
+      - name: Run direct native host creation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OUT=result/direct-d3host
+          mkdir -p "$OUT"
+          cat >/tmp/controller.py <<'PY'
+          import os,pathlib,time,traceback,ksapi
+          from constants import constants as c
+          out=pathlib.Path(os.environ["GITHUB_WORKSPACE"])/"result/direct-d3host"
+          def log(s):
+              print(s,flush=True)
+              with (out/"controller.log").open("a",encoding="utf-8") as f:f.write(str(s)+"\n")
+          app=None
+          try:
+              ksapi.SetKompasPath("/opt/ascon/kompas3d-v25/Bin")
+              os.environ["LD_PRELOAD"]="/tmp/direct_d3host_bootstrap.so"
+              log("CALL=OpenKompasInvisible")
+              app=ksapi.OpenKompasInvisible()
+              if not app: raise RuntimeError("OpenKompasInvisible returned null")
+              log("CONTROLLER_APP=1")
+              lm=app.GetApplicationLicenseManager()
+              log("CONTROLLER_LICENSE_3D="+str(int(bool(lm and lm.IsKompasModuleActive(c.ksKompasModule3D)))))
+              pathlib.Path("/tmp/controller_app_ready").write_text("READY\n",encoding="ascii")
+              log("CONTROLLER_READY_HANDSHAKE=1")
+              for _ in range(180):
+                  try: app.PumpWaitingMessages()
+                  except BaseException: pass
+                  p=pathlib.Path("/tmp/direct_d3host.log")
+                  if p.exists():
+                      t=p.read_text(errors="replace")
+                      if "RESULT=PASS_" in t or "RESULT=FAIL_" in t: break
+                  time.sleep(.5)
+              p=pathlib.Path("/tmp/direct_d3host.log")
+              if p.exists():
+                  t=p.read_text(errors="replace")
+                  (out/"gate.log").write_text(t,encoding="utf-8")
+                  log(t)
+          except BaseException as e:
+              log("CONTROLLER_EXCEPTION="+type(e).__name__+":"+repr(e)); traceback.print_exc()
+          finally:
+              try:
+                  if app: app.Quit()
+              except BaseException as e: log("QUIT_EXCEPTION="+repr(e))
+          PY
+
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          HOST_HOME="$RUNNER_TEMP/direct-d3host-home"
+          HOST_XDG="$HOST_HOME/.config"
+          mkdir -p "$HOST_XDG/ascon/KOMPAS-3D Invisible/25"
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$HOST_XDG/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          rm -f /tmp/direct_d3host.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/controller_app_ready /tmp/D3DocumentHost_Native.m3d
+          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          timeout 160s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"             dbus-run-session -- env PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN"             HOME="$HOST_HOME" XDG_CONFIG_HOME="$HOST_XDG" QT_QPA_PLATFORM=xcb             LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8 python3 -u /tmp/controller.py             >"$OUT/stdout.txt" 2>"$OUT/stderr.txt" || true
+          cp /tmp/direct_d3host.log "$OUT/gate.log" 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log "$OUT/bootstrap.log" 2>/dev/null || true
+          cat "$OUT/controller.log" || true
+          cat "$OUT/gate.log" || true
+          cat "$OUT/bootstrap.log" || true
+          cat "$OUT/stderr.txt" || true
+          grep -qx 'RESULT=PASS_DIRECT_D3DOCUMENTHOST_SAVE_CLOSE_REOPEN' "$OUT/gate.log"
+          test -s /tmp/D3DocumentHost_Native.m3d
+          cp /tmp/D3DocumentHost_Native.m3d "$OUT/"
+          file "$OUT/D3DocumentHost_Native.m3d" | tee "$OUT/file.txt"
+          stat -c '%n %s bytes' "$OUT/D3DocumentHost_Native.m3d" | tee "$OUT/stat.txt"
+          sha256sum "$OUT/D3DocumentHost_Native.m3d" | tee "$OUT/SHA256.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-direct-d3documenthost
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/direct-d3host/**

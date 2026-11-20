@@ -1,0 +1,87 @@
+name: Probe parametric FRW samples
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/probe-parametric-frw.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download candidate FRW files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import urllib.request
+          files = {
+            'gear1.frw':'https://raw.githubusercontent.com/dimonenm/kompas3d/main/Brewing_equipment/Water_pump/itemRS550Gear2.frw',
+            'gear2.frw':'https://raw.githubusercontent.com/dimonenm/kompas3d/main/Brewing_equipment/Water_pump/itemRS550GearV2.frw',
+            'gear3.frw':'https://raw.githubusercontent.com/dimonenm/kompas3d/main/GearInShredder/itemGearInShredder.frw',
+            'tile.frw':'https://raw.githubusercontent.com/dimonenm/kompas3d/main/%D0%9F%D0%BB%D0%B8%D1%82%D0%BA%D0%B0%20%D0%BD%D0%B0%20%D0%B1%D0%B0%D0%BB%D0%BA%D0%BE%D0%BD/%D0%A4%D1%80%D0%B0%D0%B3%D0%BC%D0%B5%D0%BD%D1%82.frw',
+          }
+          for name,url in files.items():
+              urllib.request.urlretrieve(url,name)
+          PY
+          ls -lh *.frw
+
+      - name: Decompress Contents and scan
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p probe
+          python3 - <<'PY'
+          import zipfile,zlib,struct,re,hashlib,os,json
+          for fn in ['gear1.frw','gear2.frw','gear3.frw','tile.frw']:
+              d='probe/'+fn[:-4]
+              os.makedirs(d,exist_ok=True)
+              with zipfile.ZipFile(fn) as z:
+                  names=z.namelist()
+                  cont=z.read('Contents')
+                  open(d+'/Contents','wb').write(cont)
+                  if 'FileInfo' in names:
+                      open(d+'/FileInfo','wb').write(z.read('FileInfo'))
+              assert cont[:2]==b'KF'
+              pos=2; blocks=[]; tail=b''
+              while pos < len(cont):
+                  if cont[pos:pos+2] not in (b'\x78\x9c',b'\x78\xda',b'\x78\x01'):
+                      tail=cont[pos:]; break
+                  obj=zlib.decompressobj()
+                  dec=obj.decompress(cont[pos:])
+                  consumed=len(cont[pos:])-len(obj.unused_data)
+                  if consumed<=0: break
+                  blocks.append(dec)
+                  pos+=consumed
+              open(d+'/decompressed.bin','wb').write(b''.join(blocks))
+              open(d+'/tail.bin','wb').write(tail)
+              meta={
+                'file':fn,'sha256':hashlib.sha256(open(fn,'rb').read()).hexdigest(),
+                'contents_bytes':len(cont),'block_count':len(blocks),
+                'decompressed_bytes':sum(map(len,blocks)),'tail_bytes':len(tail),
+                'block_sizes':[len(x) for x in blocks]
+              }
+              open(d+'/meta.json','w').write(json.dumps(meta,indent=2))
+              print(json.dumps(meta))
+          PY
+
+          for d in probe/*; do
+            echo "===== $d ====="
+            cat "$d/meta.json"
+            echo "--- UTF16LE STRINGS ---"
+            strings -a -el "$d/decompressed.bin" | head -300 || true
+            echo "--- ASCII STRINGS ---"
+            strings -a "$d/decompressed.bin" | head -300 || true
+            echo "--- likely variable/formula words ---"
+            (strings -a -el "$d/decompressed.bin"; strings -a "$d/decompressed.bin") |               grep -Eai 'var|variable|param|formula|expression|constraint|angle|radius|diam|module|tooth|teeth|gear|шаг|модул|зуб|радиус|диаметр|угол|перемен|парамет|формул|огранич' | head -300 || true
+          done
+
+      - name: Upload probe data
+        uses: actions/upload-artifact@v4
+        with:
+          name: parametric-frw-probe
+          path: |
+            *.frw
+            probe/**

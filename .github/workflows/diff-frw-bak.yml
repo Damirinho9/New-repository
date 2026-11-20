@@ -1,0 +1,104 @@
+name: Diff native FRW and BAK
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/diff-frw-bak.yml'
+  workflow_dispatch:
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch FRW and backup from GitHub API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import urllib.request,json,base64,os
+          repo='OTS0/Computer_engineering_graphics'
+          files={
+            'gear.frw':'3260bfe9d8ed693bd1e2b2e091d76c40f1f3921a',
+            'gear.frw.bak':'885d21a3c79816e537a712ef829e2c1d6bceb05c',
+          }
+          h={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'}
+          for name,sha in files.items():
+              req=urllib.request.Request(f'https://api.github.com/repos/{repo}/git/blobs/{sha}',headers=h)
+              d=json.load(urllib.request.urlopen(req))
+              open(name,'wb').write(base64.b64decode(d['content']))
+          PY
+          ls -l gear*
+          sha256sum gear*
+
+      - name: Compare KOMPAS containers and decompressed blocks
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import zipfile,zlib,hashlib,json,os,struct,re,difflib
+          def unpack(fn):
+              z=zipfile.ZipFile(fn)
+              c=z.read('Contents')
+              pos=2 if c[:2]==b'KF' else 0
+              blocks=[]
+              while pos<len(c) and c[pos:pos+2] in (b'\x78\x01',b'\x78\x9c',b'\x78\xda'):
+                  o=zlib.decompressobj()
+                  d=o.decompress(c[pos:])
+                  used=len(c[pos:])-len(o.unused_data)
+                  if used<=0: break
+                  blocks.append(d); pos+=used
+              return z,c,blocks,c[pos:]
+          za,ca,a,ta=unpack('gear.frw')
+          zb,cb,b,tb=unpack('gear.frw.bak')
+          print('members current',[(i.filename,i.file_size) for i in za.infolist()])
+          print('members backup ',[(i.filename,i.file_size) for i in zb.infolist()])
+          print('blocks',len(a),len(b),'tail',len(ta),len(tb))
+          n=max(len(a),len(b))
+          report=[]
+          for i in range(n):
+              x=a[i] if i<len(a) else b''
+              y=b[i] if i<len(b) else b''
+              same=x==y
+              row={'i':i,'size_now':len(x),'size_bak':len(y),'same':same,
+                   'sha_now':hashlib.sha256(x).hexdigest()[:16],
+                   'sha_bak':hashlib.sha256(y).hexdigest()[:16]}
+              if not same:
+                  # Changed byte ranges for equal-ish blocks
+                  m=min(len(x),len(y))
+                  dif=[j for j in range(m) if x[j]!=y[j]]
+                  row['diff_count_prefix']=len(dif)
+                  if dif:
+                      row['first_diff']=min(dif); row['last_diff']=max(dif)
+                  # strings
+                  def strings(d):
+                      out=[]
+                      try:
+                          t=d.decode('utf-16le','ignore')
+                          out += re.findall(r'[A-Za-zА-Яа-я_][A-Za-zА-Яа-я0-9_ .,:;=+*/()\-]{2,100}',t)
+                      except: pass
+                      out += [q.decode('latin1','ignore') for q in re.findall(rb'[ -~]{4,100}',d)]
+                      return list(dict.fromkeys(s.strip() for s in out if s.strip()))
+                  row['strings_now']=strings(x)[:100]
+                  row['strings_bak']=strings(y)[:100]
+              report.append(row)
+              print(json.dumps(row,ensure_ascii=False))
+          open('block-diff.json','w',encoding='utf-8').write(json.dumps(report,ensure_ascii=False,indent=2))
+          open('tail-now.bin','wb').write(ta); open('tail-bak.bin','wb').write(tb)
+          # Compare FileInfo text
+          for member in sorted(set(za.namelist())|set(zb.namelist())):
+              aa=za.read(member) if member in za.namelist() else b''
+              bb=zb.read(member) if member in zb.namelist() else b''
+              if aa!=bb:
+                  print('MEMBER_CHANGED',member,len(aa),len(bb),hashlib.sha256(aa).hexdigest()[:12],hashlib.sha256(bb).hexdigest()[:12])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-frw-bak-diff
+          path: |
+            gear.frw
+            gear.frw.bak
+            block-diff.json
+            tail-now.bin
+            tail-bak.bin

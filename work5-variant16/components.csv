@@ -1,0 +1,14 @@
+source_position,role,file,mandatory,construction_check
+1,lower anchor nut,05_Gaika_Nizhnyaya.m3d,yes,coaxial with T-slot bolt and central axis
+2,adjustment spring-stop nut,05_Gaika_Regulirovochnaya.m3d,yes,coaxial with rod and spring
+3,clamp lever,05_Prizhim.m3d,yes,crosses axis; one arm on support and one on workpiece
+4,T-slot bolt,05_Bolt_T_paza.m3d,yes,anchors assembly to base/table
+5,hydraulic cylinder body,05_Gidrocilindr.m3d,yes,surrounds rod; movable axially
+6,piston rod,05_Shtok_Porshen.m3d,yes,central stationary reaction member during clamp stroke
+7,upper stop nut,05_Gaika_Verhnyaya.m3d,yes,rod reacts against it
+8a,conical washer,05_Shaiba_Konicheskaya.m3d,yes,paired below cylinder
+8b,spherical washer,05_Shaiba_Sfericheskaya.m3d,yes,paired with conical washer
+9,return spring,05_Pruzhina.m3d,yes,coaxial; nut 2 is its stop
+10,stepped clamp support,05_Opora.m3d,yes,offset support under one clamp arm
+-,base/table representation,05_Osnovanie.m3d,yes,receives T-slot bolt and supports device
+-,demo workpiece,05_Zagotovka_Primer.m3d,yes,under opposite clamp arm

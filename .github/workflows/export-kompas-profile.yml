@@ -1,0 +1,38 @@
+name: Export KOMPAS v25 default profile for local acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/export-kompas-profile.yml'
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Extract official default profile from ASCON RPMs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y aria2 rpm2cpio cpio
+          mkdir -p rpms root out
+          GFX='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          D3='https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas3d-v25-25.0.5.2780-0.x86_64.rpm'
+          aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d rpms -o graphic.rpm "$GFX"
+          aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M -d rpms -o kompas3d.rpm "$D3"
+          for r in rpms/*.rpm; do
+            (cd root && rpm2cpio "../$r" | cpio -idm --quiet './etc/ascon/*' || true)
+          done
+          test -d root/etc/ascon/KOMPAS-3D/25
+          cp -a root/etc/ascon/KOMPAS-3D/25/. out/
+          find out -type f -printf '%P %s\n' | sort | tee out/FILES.txt
+          find out -type f -print0 | sort -z | xargs -0 sha256sum > out/SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-default-profile
+          path: out/**
+          if-no-files-found: error
+          retention-days: 3

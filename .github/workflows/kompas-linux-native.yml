@@ -1,0 +1,10 @@
+name: KOMPAS native Work1 legacy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  legacy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Legacy pipeline disabled; use build-native-frw-v6-final.yml"

@@ -1,0 +1,175 @@
+name: KOMPAS Stage 4 ksCMFileNew native command gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-file-new-command-gate.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+      - name: Install controller and X11 inspection prerequisites only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            xvfb xauth dbus procps python3 x11-utils xdotool \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
+            libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
+            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
+      - name: Execute official File New command inside licensed invisible session
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat >/tmp/file_new_gate.py <<'PY'
+          import os, pathlib, subprocess, sys, time, traceback
+          import ksapi
+          from constants import constants as c
+          outdir=pathlib.Path(os.environ["GITHUB_WORKSPACE"])/"result/file-new-command"
+          outdir.mkdir(parents=True,exist_ok=True)
+          logp=outdir/"gate.log"
+          def log(s):
+              s=str(s); print(s,flush=True)
+              with logp.open("a",encoding="utf-8") as f:f.write(s+"\n")
+          def pump(app,n=60):
+              for _ in range(n):
+                  try: app.PumpWaitingMessages()
+                  except BaseException: pass
+                  time.sleep(.1)
+          def dump_x11(tag):
+              for cmd,name in ((["xwininfo","-root","-tree"],f"xwininfo-{tag}.txt"),
+                               (["xdotool","search","--name","."],f"windows-{tag}.txt")):
+                  try:
+                      p=subprocess.run(cmd,text=True,capture_output=True,timeout=5)
+                      (outdir/name).write_text(p.stdout+"\nSTDERR:\n"+p.stderr,encoding="utf-8")
+                  except BaseException as e:
+                      (outdir/name).write_text(repr(e),encoding="utf-8")
+              try:
+                  ids=subprocess.run(["xdotool","search","--name","."],text=True,capture_output=True,timeout=5).stdout.split()
+                  rows=[]
+                  for wid in ids[:100]:
+                      p=subprocess.run(["xdotool","getwindowname",wid],text=True,capture_output=True,timeout=2)
+                      rows.append(wid+"\t"+p.stdout.strip())
+                  (outdir/f"window-names-{tag}.txt").write_text("\n".join(rows),encoding="utf-8")
+              except BaseException as e:
+                  (outdir/f"window-names-{tag}.txt").write_text(repr(e),encoding="utf-8")
+          app=None
+          try:
+              ksapi.SetKompasPath("/opt/ascon/kompas3d-v25/Bin")
+              app=ksapi.OpenKompasInvisible()
+              if not app: raise RuntimeError("OpenKompasInvisible returned null")
+              lm=app.GetApplicationLicenseManager()
+              l2=bool(lm and lm.IsKompasModuleActive(c.ksKompasModule2D))
+              l3=bool(lm and lm.IsKompasModuleActive(c.ksKompasModule3D))
+              log("LICENSE_2D="+str(int(l2))); log("LICENSE_3D="+str(int(l3)))
+              if not (l2 and l3): raise RuntimeError("license inactive")
+              docs=app.GetDocuments()
+              if not docs: raise RuntimeError("documents null")
+              log("DOC_COUNT_BEFORE="+str(docs.GetCount()))
+              try: log("VISIBLE="+str(int(bool(app.IsVisible()))))
+              except BaseException as e: log("VISIBLE_EXCEPTION="+repr(e))
+              try: log("MAIN_WINDOW="+str(app.GetMainWindowHandle()))
+              except BaseException as e: log("MAIN_WINDOW_EXCEPTION="+repr(e))
+              dump_x11("before")
+              cmd=int(c.ksCMFileNew)
+              log("COMMAND_ID="+str(cmd))
+              enabled=bool(app.IsKompasCommandEnable(cmd))
+              log("COMMAND_ENABLED="+str(int(enabled)))
+              if not enabled:
+                  log("RESULT=COMMAND_DISABLED")
+                  sys.exit(0)
+              ret=bool(app.ExecuteKompasCommand(cmd,True))
+              log("EXECUTE_RETURN="+str(int(ret)))
+              pump(app,80)
+              dump_x11("after")
+              count=int(docs.GetCount())
+              log("DOC_COUNT_AFTER="+str(count))
+              # Record any created document type/state without assuming one appears.
+              for i in range(count):
+                  try:
+                      d=docs.GetItem(i)
+                      log("DOC_"+str(i)+"_PTR="+str(int(bool(d))))
+                      if d:
+                          log("DOC_"+str(i)+"_TYPE="+str(d.GetDocumentType()))
+                          log("DOC_"+str(i)+"_VISIBLE="+str(int(bool(d.IsVisible()))))
+                          log("DOC_"+str(i)+"_ACTIVE="+str(int(bool(d.IsActive()))))
+                  except BaseException as e:
+                      log("DOC_"+str(i)+"_EXCEPTION="+repr(e))
+              if count>0:
+                  log("RESULT=PASS_FILE_NEW_CREATED_DOCUMENT")
+              elif ret:
+                  log("RESULT=COMMAND_POSTED_NO_DOCUMENT")
+              else:
+                  log("RESULT=COMMAND_EXECUTION_FAILED")
+          except SystemExit:
+              raise
+          except BaseException as e:
+              log("EXCEPTION="+type(e).__name__+":"+repr(e))
+              traceback.print_exc()
+              log("RESULT=FAIL_FILE_NEW_COMMAND_PROBE")
+              sys.exit(2)
+          finally:
+              try:
+                  if app: app.Quit()
+              except BaseException as e: log("QUIT_EXCEPTION="+repr(e))
+          PY
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          export HOME="$RUNNER_TEMP/file-new-command-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25" result/file-new-command
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          timeout 120s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- python3 -u /tmp/file_new_gate.py \
+            >result/file-new-command/stdout.txt 2>result/file-new-command/stderr.txt
+          cat result/file-new-command/stdout.txt || true
+          cat result/file-new-command/gate.log || true
+          cat result/file-new-command/window-names-after.txt || true
+          grep -Eq '^RESULT=(PASS_FILE_NEW_CREATED_DOCUMENT|COMMAND_POSTED_NO_DOCUMENT|COMMAND_DISABLED|COMMAND_EXECUTION_FAILED)$' result/file-new-command/gate.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-file-new-command-gate
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/file-new-command/**

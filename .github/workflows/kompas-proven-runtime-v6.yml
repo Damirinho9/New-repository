@@ -1,0 +1,622 @@
+name: KOMPAS proven Debian Xvfb native smoke
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/kompas-proven-runtime-v6.yml'
+      - 'kompas-input/v6.b64.part*'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    # Historical KOMPAS runs used ubuntu-26.04 / resolute.
+    # Commit 43d9332a baseline run 43747526748 used Azure image 20261111.196.1
+    # and already failed at Documents.Add(). Do not use floating ubuntu-latest here.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+
+    env:
+      HISTORICAL_PROBE_RUN_ID: "43746466610"
+      COMMIT43_BASELINE_RUN_ID: "43747526748"
+      HISTORICAL_IMAGE_OS: "ubuntu26"
+      HISTORICAL_RUNNER_IMAGE_VERSION: "20261111.196.1"
+      ASCON_DEB_DIST: "1.8_x86-64"
+      ASCON_KOMPAS_VERSION: "25.0.5.2780"
+      BASE_FRW_SHA256: "599bc2dc4962a85ec656f6977f3d82311e0a0a04f0cc7862a12f1221ac216d82"
+      BIN: "/opt/ascon/kompas3d-v25/Bin"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Record pinned runner baseline
+        shell: bash
+        run: |
+          set -euxo pipefail
+          {
+            echo "HISTORICAL_PROBE_RUN_ID=$HISTORICAL_PROBE_RUN_ID"
+            echo "COMMIT43_BASELINE_RUN_ID=$COMMIT43_BASELINE_RUN_ID"
+            echo "EXPECTED_IMAGE_OS=$HISTORICAL_IMAGE_OS"
+            echo "COMMIT43_BASELINE_IMAGE_VERSION=$HISTORICAL_RUNNER_IMAGE_VERSION"
+            echo "CURRENT_IMAGE_OS=${ImageOS:-unknown}"
+            echo "CURRENT_IMAGE_VERSION=${ImageVersion:-unknown}"
+            echo "RUNNER_OS=${RUNNER_OS:-unknown}"
+            echo "RUNNER_ARCH=${RUNNER_ARCH:-unknown}"
+            echo "RUNNER_NAME=${RUNNER_NAME:-unknown}"
+            uname -a
+            cat /etc/os-release
+            command -v python3
+            python3 -VV
+            python3 - <<'PY'
+          import platform, sys
+          print("PYTHON_EXECUTABLE=", sys.executable)
+          print("PYTHON_VERSION=", sys.version.replace("\n", " "))
+          print("PYTHON_PLATFORM=", platform.platform())
+          PY
+          } | tee runner-baseline.txt
+
+          # Pin the OS label, but do not pretend GitHub-hosted image releases are
+          # selectable by version. Record any release change for forensics.
+          if [ "${ImageOS:-}" != "$HISTORICAL_IMAGE_OS" ]; then
+            echo "RUNNER_IMAGE_OS_MISMATCH expected=$HISTORICAL_IMAGE_OS actual=${ImageOS:-unknown}" | tee -a runner-baseline.txt
+            exit 11
+          fi
+          echo "RUNNER_OS_LABEL_PINNED=ubuntu-26.04" | tee -a runner-baseline.txt
+          echo "CURRENT_HOSTED_IMAGE_VERSION=${ImageVersion:-unknown}" | tee -a runner-baseline.txt
+          echo "COMMIT43_HOSTED_IMAGE_VERSION=$HISTORICAL_RUNNER_IMAGE_VERSION" | tee -a runner-baseline.txt
+          echo "RUNNER_DRIFT_NOT_ROOT_CAUSE_REFERENCE=run_${COMMIT43_BASELINE_RUN_ID}_failed_at_Documents.Add_on_old_image" | tee -a runner-baseline.txt
+
+      - name: Install exact historical Debian KOMPAS runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget ca-certificates gnupg xvfb openbox net-tools iproute2 \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+
+          # Keep the vendor script only because it installs the ASCON signing key.
+          # On resolute it is expected to try an unsupported "resolute" repo first.
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sha256sum /tmp/ascon.sh | tee ascon-script-sha256.txt
+          set +e
+          sudo bash /tmp/ascon.sh >ascon-script.out 2>ascon-script.err
+          ASCON_SCRIPT_RC=$?
+          set -e
+          echo "ASCON_SCRIPT_RC=$ASCON_SCRIPT_RC" | tee ascon-script-rc.txt
+
+          # Reproduce the historical working source exactly, overriding any
+          # distro-codename entry created by the vendor script.
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb $ASCON_DEB_DIST main" \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+
+          grep -Rni "repo.ascon.ru" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null \
+            | tee ascon-sources.txt || true
+
+          # There must be an explicit historical 1.8_x86-64 source.
+          grep -q "repo.ascon.ru/stable/deb $ASCON_DEB_DIST main" ascon-sources.txt
+
+          sudo apt-get update
+
+          # Pin the three KOMPAS packages to the exact versions observed in
+          # historical run 43746466610.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            "ascon-kompas-graphic-v25=$ASCON_KOMPAS_VERSION" \
+            "ascon-kompas3d-v25=$ASCON_KOMPAS_VERSION" \
+            "ascon-kompas-sdk-v25=$ASCON_KOMPAS_VERSION"
+
+          dpkg -l 'ascon-kompas*' | tee installed.txt
+          dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' \
+            ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25 \
+            xvfb xserver-xorg-core | tee pinned-versions.txt
+
+          test "$(dpkg-query -W -f='${Version}' ascon-kompas-graphic-v25)" = "$ASCON_KOMPAS_VERSION"
+          test "$(dpkg-query -W -f='${Version}' ascon-kompas3d-v25)" = "$ASCON_KOMPAS_VERSION"
+          test "$(dpkg-query -W -f='${Version}' ascon-kompas-sdk-v25)" = "$ASCON_KOMPAS_VERSION"
+
+      - name: Verify historical runtime fingerprint
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          test -x "$BIN/ksinvisible"
+          test -f "$BIN/ksapi.py"
+          test -f "$BIN/constants.py"
+          test -f "$BIN/libksAPI.so"
+
+          export PYTHONPATH="$BIN"
+
+          {
+            echo "BIN=$BIN"
+            ls -l "$BIN/ksinvisible" "$BIN/ksapi.py" "$BIN/constants.py" "$BIN/libksAPI.so"
+            file "$BIN/ksinvisible" "$BIN/libksAPI.so"
+            echo "=== SHA256 ==="
+            sha256sum "$BIN/ksinvisible" "$BIN/ksapi.py" "$BIN/constants.py" "$BIN/libksAPI.so"
+            echo "=== Xvfb ==="
+            command -v Xvfb
+            dpkg-query -W -f='${binary:Package}=${Version}\n' xvfb xserver-xorg-core
+            echo "=== Python / KsAPI ==="
+            python3 -VV
+            python3 - <<'PY'
+          import hashlib
+          import pathlib
+          import sys
+          import ksapi
+          import constants
+
+          print("PYTHON_EXECUTABLE=", sys.executable)
+          print("PYTHON_VERSION=", sys.version.replace("\n", " "))
+          print("KSAPI_FILE=", ksapi.__file__)
+          print("CONSTANTS_FILE=", constants.__file__)
+          for module_file in (ksapi.__file__, constants.__file__):
+              p = pathlib.Path(module_file)
+              print("PY_MODULE_SHA256", p, hashlib.sha256(p.read_bytes()).hexdigest())
+          print("KSAPI_GETKOMPAS_SYMBOL=", getattr(ksapi, "GetKompas", None))
+          PY
+            echo "=== ksinvisible dependencies ==="
+            ldd "$BIN/ksinvisible"
+          } | tee runtime-fingerprint.txt
+
+      - name: Restore verified existing Variant 06 FRW
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf proven-input result
+          mkdir -p proven-input result
+
+          cat kompas-input/v6.b64.part* | tr -d '[:space:]' | base64 -d > proven-input/v6.frw.gz
+
+          set +e
+          gzip -dc proven-input/v6.frw.gz > proven-input/01_Mekhanizm_Variant_06_BASE.frw
+          GZIP_RC=$?
+          set -e
+          test "$GZIP_RC" -eq 0 -o "$GZIP_RC" -eq 2
+
+          BASE=proven-input/01_Mekhanizm_Variant_06_BASE.frw
+          test -s "$BASE"
+          ACTUAL_SHA=$(sha256sum "$BASE" | awk '{print $1}')
+          echo "BASE_FRW_SHA256=$ACTUAL_SHA" | tee base-frw-sha256.txt
+          test "$ACTUAL_SHA" = "$BASE_FRW_SHA256"
+
+          python3 - <<'PY' | tee base-frw-verify.txt
+          import hashlib
+          import pathlib
+          import zipfile
+
+          p = pathlib.Path("proven-input/01_Mekhanizm_Variant_06_BASE.frw")
+          print("BASE_SIZE=", p.stat().st_size)
+          print("BASE_SHA256=", hashlib.sha256(p.read_bytes()).hexdigest())
+          print("BASE_IS_ZIP=", zipfile.is_zipfile(p))
+          assert p.stat().st_size == 71953
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              names = z.namelist()
+              print("BASE_MEMBERS=", names)
+              assert "Contents" in names
+              assert "FileInfo" in names
+          print("PROVEN_RUNTIME_BASE_FRW_VERIFY_PASS")
+          PY
+
+      - name: Open existing FRW in proven runtime and mutate only after non-null document
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          export PYTHONPATH="$BIN"
+          export PROVEN_BASE_FRW="$PWD/proven-input/01_Mekhanizm_Variant_06_BASE.frw"
+          export PROVEN_MUTATED_FRW="$PWD/result/01_Mekhanizm_Variant_06_PROVEN_MUTATION.frw"
+
+          test -s "$PROVEN_BASE_FRW"
+          test "$(sha256sum "$PROVEN_BASE_FRW" | awk '{print $1}')" = "$BASE_FRW_SHA256"
+
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          test "$(readlink -f /tmp/kKompas)" = "$BIN/ksinvisible"
+          ls -l /tmp/kKompas | tee symlink.txt
+
+          # First attempt: ask the historical ksinvisible/kKompas route to open
+          # the known-good FRW immediately at process start.
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
+            /tmp/kKompas -automation "$PROVEN_BASE_FRW" \
+            >kompas-live.out 2>kompas-live.err &
+          WRAPPER_PID=$!
+
+          KP=""
+          for i in $(seq 1 40); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          echo "KPID=$KP" | tee kompas-pid.txt
+
+          if [ -z "$KP" ]; then
+            ps aux | grep -E 'kKompas|ksinvisible|Xvfb' || true
+            cat kompas-live.err || true
+            exit 2
+          fi
+
+          {
+            ps -o pid,ppid,comm,args -p "$KP"
+            echo "EXE=$(readlink -f /proc/$KP/exe)"
+            printf 'CMDLINE='
+            tr '\0' ' ' <"/proc/$KP/cmdline"
+            echo
+          } | tee process-ps.txt
+
+          tr '\0' '\n' <"/proc/$KP/environ" | LC_ALL=C sort | tee process-env.txt
+
+          XVFB_PID=$(pgrep -P "$WRAPPER_PID" Xvfb | head -1 || pgrep -x Xvfb | head -1 || true)
+          echo "XVFB_PID=$XVFB_PID" | tee xvfb-process.txt
+          if [ -n "$XVFB_PID" ]; then
+            ps -o pid,ppid,comm,args -p "$XVFB_PID" | tee -a xvfb-process.txt
+          fi
+
+          for i in $(seq 1 50); do
+            sleep 1
+            ss -ltnp > kompas-sockets.txt || true
+            if grep -q "kKompas" kompas-sockets.txt; then break; fi
+          done
+          cat kompas-sockets.txt
+          if ! grep -q "kKompas" kompas-sockets.txt; then
+            cat kompas-live.err || true
+            exit 3
+          fi
+
+          python3 - <<'PY' | tee api-result.txt
+          import hashlib
+          import inspect
+          import os
+          import pathlib
+          import traceback
+          import zipfile
+
+          import ksapi
+          from constants import constants as c
+
+          base = pathlib.Path(os.environ["PROVEN_BASE_FRW"]).resolve()
+          out = pathlib.Path(os.environ["PROVEN_MUTATED_FRW"]).resolve()
+
+          print("BASE_PATH=", base)
+          print("BASE_SIZE=", base.stat().st_size)
+          print("BASE_SHA256=", hashlib.sha256(base.read_bytes()).hexdigest())
+          print("KSAPI_RUNTIME_FILE=", ksapi.__file__)
+
+          def call(label, fn):
+              print(f"CALL_BEGIN {label}", flush=True)
+              try:
+                  value = fn()
+                  print(f"{label}_RETURN_TYPE=", type(value).__name__, flush=True)
+                  print(f"{label}_RETURN=", repr(value), flush=True)
+                  print(f"CALL_END {label} OK", flush=True)
+                  return value
+              except BaseException as exc:
+                  print(f"{label}_EXCEPTION_TYPE=", type(exc).__name__, flush=True)
+                  print(f"{label}_EXCEPTION=", repr(exc), flush=True)
+                  traceback.print_exc()
+                  print(f"CALL_END {label} EXCEPTION", flush=True)
+                  return None
+
+          def count_docs(docs, label):
+              getter = getattr(docs, "GetCount", None)
+              if getter is None:
+                  print(f"{label}=UNAVAILABLE")
+                  return None
+              return call(label, getter)
+
+          app = call("GETKOMPAS", ksapi.GetKompas)
+          if app is None:
+              print("PROVEN_RUNTIME_GETKOMPAS_FAIL")
+              raise SystemExit(10)
+          print("PROVEN_RUNTIME_GETKOMPAS_PASS")
+
+          print("APP_NAME=", call("APP_NAME", lambda: app.GetApplicationName(True)))
+          print("BUILD=", call("APP_BUILD", app.GetBuildNumber))
+
+          docs = call("GETDOCUMENTS", app.GetDocuments)
+          if docs is None:
+              print("PROVEN_RUNTIME_GETDOCUMENTS_FAIL")
+              raise SystemExit(11)
+          print("PROVEN_RUNTIME_GETDOCUMENTS_PASS")
+
+          count_docs(docs, "DOCUMENT_COUNT_AFTER_PROCESS_START")
+
+          open_method = getattr(docs, "Open", None)
+          if open_method is None:
+              print("DOCUMENTS_OPEN_SIGNATURE=UNAVAILABLE")
+          else:
+              try:
+                  print("DOCUMENTS_OPEN_SIGNATURE=", inspect.signature(open_method))
+              except BaseException as exc:
+                  print("DOCUMENTS_OPEN_SIGNATURE_ERROR=", repr(exc))
+
+          # Direct-launch result first.
+          active = call("ACTIVE_DOCUMENT_AFTER_PROCESS_START", app.GetActiveDocument)
+          doc = active
+          if doc is not None:
+              print("PROVEN_RUNTIME_EXISTING_DIRECT_OPEN_PASS")
+
+          # Fallback 1: invisible editable open.
+          if doc is None and open_method is not None:
+              opened = call(
+                  "DOCUMENTS_OPEN_INVISIBLE_EDITABLE",
+                  lambda: open_method(str(base), False, False),
+              )
+              count_docs(docs, "DOCUMENT_COUNT_AFTER_OPEN_INVISIBLE")
+              active_after = call("ACTIVE_DOCUMENT_AFTER_OPEN_INVISIBLE", app.GetActiveDocument)
+              doc = opened if opened is not None else active_after
+              if doc is not None:
+                  print("PROVEN_RUNTIME_EXISTING_DOCUMENTS_OPEN_PASS")
+
+          # Fallback 2: visible editable open under Xvfb.
+          if doc is None and open_method is not None:
+              opened_visible = call(
+                  "DOCUMENTS_OPEN_VISIBLE_EDITABLE",
+                  lambda: open_method(str(base), True, False),
+              )
+              count_docs(docs, "DOCUMENT_COUNT_AFTER_OPEN_VISIBLE")
+              active_visible = call("ACTIVE_DOCUMENT_AFTER_OPEN_VISIBLE", app.GetActiveDocument)
+              doc = opened_visible if opened_visible is not None else active_visible
+              if doc is not None:
+                  print("PROVEN_RUNTIME_EXISTING_DOCUMENTS_OPEN_VISIBLE_PASS")
+
+          if doc is None:
+              print("PROVEN_RUNTIME_EXISTING_OPEN_FAIL")
+              raise SystemExit(40)
+
+          print("PROVEN_RUNTIME_EXISTING_OPEN_PASS")
+          print("OPENED_DOCUMENT_TYPE=", type(doc).__name__)
+
+          # Match the only runtime path where the same BASE exposed a real
+          # active 2D view: explicitly activate both at application and
+          # document level before asking IViews for GetActiveView().
+          set_active_document = getattr(app, "SetActiveDocument", None)
+          if set_active_document is not None:
+              call("APP_SET_ACTIVE_DOCUMENT", lambda: set_active_document(doc))
+          doc_set_active = getattr(doc, "SetActive", None)
+          if doc_set_active is not None:
+              call("DOCUMENT_SET_ACTIVE", doc_set_active)
+          call("ACTIVE_DOCUMENT_AFTER_EXPLICIT_ACTIVATE", app.GetActiveDocument)
+
+          # First mutation route that does not depend on view initialization:
+          # create a real native document variable, save, reopen, and verify it.
+          d2 = call("DOCUMENT2D_WRAP", lambda: ksapi.IKompasDocument2D(doc))
+          if d2 is None:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_FAIL=document2d")
+              raise SystemExit(41)
+
+          probe_name = "__proof_mutation__"
+          existing_probe = call(
+              "VARIABLE_PROBE_LOOKUP_BEFORE",
+              lambda: d2.GetVariableByName(False, probe_name),
+          )
+          if existing_probe is None:
+              probe_var = call(
+                  "VARIABLE_PROBE_ADD",
+                  lambda: d2.AddVariable(probe_name, 123.0, "proven runtime mutation proof"),
+              )
+          else:
+              probe_var = existing_probe
+
+          if probe_var is None:
+              print("PROVEN_RUNTIME_VARIABLE_MUTATION_FAIL=add")
+          else:
+              probe_saved = pathlib.Path("result/01_Mekhanizm_Variant_06_VARIABLE_MUTATION.frw").resolve()
+              saved_probe = call(
+                  "VARIABLE_PROBE_SAVE_AS",
+                  lambda: doc.SaveAs(str(probe_saved)),
+              )
+              if saved_probe and probe_saved.exists() and probe_saved.stat().st_size > 1000:
+                  print("PROVEN_RUNTIME_VARIABLE_MUTATION_SAVE_PASS")
+                  try:
+                      doc.Close(c.kdDoNotSaveChanges)
+                  except BaseException as exc:
+                      print("VARIABLE_PROBE_CLOSE_WARNING=", repr(exc))
+
+                  reopened = call(
+                      "VARIABLE_PROBE_REOPEN",
+                      lambda: docs.Open(str(probe_saved), False, False),
+                  )
+                  if reopened is not None:
+                      reopened_d2 = call(
+                          "VARIABLE_PROBE_REOPEN_DOCUMENT2D",
+                          lambda: ksapi.IKompasDocument2D(reopened),
+                      )
+                      reopened_var = (
+                          call(
+                              "VARIABLE_PROBE_LOOKUP_AFTER_REOPEN",
+                              lambda: reopened_d2.GetVariableByName(False, probe_name),
+                          )
+                          if reopened_d2 is not None else None
+                      )
+                      if reopened_var is not None:
+                          value = call("VARIABLE_PROBE_VALUE_AFTER_REOPEN", reopened_var.GetValue)
+                          if value is not None and abs(float(value) - 123.0) < 1e-9:
+                              print("PROVEN_RUNTIME_VARIABLE_MUTATION_REOPEN_PASS")
+                              print("PROVEN_RUNTIME_MUTATION_ROUTE_PASS=AddVariable_SaveAs_Reopen")
+                              raise SystemExit(0)
+
+              print("PROVEN_RUNTIME_VARIABLE_MUTATION_FAIL=save_or_reopen")
+
+          # Geometry probing remains below only if AddVariable mutation did not pass.
+          manager = call("VIEWS_MANAGER", d2.GetViewsAndLayersManager)
+          views = call("VIEWS_COLLECTION", manager.GetViews) if manager is not None else None
+
+          if views is None:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_FAIL=views")
+              raise SystemExit(42)
+
+          relevant_view_methods = sorted(
+              name for name in dir(views)
+              if not name.startswith("_") and ("View" in name or "Count" in name)
+          )
+          print("VIEWS_RELEVANT_METHODS=", relevant_view_methods)
+          for method_name in ("GetActiveView", "GetView", "GetViewByNumber", "GetViewByName", "GetCount"):
+              method = getattr(views, method_name, None)
+              if method is None:
+                  print(f"{method_name}_SIGNATURE=UNAVAILABLE")
+                  continue
+              try:
+                  print(f"{method_name}_SIGNATURE=", inspect.signature(method))
+              except BaseException as exc:
+                  print(f"{method_name}_SIGNATURE_ERROR=", repr(exc))
+
+          view_count = call("VIEWS_COUNT", views.GetCount)
+          print("VIEWS_COUNT_VALUE=", view_count)
+
+          view = call("ACTIVE_VIEW", views.GetActiveView)
+
+          # Invisible mode may have no "active" view even though the fragment
+          # contains views. Enumerate the real collection instead of guessing 0.
+          if view is None and isinstance(view_count, int):
+              get_view = getattr(views, "GetView", None)
+              if get_view is not None:
+                  for index in range(max(0, view_count)):
+                      candidate = call(
+                          f"VIEW_INDEX_{index}",
+                          lambda index=index: get_view(index),
+                      )
+                      if candidate is not None:
+                          view = candidate
+                          print("VIEW_RESOLVED_BY_INDEX=", index)
+                          break
+
+          # Some wrappers expose the system view only by view number. Probe a
+          # tight deterministic range derived from the collection size.
+          if view is None:
+              get_view_by_number = getattr(views, "GetViewByNumber", None)
+              if get_view_by_number is not None:
+                  upper = max(8, (view_count if isinstance(view_count, int) else 0) + 4)
+                  for number in range(0, upper):
+                      candidate = call(
+                          f"VIEW_NUMBER_{number}",
+                          lambda number=number: get_view_by_number(number),
+                      )
+                      if candidate is not None:
+                          view = candidate
+                          print("VIEW_RESOLVED_BY_NUMBER=", number)
+                          break
+
+          if view is None:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_FAIL=view_resolution")
+              raise SystemExit(42)
+
+          print("PROVEN_RUNTIME_EXISTING_VIEW_RESOLVE_PASS")
+          dc = call("DRAWING_CONTAINER", lambda: ksapi.IDrawingContainer(view))
+          segments = call("LINE_SEGMENTS_COLLECTION", dc.GetLineSegments) if dc is not None else None
+          if segments is None:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_FAIL=line_collection")
+              raise SystemExit(43)
+
+          line = call("EXISTING_FRW_LINE_ADD", segments.Add)
+          if line is None:
+              print("PROVEN_RUNTIME_EXISTING_LINE_ADD_FAIL")
+              raise SystemExit(44)
+
+          line.SetX1(0.0)
+          line.SetY1(-20.0)
+          line.SetX2(15.0)
+          line.SetY2(-20.0)
+          line.SetStyle(c.ksCSNormal)
+
+          updated = call("EXISTING_FRW_LINE_UPDATE", line.Update)
+          if not updated:
+              print("PROVEN_RUNTIME_EXISTING_LINE_UPDATE_FAIL")
+              raise SystemExit(45)
+
+          print("PROVEN_RUNTIME_EXISTING_LINE_ADD_PASS")
+
+          saved = call("EXISTING_FRW_SAVE_AS", lambda: doc.SaveAs(str(out)))
+          if not saved:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_SAVE_FAIL")
+              raise SystemExit(46)
+
+          if not out.exists() or out.stat().st_size <= 1000:
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_FILE_FAIL")
+              raise SystemExit(47)
+
+          if not zipfile.is_zipfile(out):
+              print("PROVEN_RUNTIME_EXISTING_MUTATION_CONTAINER_FAIL")
+              raise SystemExit(48)
+
+          with zipfile.ZipFile(out) as z:
+              names = z.namelist()
+              print("MUTATED_MEMBERS=", names)
+              if "Contents" not in names or "FileInfo" not in names:
+                  print("PROVEN_RUNTIME_EXISTING_MUTATION_MEMBERS_FAIL")
+                  raise SystemExit(49)
+
+          print("MUTATED_SIZE=", out.stat().st_size)
+          print("MUTATED_SHA256=", hashlib.sha256(out.read_bytes()).hexdigest())
+          print("PROVEN_RUNTIME_EXISTING_MUTATION_SAVE_PASS")
+          PY
+
+          kill "$WRAPPER_PID" 2>/dev/null || true
+
+          # The source file must remain byte-identical.
+          test "$(sha256sum "$PROVEN_BASE_FRW" | awk '{print $1}')" = "$BASE_FRW_SHA256"
+          echo "PROVEN_RUNTIME_BASE_FRW_UNCHANGED_PASS" | tee base-frw-unchanged.txt
+
+      - name: Verify proven mutation route
+        if: success()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q 'PROVEN_RUNTIME_GETKOMPAS_PASS' api-result.txt
+          grep -q 'PROVEN_RUNTIME_GETDOCUMENTS_PASS' api-result.txt
+          grep -q 'PROVEN_RUNTIME_EXISTING_OPEN_PASS' api-result.txt
+
+          if grep -q 'PROVEN_RUNTIME_MUTATION_ROUTE_PASS=AddVariable_SaveAs_Reopen' api-result.txt; then
+            OUT=result/01_Mekhanizm_Variant_06_VARIABLE_MUTATION.frw
+            test -s "$OUT"
+            sha256sum "$OUT" | tee mutation-sha256.txt
+            python3 - <<'PY'
+          import pathlib, zipfile
+          p=pathlib.Path("result/01_Mekhanizm_Variant_06_VARIABLE_MUTATION.frw")
+          assert p.stat().st_size > 1000
+          assert zipfile.is_zipfile(p)
+          with zipfile.ZipFile(p) as z:
+              assert "Contents" in z.namelist()
+              assert "FileInfo" in z.namelist()
+          print("PROVEN_RUNTIME_VARIABLE_MUTATION_VERIFY_PASS")
+          PY
+            exit 0
+          fi
+
+          grep -q 'PROVEN_RUNTIME_EXISTING_LINE_ADD_PASS' api-result.txt
+          grep -q 'PROVEN_RUNTIME_EXISTING_MUTATION_SAVE_PASS' api-result.txt
+          echo "PROVEN_RUNTIME_GEOMETRY_MUTATION_VERIFY_PASS"
+
+      - name: Upload proven runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kompas-proven-runtime-v6-existing-frw-diagnostics
+          path: |
+            proven-input/01_Mekhanizm_Variant_06_BASE.frw
+            result/01_Mekhanizm_Variant_06_PROVEN_MUTATION.frw
+            result/01_Mekhanizm_Variant_06_VARIABLE_MUTATION.frw
+            base-frw-sha256.txt
+            base-frw-verify.txt
+            base-frw-unchanged.txt
+            mutation-sha256.txt
+            runner-baseline.txt
+            ascon-script-sha256.txt
+            ascon-script.out
+            ascon-script.err
+            ascon-script-rc.txt
+            ascon-sources.txt
+            installed.txt
+            pinned-versions.txt
+            runtime-fingerprint.txt
+            symlink.txt
+            process-ps.txt
+            process-env.txt
+            xvfb-process.txt
+            kompas-live.out
+            kompas-live.err
+            kompas-sockets.txt
+            kompas-pid.txt
+            api-result.txt
+          if-no-files-found: ignore

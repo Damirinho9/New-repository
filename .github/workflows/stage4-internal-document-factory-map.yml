@@ -1,0 +1,122 @@
+name: KOMPAS Stage 4 internal native document factory map
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-internal-document-factory-map.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  map:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then
+            sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+          fi
+
+      - name: Map internal native document factories and accessors
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-internal-factory-map
+          mkdir -p "$OUT"
+          REPORT="$OUT/factory-map.txt"
+          : > "$REPORT"
+
+          {
+            echo "=== BUILD ==="
+            "$BIN/ksinvisible" --version 2>&1 || true
+            sha256sum "$BIN/ksinvisible" "$BIN/libksAPI.so"
+
+            echo
+            echo "=== EXACT EXPORTED FACTORY-RELATED SYMBOLS ==="
+            while IFS= read -r f; do
+              hits="$(nm -D -C --defined-only "$f" 2>/dev/null | grep -E                 'GrDocumentReader::CreateDocument|KompasAppl::CreateDocument3D|CreateDocument2DEvents|CreateDocument3D|NewDocument|DocumentReader|Get.*Kompas|KompasAppl|GetApplication|ApplicationInstance|GetInstance|instance\(\)' || true)"
+              if [ -n "$hits" ]; then
+                echo "--- $f"
+                echo "$hits"
+              fi
+            done < <(find "$BIN" /opt/ascon/common -type f \( -name '*.so' -o -name '*.so.*' -o -perm -111 \) 2>/dev/null | sort -u)
+
+            echo
+            echo "=== UNDEFINED REFERENCES TO TARGET FACTORIES ==="
+            while IFS= read -r f; do
+              hits="$(nm -D -C --undefined-only "$f" 2>/dev/null | grep -E                 'GrDocumentReader::CreateDocument|KompasAppl::CreateDocument3D|CreateDocument2DEvents|KompasAppl' || true)"
+              if [ -n "$hits" ]; then
+                echo "--- $f"
+                echo "$hits"
+              fi
+            done < <(find "$BIN" /opt/ascon/common -type f \( -name '*.so' -o -name '*.so.*' -o -perm -111 \) 2>/dev/null | sort -u)
+
+            echo
+            echo "=== RTTI / VTABLE / CONSTRUCTORS ==="
+            while IFS= read -r f; do
+              hits="$(nm -D -C "$f" 2>/dev/null | grep -E                 'vtable for (GrDocumentReader|KompasAppl)|typeinfo for (GrDocumentReader|KompasAppl)|GrDocumentReader::GrDocumentReader|KompasAppl::KompasAppl|GrDocumentReader::~GrDocumentReader|KompasAppl::~KompasAppl' || true)"
+              if [ -n "$hits" ]; then
+                echo "--- $f"
+                echo "$hits"
+              fi
+            done < <(find "$BIN" /opt/ascon/common -type f \( -name '*.so' -o -name '*.so.*' -o -perm -111 \) 2>/dev/null | sort -u)
+
+            echo
+            echo "=== MANGLED TARGETS WITH ADDRESSES ==="
+            while IFS= read -r f; do
+              hits="$(nm -D --defined-only "$f" 2>/dev/null | grep -E                 '_ZN16GrDocumentReader14CreateDocument|_ZN10KompasAppl16CreateDocument3D|_Z22CreateDocument2DEvents' || true)"
+              if [ -n "$hits" ]; then
+                echo "--- $f"
+                echo "$hits"
+              fi
+            done < <(find "$BIN" /opt/ascon/common -type f \( -name '*.so' -o -name '*.so.*' -o -perm -111 \) 2>/dev/null | sort -u)
+          } | tee "$REPORT"
+
+          targets=$(grep -Ec 'GrDocumentReader::CreateDocument|KompasAppl::CreateDocument3D|CreateDocument2DEvents' "$REPORT" || true)
+          accessors=$(grep -Eic 'Get.*Kompas|KompasAppl.*Get|GetInstance|instance\(\)|ApplicationInstance' "$REPORT" || true)
+          echo "TARGET_SYMBOL_LINES=$targets" | tee "$OUT/result.txt"
+          echo "ACCESSOR_CANDIDATE_LINES=$accessors" | tee -a "$OUT/result.txt"
+          if [ "$targets" -gt 0 ]; then
+            echo "RESULT=INTERNAL_FACTORY_SYMBOLS_MAPPED" | tee -a "$OUT/result.txt"
+          else
+            echo "RESULT=NO_INTERNAL_FACTORY_SYMBOLS" | tee -a "$OUT/result.txt"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-internal-document-factory-map
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-internal-factory-map/**

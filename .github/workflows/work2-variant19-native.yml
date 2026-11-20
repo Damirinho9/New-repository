@@ -1,0 +1,125 @@
+name: KOMPAS native Work 2 variant 19 top-down
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - kompas-7335493-native-work1
+    paths:
+      - 'work2-variant19/**'
+      - '.github/workflows/work2-variant19-native.yml'
+
+jobs:
+  build-native-work2:
+    runs-on: [self-hosted, Windows, X64, kompas]
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Freeze runtime contract
+        shell: powershell
+        run: |
+          Write-Host "Computer=$env:COMPUTERNAME"
+          Write-Host "User=$env:USERNAME"
+          Write-Host "OS=$([Environment]::OSVersion.VersionString)"
+          if ($env:KOMPAS_COMMERCIAL_CONFIRMED -ne "1") {
+            throw "This workflow requires the same licensed Windows KOMPAS runtime contract as native Work 1."
+          }
+          $api7 = [type]::GetTypeFromProgID("KOMPAS.Application.7")
+          $api5 = [type]::GetTypeFromProgID("Kompas.Application.5")
+          if ($null -eq $api7) { throw "KOMPAS.Application.7 is not registered." }
+          if ($null -eq $api5) { throw "Kompas.Application.5 is not registered." }
+          "RUNTIME_CONTRACT_PASS" | Set-Content -Encoding UTF8 work2-variant19/runtime-contract.txt
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pywin32
+        shell: powershell
+        run: python -m pip install --disable-pip-version-check pywin32
+
+      - name: Syntax and calculation gate
+        shell: powershell
+        run: |
+          python -m py_compile work2-variant19/calc_variant19.py work2-variant19/prove_native_3d.py work2-variant19/build_work2_native.py work2-variant19/verify_work2_native.py
+          python work2-variant19/calc_variant19.py | Tee-Object -FilePath work2-variant19/calculation-runtime.log
+          if (-not (Select-String -Path work2-variant19/calculation-runtime.log -Pattern '^RESULT=PASS_WORK2_VARIANT19_CALC$' -Quiet)) {
+            throw "Independent calculation gate failed."
+          }
+
+      - name: Prove native 3D mutation in frozen runtime
+        shell: powershell
+        run: |
+          python work2-variant19/prove_native_3d.py
+          Get-Content work2-variant19/runtime-proof.txt
+          if (-not (Select-String -Path work2-variant19/runtime-proof.txt -Pattern '^RESULT=RUNTIME_NATIVE_3D_MUTATION_PASS$' -Quiet)) {
+            throw "Runtime did not prove native 3D mutation."
+          }
+
+      - name: Build real top-down M3D and A3D
+        shell: powershell
+        run: |
+          python work2-variant19/build_work2_native.py
+          Get-Content work2-variant19/native/build-report.txt
+          if (-not (Select-String -Path work2-variant19/native/build-report.txt -Pattern '^RESULT=BUILD_NATIVE_WORK2_VARIANT19_PASS$' -Quiet)) {
+            throw "Work 2 native build gate failed."
+          }
+
+      - name: Close reopen rebuild and verify dependency
+        shell: powershell
+        run: |
+          python work2-variant19/verify_work2_native.py
+          Get-Content work2-variant19/native/verification.txt
+          if (-not (Select-String -Path work2-variant19/native/verification.txt -Pattern '^RESULT=PASS_NATIVE_WORK2_VARIANT19_REOPEN_REBUILD_DEPENDENCY$' -Quiet)) {
+            throw "Strict Work 2 reopen/rebuild/dependency verification failed."
+          }
+
+      - name: Final native container and hash gate
+        shell: powershell
+        run: |
+          $dir = "work2-variant19/native"
+          $files = @("$dir/Work2_V19_Workpiece.m3d", "$dir/Work2_V19_FormCutter.m3d", "$dir/Work2_V19_TopDown.a3d")
+          foreach ($p in $files) {
+            $f = Get-Item $p -ErrorAction Stop
+            if ($f.Length -lt 1024) { throw "$p is unexpectedly small." }
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+            if ($bytes[0] -ne 0x50 -or $bytes[1] -ne 0x4B) { throw "$p is not a modern native KOMPAS container." }
+          }
+          Get-FileHash $files -Algorithm SHA256 | Format-Table -AutoSize | Out-String | Set-Content -Encoding UTF8 "$dir/SHA256.txt"
+          Get-Content "$dir/SHA256.txt"
+          "RESULT=PASS_NATIVE_WORK2_VARIANT19" | Set-Content -Encoding UTF8 "$dir/ACCEPTANCE.txt"
+
+      - name: Upload strictly accepted Work 2 native package
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work2-variant19-native-top-down
+          if-no-files-found: error
+          path: |
+            work2-variant19/native/Work2_V19_Workpiece.m3d
+            work2-variant19/native/Work2_V19_FormCutter.m3d
+            work2-variant19/native/Work2_V19_TopDown.a3d
+            work2-variant19/native/native-manifest.json
+            work2-variant19/native/build-report.txt
+            work2-variant19/native/verification.txt
+            work2-variant19/native/SHA256.txt
+            work2-variant19/native/ACCEPTANCE.txt
+            work2-variant19/runtime-proof.txt
+            work2-variant19/calculation.csv
+            work2-variant19/calculation.md
+
+      - name: Upload failure diagnostics only
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work2-variant19-native-diagnostics
+          if-no-files-found: ignore
+          path: |
+            work2-variant19/runtime-contract.txt
+            work2-variant19/runtime-proof.txt
+            work2-variant19/calculation-runtime.log
+            work2-variant19/native/build-report.txt
+            work2-variant19/native/verification.txt

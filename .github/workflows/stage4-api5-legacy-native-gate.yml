@@ -1,0 +1,116 @@
+name: KOMPAS Stage 4 API5 legacy native creation gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-api5-legacy-native-gate.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  api5-gate:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then
+            sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+          fi
+
+      - name: Inspect exact legacy API5 surface
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils unzip python3
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          SDK=/opt/ascon/kompas3d-v25/SDK
+          OUT=result/stage4-api5
+          mkdir -p "$OUT" /tmp/sdk-expanded
+
+          {
+            echo "=== LEGACY HEADER TYPES ==="
+            grep -RniE 'ksDocument2D|ksDocument3D|ksCreateDocument|CreateDocumentW|GetParamStruct|ko_DocumentParam' "$SDK" 2>/dev/null || true
+
+            echo
+            echo "=== EXPAND SDK ARCHIVES ==="
+            find "$SDK" -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.tgz' \) -print
+          } | tee "$OUT/api5-surface.txt"
+
+          while IFS= read -r z; do
+            case "$z" in
+              *.zip) unzip -qq -o "$z" -d /tmp/sdk-expanded/one 2>/dev/null || true ;;
+            esac
+          done < <(find "$SDK" -type f -name '*.zip' | head -20)
+
+          {
+            echo
+            echo "=== EXPANDED ARCHIVE LEGACY TYPES ==="
+            grep -RniE 'ksDocument2D|ksDocument3D|ksCreateDocument|CreateDocumentW|GetParamStruct|ko_DocumentParam' /tmp/sdk-expanded 2>/dev/null | head -3000 || true
+
+            echo
+            echo "=== EXACT DYNAMIC EXPORTS ==="
+            found=0
+            while IFS= read -r f; do
+              hits="$(nm -D --defined-only "$f" 2>/dev/null | awk '$2 ~ /^[TW]$/ && ($3=="CreateDocument" || $3=="CreateDocumentW") {print}' || true)"
+              if [ -n "$hits" ]; then
+                found=1
+                echo "--- $f"
+                echo "$hits"
+              fi
+            done < <(find "$BIN" /opt/ascon/common -type f \( -name '*.so' -o -name '*.so.*' -o -perm -111 \) 2>/dev/null | sort -u)
+            echo "EXACT_LEGACY_EXPORT_FOUND=$found"
+
+            echo
+            echo "=== CURRENT PUBLIC LINUX CREATION SURFACE ==="
+            grep -RniE 'IDocuments.*Add|AddWithDefaultSettings|AddNewDocumentFromTemplate|IParts_CreateDocument'               "$SDK/KsAPI" "$SDK/KsAPIC" "$SDK/KsAPICLink" 2>/dev/null | head -1000 || true
+          } | tee -a "$OUT/api5-surface.txt"
+
+          header_hits=$(grep -RIlE 'ksDocument2D|ksDocument3D|ksCreateDocument|CreateDocumentW' "$SDK" /tmp/sdk-expanded 2>/dev/null | wc -l)
+          exact_exports=$(grep -c '^EXACT_LEGACY_EXPORT_FOUND=1$' "$OUT/api5-surface.txt" || true)
+
+          echo "LEGACY_HEADER_FILES=$header_hits" | tee "$OUT/result.txt"
+          echo "LEGACY_EXACT_EXPORTS=$exact_exports" | tee -a "$OUT/result.txt"
+
+          if [ "$header_hits" -gt 0 ] && [ "$exact_exports" -gt 0 ]; then
+            echo "RESULT=LEGACY_API5_SURFACE_PRESENT_REQUIRES_CALL_TEST" | tee -a "$OUT/result.txt"
+            exit 2
+          else
+            echo "RESULT=LEGACY_API5_NOT_EXPOSED_BY_LINUX_V25_RUNTIME" | tee -a "$OUT/result.txt"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-api5-legacy-native-gate
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-api5/**

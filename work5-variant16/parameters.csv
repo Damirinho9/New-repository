@@ -1,0 +1,44 @@
+parameter,value,unit,status,note
+variant,16,,given,figure 59r
+base_thickness,20,mm,selected,machine-table/base representation
+base_y,260,mm,selected,base plan size
+base_z,160,mm,selected,base plan size
+bolt_d,20,mm,selected,T-slot bolt shaft
+bolt_len,230,mm,selected,central anchor
+bolt_head_x,12,mm,selected,T-head thickness
+bolt_head_y,50,mm,selected,T-head width
+bolt_head_z,28,mm,selected,T-head depth
+nut_af,36,mm,selected,position 1/7 nut across flats
+nut_t,16,mm,selected,position 1/7 nut thickness
+adjust_nut_af,40,mm,selected,position 2 adjustment nut
+adjust_nut_t,16,mm,selected,position 2 thickness
+clamp_x,24,mm,selected,position 3 clamp thickness
+clamp_y,220,mm,selected,position 3 clamp length
+clamp_z,50,mm,selected,position 3 clamp width
+clamp_hole_d,24,mm,selected,central hole
+cylinder_od,80,mm,selected,position 5 cylinder outside diameter
+cylinder_id,32,mm,selected,position 5 cylinder bore
+cylinder_h,90,mm,selected,position 5 height
+rod_d,24,mm,selected,position 6 rod diameter
+rod_len,220,mm,selected,position 6 total length
+piston_d,52,mm,selected,position 6 piston diameter
+piston_t,18,mm,selected,position 6 piston thickness
+washer_od,56,mm,selected,position 8 washer outside diameter
+washer_id,26,mm,selected,position 8 washer bore
+washer_t,8,mm,selected,position 8 each washer thickness
+spring_mean_d,44,mm,selected,position 9 mean coil diameter
+spring_wire_d,5,mm,selected,position 9 wire diameter
+spring_turns,8,,selected,position 9 turns
+spring_height,55,mm,selected,position 9 free height
+support_y,80,mm,selected,position 10 lateral offset from central axis
+support_height,70,mm,selected,position 10 top height under clamp
+workpiece_y,-80,mm,selected,demo workpiece opposite support
+workpiece_height,70,mm,selected,demo workpiece top height under clamp
+x_anchor_nut,20,mm,selected,assembly axial location
+x_adjust_nut,36,mm,selected,assembly axial location
+x_spring,52,mm,selected,assembly axial location
+x_clamp,70,mm,selected,assembly axial location
+x_washer1,94,mm,selected,assembly axial location
+x_washer2,102,mm,selected,assembly axial location
+x_cylinder,110,mm,selected,assembly axial location
+x_top_nut,205,mm,selected,assembly axial location

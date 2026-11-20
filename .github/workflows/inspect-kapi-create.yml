@@ -1,0 +1,37 @@
+name: Inspect KOMPAS v25 CreateKompasApplication Linux API
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/inspect-kapi-create.yml'
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Fetch SDK and libksAPI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y aria2 rpm2cpio cpio binutils
+          mkdir -p /tmp/sdk /tmp/gfx /tmp/rpm
+          aria2c --allow-overwrite=true --auto-file-renaming=false -x 8 -s 8 -k 2M             -d /tmp/rpm -o sdk.rpm             'https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-sdk-v25-25.0.5.2780-0.x86_64.rpm'
+          aria2c --allow-overwrite=true --auto-file-renaming=false -x 16 -s 16 -k 4M             -d /tmp/rpm -o graphic.rpm             'https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+          (cd /tmp/sdk && rpm2cpio /tmp/rpm/sdk.rpm | cpio -idm --quiet)
+          (cd /tmp/gfx && rpm2cpio /tmp/rpm/graphic.rpm | cpio -idm --quiet './opt/ascon/kompas3d-v25/Bin/libksAPI.so')
+      - name: Inspect creation API
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INC=/tmp/sdk/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          LIB=/tmp/gfx/opt/ascon/kompas3d-v25/Bin/libksAPI.so
+          echo '=== HEADER MATCHES ==='
+          grep -R -n -C 4 -E 'CreateKompasApplication|GetKompasApplication|GetKompas\(' "$INC" | head -400 || true
+          echo '=== EXPORTED SYMBOLS ==='
+          nm -D -C "$LIB" | grep -E 'CreateKompasApplication|GetKompasApplication|GetKompas' | head -200 || true
+          echo '=== STRINGS ==='
+          strings "$LIB" | grep -E 'CreateKompasApplication|GetKompasApplication' | head -100 || true

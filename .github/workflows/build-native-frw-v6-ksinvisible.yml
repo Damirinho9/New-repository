@@ -1,0 +1,101 @@
+name: Build native FRW v6 via ksinvisible
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - 'kompas-linux/build_variant06_ksinvisible.py'
+      - '.github/workflows/build-native-frw-v6-ksinvisible.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Install KOMPAS professional and SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb openbox net-tools iproute2             libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main'             | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          test -x /opt/ascon/kompas3d-v25/Bin/ksinvisible
+          test -f /opt/ascon/kompas3d-v25/Bin/ksapi.py
+          dpkg -l 'ascon-kompas*' | tee installed.txt
+
+      - name: Start official headless KOMPAS API server
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          export PYTHONPATH="$BIN"
+
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac"             /tmp/kKompas -automation >kompas-live.out 2>kompas-live.err &
+          echo $! > wrapper.pid
+
+          KP=""
+          for i in $(seq 1 60); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          echo "KPID=$KP" | tee kompas-pid.txt
+          if [ -z "$KP" ]; then
+            ps aux | grep -E 'kKompas|ksinvisible' || true
+            cat kompas-live.err || true
+            exit 2
+          fi
+
+          for i in $(seq 1 60); do
+            sleep 1
+            ss -ltnp > kompas-sockets.txt || true
+            if grep -q "kKompas" kompas-sockets.txt; then break; fi
+          done
+          cat kompas-sockets.txt
+          if ! grep -q "kKompas" kompas-sockets.txt; then
+            cat kompas-live.err || true
+            exit 3
+          fi
+
+      - name: Build and verify native parametric variant 6
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          rm -f /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw /tmp/variant06_verification.json
+          python3 kompas-linux/build_variant06_ksinvisible.py | tee variant06-build.log
+          test -s /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          grep -q 'PASS_NATIVE_PARAMETRIC_VARIANT06' /tmp/variant06_verification.json
+          cp /tmp/01_Mekhanizm_Variant_06_PARAMETRIC.frw .
+          cp /tmp/variant06_verification.json .
+          sha256sum 01_Mekhanizm_Variant_06_PARAMETRIC.frw | tee native-sha256.txt
+          echo "=== FRW_BASE64_BEGIN ==="
+          base64 -w 76 01_Mekhanizm_Variant_06_PARAMETRIC.frw
+          echo "=== FRW_BASE64_END ==="
+
+      - name: Upload verified native FRW
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work1-variant06-native
+          if-no-files-found: ignore
+          path: |
+            01_Mekhanizm_Variant_06_PARAMETRIC.frw
+            variant06_verification.json
+            variant06-build.log
+            native-sha256.txt
+            installed.txt
+            kompas-live.out
+            kompas-live.err
+            kompas-sockets.txt
+            kompas-pid.txt

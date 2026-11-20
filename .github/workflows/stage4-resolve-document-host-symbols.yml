@@ -1,0 +1,103 @@
+name: KOMPAS Stage 4 resolve hidden document host symbols
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-resolve-document-host-symbols.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Resolve exact owners
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-host-symbol-resolution
+          mkdir -p "$OUT"
+          R="$OUT/resolution.txt"
+          : > "$R"
+
+          targets=("$BIN/libk2DDoc.so" "$BIN/libk3DAppA.so" "$BIN/libk2DAppA.so")
+          for src in "${targets[@]}"; do
+            [ -f "$src" ] || continue
+            {
+              echo "===== SOURCE $src ====="
+              echo "--- exact raw undefined host symbols"
+              nm -D --undefined-only "$src" 2>/dev/null | grep -E                 '_ZN14ItDocumentHost(17CreateNewDocument|20CreateKompasDocument|16OnCreateDocument)' || true
+              echo "--- ldd"
+              LD_LIBRARY_PATH="$BIN:/opt/ascon/common" ldd "$src" || true
+              echo
+            } | tee -a "$R"
+          done
+
+          # Derive exact mangled names from all source modules, then scan every runtime ELF
+          # with readelf, which exposes symbol type/binding/visibility/version.
+          mapfile -t syms < <(
+            for src in "${targets[@]}"; do
+              [ -f "$src" ] || continue
+              nm -D --undefined-only "$src" 2>/dev/null | awk '{print $2}' | grep -E                 '^_ZN14ItDocumentHost(17CreateNewDocument|20CreateKompasDocument|16OnCreateDocument)' || true
+            done | sort -u
+          )
+          printf 'SYMBOL_COUNT=%s\n' "${#syms[@]}" | tee -a "$R"
+          for s in "${syms[@]}"; do
+            echo "===== RESOLVE $s =====" | tee -a "$R"
+            while IFS= read -r f; do
+              hits="$(readelf -Ws "$f" 2>/dev/null | grep -F "$s" || true)"
+              if [ -n "$hits" ]; then
+                echo "--- $f" | tee -a "$R"
+                echo "$hits" | tee -a "$R"
+              fi
+            done < <(find "$BIN" /opt/ascon/common -type f 2>/dev/null | sort -u)
+          done
+
+          echo "=== DEMANGLED OWNER CANDIDATES ===" | tee -a "$R"
+          while IFS= read -r f; do
+            hits="$(readelf -Ws "$f" 2>/dev/null | c++filt | grep -E               'ItDocumentHost::(CreateNewDocument|CreateKompasDocument|OnCreateDocument)' || true)"
+            if [ -n "$hits" ]; then
+              echo "--- $f" | tee -a "$R"
+              echo "$hits" | tee -a "$R"
+            fi
+          done < <(find "$BIN" /opt/ascon/common -type f 2>/dev/null | sort -u)
+
+          echo "RESULT=HOST_SYMBOL_RESOLUTION_COMPLETE" | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-host-symbol-resolution
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-host-symbol-resolution/**

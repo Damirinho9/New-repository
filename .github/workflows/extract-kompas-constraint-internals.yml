@@ -1,0 +1,44 @@
+name: Extract KOMPAS constraint internals
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/extract-kompas-constraint-internals.yml'
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: sudo apt-get update && sudo apt-get install -y rpm2cpio cpio
+      - name: Download official KOMPAS v25 graphic RPM
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 5 --retry-delay 2 -o graphic.rpm \
+            'https://repo.ascon.ru/stable/alt/p11/x86_64/RPMS.main/ascon-kompas-graphic-v25-25.0.5.2780-0.x86_64.rpm'
+      - name: Extract constraint DB and FRW samples
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir root out
+          (cd root && rpm2cpio ../graphic.rpm | cpio -idm --quiet)
+          cp root/opt/ascon/kompas3d-v25/Libs/ImpExp/DbConstraints.tx out/
+          cp root/opt/ascon/kompas3d-v25/Samples/Drawings/SAMPLE.frw out/
+          cp root/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Фрагмент.frw out/template.frw
+          file out/*
+          sha256sum out/*
+          echo '=== DB HEADER ==='
+          xxd -l 512 out/DbConstraints.tx
+          echo '=== DB STRINGS ==='
+          strings -a out/DbConstraints.tx | head -2000 > out/db-strings-ascii.txt || true
+          strings -a -el out/DbConstraints.tx | head -2000 > out/db-strings-utf16.txt || true
+          sed -n '1,400p' out/db-strings-ascii.txt
+          sed -n '1,400p' out/db-strings-utf16.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-constraint-internals
+          compression-level: 9
+          path: out/**

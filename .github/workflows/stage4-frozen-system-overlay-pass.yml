@@ -1,0 +1,252 @@
+name: KOMPAS Stage 4 frozen runtime plus official system overlay
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-frozen-system-overlay-pass.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  native-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Extract frozen runtime without installing it yet
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/frozen-root"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/frozen-root"
+          FROZEN="$RUNNER_TEMP/frozen-root/opt/ascon/kompas3d-v25/Bin"
+          sha256sum "$FROZEN/ksinvisible" "$FROZEN/libksAPI.so" | tee "$RUNNER_TEMP/frozen-core.sha256"
+
+      - name: Install exact official v25 system integration
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            wget ca-certificates gnupg xvfb xauth dbus procps desktop-file-utils \
+            clang-18 libc++-18-dev libc++abi-18-dev \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
+            libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
+            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh >/tmp/ascon-script.out 2>/tmp/ascon-script.err || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-v25=25.0.5.2780 \
+            ascon-kompas-graphic-v25=25.0.5.2780 \
+            ascon-kompas3d-v25=25.0.5.2780 \
+            ascon-kompas-sdk-v25=25.0.5.2780
+          mkdir -p result/system-overlay
+          dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' 'ascon-kompas*' | sort | tee result/system-overlay/packages.txt
+          {
+            echo '=== /etc/ascon ==='
+            find /etc/ascon -maxdepth 6 -type f -printf '%p\n' 2>/dev/null | sort || true
+            echo '=== package files outside /opt ==='
+            for p in ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25; do
+              echo "--- $p"
+              dpkg-query -L "$p" | grep -v '^/opt/ascon/' || true
+            done
+          } | tee result/system-overlay/system-files.txt
+
+      - name: Put exact frozen product root back after system package install
+        shell: bash
+        run: |
+          set -euxo pipefail
+          FROOT="$RUNNER_TEMP/frozen-root"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$FROOT/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$FROOT/opt/ascon/common" ]; then sudo ln -s "$FROOT/opt/ascon/common" /opt/ascon/common; fi
+          sha256sum -c "$RUNNER_TEMP/frozen-core.sha256"
+          readlink -f /opt/ascon/kompas3d-v25 | tee result/system-overlay/product-root.txt
+          sha256sum /opt/ascon/kompas3d-v25/Bin/ksinvisible /opt/ascon/kompas3d-v25/Bin/libksAPI.so | tee result/system-overlay/frozen-core-after-overlay.sha256
+
+      - name: Compile strict 2D and 3D overlay gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          cat >/tmp/overlay_gate.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <filesystem>
+          #include <fstream>
+          #include <string>
+          #include <cmath>
+          using namespace ksapi; namespace fs=std::filesystem;
+          static std::ofstream lg("/tmp/overlay_gate.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          static int phase=0, waits=0;
+          static IKompasDocumentPtr fdoc{},pdoc{},r2{},r3{};
+          static double mass0=0,vol0=0;
+          static bool rect(const IFragmentDocumentPtr& frag){
+            auto vm=frag->GetViewsAndLayersManager(); auto vs=vm?vm->GetViews():IViewsPtr{};
+            auto v=vs?vs->GetActiveView():IViewPtr{}; IDrawingContainerPtr dc=v;
+            auto ls=dc?dc->GetLineSegments():ILineSegmentsPtr{}; if(!ls)return false;
+            const double q[4][4]={{-5,-4,5,-4},{5,-4,5,4},{5,4,-5,4},{-5,4,-5,-4}};
+            for(auto&p:q){auto s=ls->Add();if(!s)return false;s->SetX1(p[0]);s->SetY1(p[1]);s->SetX2(p[2]);s->SetY2(p[3]);s->SetStyle(ksCSNormal);if(!s->Update())return false;}
+            return true;
+          }
+          static bool metrics(const IPartPtr& top,double&m,double&v){
+            try{top->SetMaterial(L"Stage4Smoke",1.0);}catch(...){}
+            m=top->GetMass(); IMassInertiaParamPtr mp=top; if(!mp)return false;
+            mp->SetLengthUnits(ksLUnMM); if(!mp->Calculate()||!mp->IsActual())return false;
+            v=mp->GetVolume(); return std::isfinite(m)&&m>0&&std::isfinite(v)&&v>0;
+          }
+          extern "C" int run_variant06_writer(){
+            try{
+              IApplication& app=GetKompasApplication(); app.SetHideMessage(ksHideMessageYes);
+              auto lm=app.GetApplicationLicenseManager(); if(!lm){log("FAIL_LICENSE_MANAGER");return 1;}
+              bool l2=lm->IsKompasModuleActive(ksKompasModule2D), l3=lm->IsKompasModuleActive(ksKompasModule3D);
+              log(std::string("LICENSE_2D_ACTIVE=")+(l2?"1":"0"));
+              log(std::string("LICENSE_3D_ACTIVE=")+(l3?"1":"0"));
+              if(!l2||!l3){log("RESULT=FAIL_LICENSE");return 1;}
+              auto docs=app.GetDocuments(); if(!docs){log("FAIL_DOCUMENTS");return 1;}
+
+              if(phase==0){
+                fs::remove("/tmp/Overlay2D.frw"); fs::remove("/tmp/Overlay3D.m3d");
+                fdoc=docs->AddWithDefaultSettings(ksDocumentFragment,true);
+                log(std::string("ADD_DEFAULT_2D=")+(fdoc?"1":"0"));
+                pdoc=docs->AddWithDefaultSettings(ksDocumentPart,true);
+                log(std::string("ADD_DEFAULT_3D=")+(pdoc?"1":"0"));
+                if(!fdoc||!pdoc){if(++waits<15)return 3;log("RESULT=FAIL_ADD_DEFAULT");return 1;}
+                phase=1;waits=0;return 3;
+              }
+              if(phase==1){
+                IKompasDocument2DPtr d2=fdoc;
+                auto vm=d2?d2->GetViewsAndLayersManager():IViewsAndLayersManagerPtr{};
+                auto vs=vm?vm->GetViews():IViewsPtr{}; auto view=vs?vs->GetActiveView():IViewPtr{};
+                IDrawingContainerPtr dc=view; auto ls=dc?dc->GetLineSegments():ILineSegmentsPtr{};
+                IKompasDocument3DPtr d3=pdoc; auto top=d3?d3->GetTopPart():IPartPtr{};
+                log("INIT_2D view="+std::string(view?"1":"0")+" lines="+(ls?"1":"0"));
+                log("INIT_3D top="+std::string(top?"1":"0"));
+                if(!view||!ls||!top){if(++waits<20)return 3;log("RESULT=FAIL_INITIALIZATION");return 1;}
+                auto s=ls->Add(); if(!s){log("FAIL_2D_LINE_ADD");return 1;}
+                s->SetX1(10);s->SetY1(20);s->SetX2(45);s->SetY2(20);s->SetStyle(ksCSNormal);
+                if(!s->Update()){log("FAIL_2D_LINE_UPDATE");return 1;}
+                if(!fdoc->SaveAs(L"/tmp/Overlay2D.frw")){log("FAIL_2D_SAVE");return 1;}
+                if(!fdoc->Close(kdDoNotSaveChanges)){log("FAIL_2D_CLOSE");return 1;}
+                fdoc={}; log("2D_BUILD_SAVE_CLOSE_PASS");
+
+                auto mc=top->GetModelContainer(); auto sks=mc?mc->GetSketchs():ISketchsPtr{};
+                auto sk=sks?sks->Add():ISketchPtr{}; auto plane=top->GetDefaultObject(o3d_planeXOY);
+                if(!mc||!sk||!plane){log("FAIL_3D_SKETCH_SETUP");return 1;}
+                sk->SetPlane(plane); auto frag=sk->BeginEdit(false); if(!frag||!rect(frag)){log("FAIL_3D_SKETCH_EDIT");return 1;}
+                if(!sk->EndEdit()||!sk->Update()){log("FAIL_3D_SKETCH_UPDATE");return 1;}
+                auto exts=mc->GetExtrusions(); auto ext=exts?exts->Add(o3d_baseExtrusion):IExtrusionPtr{};
+                if(!ext){log("FAIL_3D_EXTRUSION_ADD");return 1;}
+                ext->SetProfiles({IModelObjectPtr(sk)});
+                if(!ext->SetSideParameters(true,etBlind,8.0,0.0,false,IModelObjectPtr{})||!ext->Update()){log("FAIL_3D_EXTRUSION_UPDATE");return 1;}
+                if(!top->RebuildModel(false)||!d3->RebuildDocument()){log("FAIL_3D_REBUILD");return 1;}
+                if(!metrics(top,mass0,vol0)){log("FAIL_3D_METRICS");return 1;}
+                log("MASS_BEFORE_SAVE="+std::to_string(mass0)); log("VOLUME_BEFORE_SAVE="+std::to_string(vol0));
+                if(!pdoc->SaveAs(L"/tmp/Overlay3D.m3d")){log("FAIL_3D_SAVE");return 1;}
+                if(!pdoc->Close(kdDoNotSaveChanges)){log("FAIL_3D_CLOSE");return 1;}
+                pdoc={}; log("3D_BUILD_SAVE_CLOSE_PASS"); phase=2;waits=0;return 3;
+              }
+              if(phase==2){
+                r2=docs->Open(L"/tmp/Overlay2D.frw",true,false);
+                r3=docs->Open(L"/tmp/Overlay3D.m3d",true,false);
+                log(std::string("REOPEN_2D=")+(r2?"1":"0"));
+                log(std::string("REOPEN_3D=")+(r3?"1":"0"));
+                if(!r2||!r3){if(++waits<15)return 3;log("RESULT=FAIL_REOPEN");return 1;}
+                phase=3;waits=0;return 3;
+              }
+              if(phase==3){
+                IKompasDocument2DPtr d2=r2; auto vm=d2?d2->GetViewsAndLayersManager():IViewsAndLayersManagerPtr{};
+                auto vs=vm?vm->GetViews():IViewsPtr{}; auto view=vs?vs->GetActiveView():IViewPtr{}; IDrawingContainerPtr dc=view;
+                auto ls=dc?dc->GetLineSegments():ILineSegmentsPtr{};
+                IKompasDocument3DPtr d3=r3; auto top=d3?d3->GetTopPart():IPartPtr{};
+                log("REOPEN_INIT_2D="+std::string(ls?"1":"0"));
+                log("REOPEN_INIT_3D="+std::string(top?"1":"0"));
+                if(!ls||ls->GetCount()<1||!top){if(++waits<15)return 3;log("RESULT=FAIL_REOPEN_INIT");return 1;}
+                if(!d3->RebuildDocument()||!top->RebuildModel(false)){log("FAIL_REOPEN_REBUILD");return 1;}
+                double m=0,v=0; if(!metrics(top,m,v)){log("FAIL_REOPEN_METRICS");return 1;}
+                log("MASS_AFTER_REOPEN="+std::to_string(m));log("VOLUME_AFTER_REOPEN="+std::to_string(v));
+                if(std::abs(m-mass0)>std::max(1e-8,std::abs(mass0)*1e-5)||std::abs(v-vol0)>std::max(1e-6,std::abs(vol0)*1e-5)){log("FAIL_METRIC_MISMATCH");return 1;}
+                if(!r2->Save()||!r3->Save()){log("FAIL_FINAL_SAVE");return 1;}
+                if(!r2->Close(kdDoNotSaveChanges)||!r3->Close(kdDoNotSaveChanges)){log("FAIL_FINAL_CLOSE");return 1;}
+                log("RESULT=PASS_FROZEN_RUNTIME_WITH_SYSTEM_OVERLAY_NATIVE_2D_3D"); return 0;
+              }
+            }catch(const std::exception&e){log(std::string("EXCEPTION=")+e.what());}
+             catch(...){log("EXCEPTION=unknown");}
+            return 1;
+          }
+          CPP
+          /usr/bin/clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread -I"$INC" /tmp/overlay_gate.cpp \
+            -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread kompas-linux/bootstrap_variant06_poll.cpp -ldl -o /tmp/stage4_bootstrap.so
+          ldd /tmp/writer_variant06.so | tee result/system-overlay/writer-ldd.txt
+
+      - name: Run exact frozen licensed ksinvisible in repaired official system environment
+        shell: bash
+        run: |
+          set -uxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export HOME="$RUNNER_TEMP/overlay-home" XDG_CONFIG_HOME="$HOME/.config" LC_ALL=C.UTF-8
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25"
+          if [ -d /etc/ascon/KOMPAS-3D/25 ]; then cp -a /etc/ascon/KOMPAS-3D/25/. "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/"; fi
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          export DISPLAY=:123 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          sudo mkdir -p /tmp/.X11-unix; sudo chmod 1777 /tmp/.X11-unix
+          Xvfb :123 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb123.out 2>/tmp/xvfb123.err &
+          XV=$!; trap 'kill "$XV" 2>/dev/null || true' EXIT
+          sleep 2
+          rm -f /tmp/overlay_gate.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/Overlay2D.frw /tmp/Overlay3D.m3d
+          setsid dbus-run-session -- env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" DISPLAY=:123 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" LD_PRELOAD=/tmp/stage4_bootstrap.so \
+            "$BIN/ksinvisible" -automation >result/system-overlay/kompas.out 2>result/system-overlay/kompas.err &
+          KP=$!; ok=0
+          for i in $(seq 1 180); do sleep 1
+            if grep -q '^RESULT=PASS_FROZEN_RUNTIME_WITH_SYSTEM_OVERLAY_NATIVE_2D_3D$' /tmp/overlay_gate.log 2>/dev/null; then ok=1;break;fi
+            if grep -q '^RESULT=FAIL_' /tmp/overlay_gate.log 2>/dev/null; then break;fi
+            if grep -q 'POLL_BOOTSTRAP_RETRY_LIMIT' /tmp/work1_bootstrap.log 2>/dev/null; then break;fi
+            kill -0 "$KP" 2>/dev/null || break
+          done
+          cp /tmp/overlay_gate.log result/system-overlay/gate.log 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log result/system-overlay/bootstrap.log 2>/dev/null || true
+          cp /tmp/Overlay2D.frw result/system-overlay/ 2>/dev/null || true
+          cp /tmp/Overlay3D.m3d result/system-overlay/ 2>/dev/null || true
+          cat result/system-overlay/gate.log 2>/dev/null || true
+          tail -120 result/system-overlay/kompas.err 2>/dev/null || true
+          kill -TERM -- "-$KP" 2>/dev/null || true; wait "$KP" 2>/dev/null || true
+          test "$ok" = 1
+          test -s result/system-overlay/Overlay2D.frw
+          test -s result/system-overlay/Overlay3D.m3d
+          sha256sum result/system-overlay/Overlay2D.frw result/system-overlay/Overlay3D.m3d | tee result/system-overlay/output-SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-frozen-system-overlay
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/system-overlay/**

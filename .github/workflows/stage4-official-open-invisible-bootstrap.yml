@@ -1,0 +1,268 @@
+name: KOMPAS Stage 4 official OpenKompasInvisible strict gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-official-open-invisible-bootstrap.yml'
+
+jobs:
+  strict-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install exact official KOMPAS v25 including kKompas configuration package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            wget ca-certificates gnupg xvfb xauth dbus procps desktop-file-utils strace file \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
+            libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
+            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh >/tmp/ascon-script.out 2>/tmp/ascon-script.err || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-v25=25.0.5.2780 \
+            ascon-kompas-graphic-v25=25.0.5.2780 \
+            ascon-kompas3d-v25=25.0.5.2780 \
+            ascon-kompas-sdk-v25=25.0.5.2780
+
+          mkdir -p result/open-invisible
+          dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' 'ascon-kompas*' | sort | tee result/open-invisible/packages.txt
+          file /opt/ascon/kompas3d-v25/Bin/kKompas /opt/ascon/kompas3d-v25/Bin/ksinvisible | tee result/open-invisible/executables-file.txt
+          sha256sum /opt/ascon/kompas3d-v25/Bin/kKompas /opt/ascon/kompas3d-v25/Bin/ksinvisible /opt/ascon/kompas3d-v25/Bin/libksAPI.so | tee result/open-invisible/executables-sha256.txt
+          ls -l /usr/bin/kompas-v25 /opt/ascon/kompas3d-v25/Bin/kKompas /opt/ascon/kompas3d-v25/Bin/ksinvisible | tee result/open-invisible/executables-ls.txt
+
+      - name: Inspect official Python bootstrap source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          python3 - <<'PY' | tee result/open-invisible/bootstrap-source.txt
+          import inspect, ksapi
+          print("KSAPI_FILE",ksapi.__file__)
+          print("KOMPAS_PATH",repr(getattr(ksapi,"_kompas_path",None)))
+          for n in ("SetKompasPath","OpenKompasInvisible","GetKompasInvisible","OpenKompas","GetKompas"):
+              o=getattr(ksapi,n,None)
+              print("\n===",n,"===")
+              print("OBJECT",repr(o))
+              try: print("SIGNATURE",inspect.signature(o))
+              except BaseException as e: print("SIGNATURE_ERROR",repr(e))
+              try: print(inspect.getsource(o))
+              except BaseException as e: print("SOURCE_ERROR",repr(e))
+          PY
+
+      - name: Create strict native probe script
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat >/tmp/openinv_gate.py <<'PY'
+          import os, pathlib, sys, time, traceback, math
+          import ksapi
+          from constants import constants as c
+
+          outdir=pathlib.Path(os.environ["GITHUB_WORKSPACE"])/"result/open-invisible"
+          logp=outdir/"gate.log"
+          def log(s):
+              s=str(s); print(s,flush=True)
+              with logp.open("a",encoding="utf-8") as f:f.write(s+"\n")
+          def req(v,m):
+              if not v: raise RuntimeError(m)
+              return v
+
+          def rect(frag):
+              vm=req(frag.GetViewsAndLayersManager(),"frag vm")
+              vs=req(vm.GetViews(),"frag views")
+              v=req(vs.GetActiveView(),"frag active view")
+              dc=ksapi.IDrawingContainer(v)
+              ls=req(dc.GetLineSegments(),"frag lines")
+              q=((-5,-4,5,-4),(5,-4,5,4),(5,4,-5,4),(-5,4,-5,-4))
+              for a,b,d,e in q:
+                  s=req(ls.Add(),"rect line add")
+                  s.SetX1(a);s.SetY1(b);s.SetX2(d);s.SetY2(e);s.SetStyle(c.ksCSNormal)
+                  req(s.Update(),"rect line update")
+              return True
+
+          try:
+              binp="/opt/ascon/kompas3d-v25/Bin"
+              ksapi.SetKompasPath(binp)
+              log("CALL=OpenKompasInvisible")
+              app=req(ksapi.OpenKompasInvisible(),"OpenKompasInvisible returned null")
+              log("APP_TYPE="+type(app).__name__)
+              try: log("APP_NAME="+str(app.GetApplicationName(True)))
+              except BaseException as e: log("APP_NAME_EXCEPTION="+repr(e))
+              try:
+                  a=b=d=e=0
+                  log("APP_VERSION_CALL_AVAILABLE=1")
+              except: pass
+
+              lm=req(app.GetApplicationLicenseManager(),"license manager")
+              l2=bool(lm.IsKompasModuleActive(c.ksKompasModule2D))
+              l3=bool(lm.IsKompasModuleActive(c.ksKompasModule3D))
+              log("LICENSE_2D_ACTIVE="+str(int(l2)))
+              log("LICENSE_3D_ACTIVE="+str(int(l3)))
+              req(l2 and l3,"official invisible licenses are not both active")
+
+              docs=req(app.GetDocuments(),"documents")
+              log("DOCUMENTS=1")
+
+              # 2D create + mutation
+              f=docs.AddWithDefaultSettings(c.ksDocumentFragment,True)
+              log("FRAGMENT_ADD_DEFAULT="+str(int(bool(f))))
+              req(f,"fragment add")
+              d2=req(ksapi.IKompasDocument2D(f),"fragment cast")
+              d2.SetParametricMode(True)
+              vm=req(d2.GetViewsAndLayersManager(),"2d vm")
+              views=req(vm.GetViews(),"2d views")
+              log("FRAGMENT_VIEWS_COUNT="+str(views.GetCount()))
+              view=req(views.GetActiveView(),"2d active view")
+              dc=req(ksapi.IDrawingContainer(view),"2d drawing container")
+              lines=req(dc.GetLineSegments(),"2d line collection")
+              before=lines.GetCount()
+              s=req(lines.Add(),"2d line add")
+              s.SetX1(10.0);s.SetY1(20.0);s.SetX2(45.0);s.SetY2(20.0);s.SetStyle(c.ksCSNormal)
+              req(s.Update(),"2d line update")
+              after=lines.GetCount()
+              log(f"FRAGMENT_LINE_COUNT={before}->{after}")
+              req(after>before,"2d line count did not increase")
+              p2="/tmp/OpenInvisible_Strict2D.frw"
+              pathlib.Path(p2).unlink(missing_ok=True)
+              req(f.SaveAs(p2),"2d SaveAs")
+              log("FRAGMENT_SAVE_PASS")
+              req(f.Close(c.kdDoNotSaveChanges),"2d close")
+              log("FRAGMENT_CLOSE_PASS")
+
+              # 3D create + actual sketch/extrusion
+              p=docs.AddWithDefaultSettings(c.ksDocumentPart,True)
+              log("PART_ADD_DEFAULT="+str(int(bool(p))))
+              req(p,"part add")
+              d3=req(ksapi.IKompasDocument3D(p),"part cast")
+              top=req(d3.GetTopPart(),"3d top part")
+              mc=req(top.GetModelContainer(),"3d model container")
+              sketches=req(mc.GetSketchs(),"3d sketches")
+              sk=req(sketches.Add(),"sketch add")
+              plane=req(top.GetDefaultObject(c.o3d_planeXOY),"XOY")
+              sk.SetPlane(plane)
+              frag=req(sk.BeginEdit(False),"BeginEdit")
+              req(rect(frag),"rectangle")
+              req(sk.EndEdit(),"EndEdit")
+              req(sk.Update(),"sketch update")
+              exts=req(mc.GetExtrusions(),"extrusions")
+              ext=req(exts.Add(c.o3d_baseExtrusion),"base extrusion add")
+              ext.SetProfiles([ksapi.IModelObject(sk)])
+              req(ext.SetSideParameters(True,c.etBlind,8.0,0.0,False,ksapi.IModelObject()),"side params")
+              req(ext.Update(),"extrusion update")
+              req(top.RebuildModel(False),"top rebuild")
+              req(d3.RebuildDocument(),"doc rebuild")
+              mass=float(top.GetMass())
+              log("MASS_BEFORE_SAVE="+repr(mass))
+              req(math.isfinite(mass) and mass>0,"mass not positive")
+              p3="/tmp/OpenInvisible_Strict3D.m3d"
+              pathlib.Path(p3).unlink(missing_ok=True)
+              req(p.SaveAs(p3),"3d SaveAs")
+              log("PART_SAVE_PASS")
+              req(p.Close(c.kdDoNotSaveChanges),"3d close")
+              log("PART_CLOSE_PASS")
+
+              # API7 reopen in same officially bootstrapped invisible process
+              rf=docs.Open(p2,True,False)
+              rp=docs.Open(p3,True,False)
+              log("REOPEN_2D="+str(int(bool(rf))))
+              log("REOPEN_3D="+str(int(bool(rp))))
+              req(rf and rp,"same-process reopen")
+
+              rd2=req(ksapi.IKompasDocument2D(rf),"reopen 2d cast")
+              rvm=req(rd2.GetViewsAndLayersManager(),"reopen 2d vm")
+              rvs=req(rvm.GetViews(),"reopen 2d views")
+              rv=req(rvs.GetActiveView(),"reopen 2d active view")
+              rdc=req(ksapi.IDrawingContainer(rv),"reopen 2d dc")
+              rls=req(rdc.GetLineSegments(),"reopen 2d lines")
+              log("REOPEN_2D_LINE_COUNT="+str(rls.GetCount()))
+              req(rls.GetCount()>=1,"reopen 2d lines empty")
+
+              rd3=req(ksapi.IKompasDocument3D(rp),"reopen 3d cast")
+              rtop=req(rd3.GetTopPart(),"reopen top")
+              rmc=req(rtop.GetModelContainer(),"reopen model")
+              req(rtop.RebuildModel(False),"reopen top rebuild")
+              req(rd3.RebuildDocument(),"reopen doc rebuild")
+              rmass=float(rtop.GetMass())
+              rexts=rmc.GetExtrusions()
+              ec=int(rexts.GetCount()) if rexts else -1
+              log("MASS_AFTER_REOPEN="+repr(rmass))
+              log("EXTRUSIONS_AFTER_REOPEN="+str(ec))
+              req(math.isfinite(rmass) and rmass>0 and ec>=1,"reopen 3d validation")
+              req(rf.Save() and rp.Save(),"final save")
+              req(rf.Close(c.kdDoNotSaveChanges) and rp.Close(c.kdDoNotSaveChanges),"final close")
+
+              for src in (p2,p3):
+                  q=pathlib.Path(src)
+                  dst=outdir/q.name
+                  dst.write_bytes(q.read_bytes())
+                  log("OUTPUT="+str(dst)+" bytes="+str(dst.stat().st_size))
+              log("RESULT=PASS_OFFICIAL_OPENKOMPASINVISIBLE_NATIVE_2D_3D")
+              try: app.Quit()
+              except BaseException as e: log("QUIT_EXCEPTION="+repr(e))
+          except BaseException as e:
+              log("EXCEPTION="+type(e).__name__+":"+repr(e))
+              traceback.print_exc()
+              log("RESULT=FAIL_OFFICIAL_OPENKOMPASINVISIBLE_NATIVE_2D_3D")
+              try:
+                  if 'app' in globals() and app: app.Quit()
+              except: pass
+              sys.exit(2)
+          PY
+
+      - name: Run official invisible bootstrap under execve trace
+        shell: bash
+        run: |
+          set -uxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN"
+          export HOME="$RUNNER_TEMP/openinv-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25" result/open-invisible
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+          set +e
+          timeout 150s strace -ff -e trace=execve -s 1024 -o result/open-invisible/execve \
+            xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- python3 -u /tmp/openinv_gate.py \
+            >result/open-invisible/stdout.txt 2>result/open-invisible/stderr.txt
+          RC=$?
+          set -e
+          cat result/open-invisible/stdout.txt || true
+          cat result/open-invisible/gate.log || true
+          {
+            echo "=== PROCESS EXEC TRACE ==="
+            cat result/open-invisible/execve* 2>/dev/null || true
+            echo "=== PROCESS SNAPSHOT ==="
+            ps -eo pid,ppid,comm,args | grep -E 'kKompas|ksinvisible|python3|dbus' || true
+          } | tee result/open-invisible/processes.txt
+
+          grep -qx 'RESULT=PASS_OFFICIAL_OPENKOMPASINVISIBLE_NATIVE_2D_3D' result/open-invisible/gate.log
+          test "$RC" -eq 0
+          test -s result/open-invisible/OpenInvisible_Strict2D.frw
+          test -s result/open-invisible/OpenInvisible_Strict3D.m3d
+          sha256sum result/open-invisible/OpenInvisible_Strict2D.frw result/open-invisible/OpenInvisible_Strict3D.m3d | tee result/open-invisible/output-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-official-open-invisible-bootstrap
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/open-invisible/**
