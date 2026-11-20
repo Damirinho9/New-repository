@@ -101,6 +101,12 @@ def _kp501a_card(alias,vth):
         f".ENDS {alias}",
     ])
 
+
+def _retarget_vto(card,vto):
+    n=re.subn(r"(?i)(\\bVTO\\s*=\\s*)[-+0-9.eE]+",lambda q:q.group(1)+format(vto,".6g"),card,count=1)
+    if n[1]!=1: raise RuntimeError("VT3 vendor VTO not found exactly once")
+    return n[0]
+
 def patch_models(root,xmlio,refs=None):
     notes={}
     refs=set(refs or ("VT1","VT2","VT3","VS1","VS2","VD1","VD3","VD4","VD5"))
@@ -120,12 +126,13 @@ def patch_models(root,xmlio,refs=None):
             else:
                 src="vendor/SIHFBE30.lib"; expected="SIHFBE30"
                 try:
+                    vto=float(os.environ.get("KP707_VTO","1.5"))
+                    if not (1.5 <= vto <= 6.0): raise RuntimeError("KP707_VTO outside documented 1.5..6.0V")
                     s,t=vendor_card(src,n1,expected),vendor_card(src,n2,expected)
-                    notes[ref]=expected+" vendor electrical proxy"
+                    s,t=_retarget_vto(s,vto),_retarget_vto(t,vto)
+                    notes[ref]=f"{expected} 800V vendor electrical proxy retargeted only in VTO to KP707V2 documented threshold {vto:g}V"
                 except (OSError,ValueError,StopIteration) as exc:
-                    args=(3.2,0.55,0.8,0.8,800)
-                    s,t=_mos(n1,*args),_mos(n2,*args)
-                    notes[ref]="APPROXIMATE ONLY: "+str(exc)
+                    raise RuntimeError("VT3 vendor model unavailable: "+str(exc))
         else:
             s,t=_relative(x),_relative(y)
             notes[ref]="Functional cathode-referenced NI SCR, not manufacturer T123-250"
