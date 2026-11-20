@@ -1,0 +1,873 @@
+name: Native Hadoop stage 8 WordCount
+on:
+  push:
+    branches: [bigdata-7341730-native]
+    paths:
+      - '.github/workflows/bigdata-hadoop-wordcount.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - name: Prepare evidence display
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p evidence/screenshots evidence/logs evidence/status
+          sudo apt-get update
+          sudo apt-get install -y xvfb xterm openbox imagemagick x11-utils
+          Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp >evidence/logs/xvfb.log 2>&1 &
+          export DISPLAY=:99
+          for i in {1..30}; do xdpyinfo >/dev/null 2>&1 && break; sleep 1; done
+          openbox >evidence/logs/openbox.log 2>&1 &
+          echo DISPLAY=:99 >> "$GITHUB_ENV"
+          echo "EVIDENCE=$PWD/evidence" >> "$GITHUB_ENV"
+          cat > /tmp/capture-stage <<'CAPTURE'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          name="$1"
+          script="$2"
+          log="$EVIDENCE/logs/$name.log"
+          status="$EVIDENCE/status/$name.code"
+          xterm -geometry 130x43+15+15 -fa 'DejaVu Sans Mono' -fs 13 -T "$name" -hold -e bash -c 'stty sane; stty onlcr; set -o pipefail; bash -x "$1" 2>&1 | tee "$2"; rc=${PIPESTATUS[0]}; printf "\nExit status: %s\n" "$rc"; echo "$rc" > "$3"; exit "$rc"' _ "$script" "$log" "$status" &
+          pid=$!
+          for i in {1..1200}; do test -f "$status" && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+          sleep 2
+          import -window root "$EVIDENCE/screenshots/$name.png"
+          kill "$pid" 2>/dev/null || true
+          cat "$log" || true
+          test -f "$status"
+          test "$(cat "$status")" = 0
+          CAPTURE
+          chmod +x /tmp/capture-stage
+      - name: Verify actual Ubuntu environment
+        shell: bash
+        run: |
+          cat > /tmp/environment.sh <<'SCRIPT'
+          set -euo pipefail
+          cat /etc/os-release
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 22.04
+          hostnamectl || hostname
+          uname -m
+          nproc
+          free -h
+          df -h /
+          systemd-detect-virt || true
+          ls -l /dev/kvm || true
+          command -v VBoxManage || true
+          SCRIPT
+          /tmp/capture-stage 01_ubuntu /tmp/environment.sh
+      - name: Install dependencies
+        shell: bash
+        run: |
+          cat > /tmp/install.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo apt update
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y openjdk-8-jdk openssh-server python3 nano wget
+          sudo update-alternatives --set java /usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java
+          sudo update-alternatives --set javac /usr/lib/jvm/java-8-openjdk-amd64/bin/javac
+          sudo systemctl enable --now ssh
+          SCRIPT
+          /tmp/capture-stage 02_install /tmp/install.sh
+          cat > /tmp/versions.sh <<'SCRIPT'
+          set -euo pipefail
+          java -version
+          java -version 2>&1 | grep 'version "1.8'
+          javac -version
+          python3 --version
+          systemctl status ssh --no-pager --full
+          systemctl is-active --quiet ssh
+          dpkg-query -W openjdk-8-jdk openssh-server python3 nano wget
+          SCRIPT
+          /tmp/capture-stage 03_versions /tmp/versions.sh
+      - name: Create isolated Hadoop user and workspace
+        shell: bash
+        run: |
+          cat > /tmp/user.sh <<'SCRIPT'
+          set -euo pipefail
+          getent group hadoop >/dev/null || sudo addgroup hadoop
+          id hduser >/dev/null 2>&1 || sudo adduser --disabled-password --gecos '' --ingroup hadoop hduser
+          id hduser
+          getent passwd hduser
+          sudo -iu hduser pwd
+          sudo install -d -m 2770 -o hduser -g hadoop /srv/hadoop-lab-share
+          sudo -u hduser sh -c 'printf "shared workspace test\n" > /srv/hadoop-lab-share/transfer.txt'
+          sudo cat /srv/hadoop-lab-share/transfer.txt
+          sudo -u hduser test -r /srv/hadoop-lab-share/transfer.txt
+          ls -ld /srv/hadoop-lab-share
+          echo 'Shared runner workspace only; not a VirtualBox shared folder.'
+          SCRIPT
+          /tmp/capture-stage 04_user_workspace /tmp/user.sh
+      - name: Configure and verify SSH localhost
+        shell: bash
+        run: |
+          cat > /tmp/ssh-hduser.sh <<'SCRIPT'
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          if [ ! -f ~/.ssh/id_rsa ]; then ssh-keygen -t rsa -b 3072 -P "" -f ~/.ssh/id_rsa; fi
+          chmod 600 ~/.ssh/id_rsa
+          chmod 644 ~/.ssh/id_rsa.pub
+          touch ~/.ssh/authorized_keys
+          grep -qxF "$(cat ~/.ssh/id_rsa.pub)" ~/.ssh/authorized_keys || cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          stat -c '%a %U %n' ~/.ssh ~/.ssh/id_rsa ~/.ssh/authorized_keys
+          test "$(stat -c '%a' ~/.ssh/id_rsa)" = 600
+          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 localhost 'whoami; hostname; id'
+          test "$(ssh -o BatchMode=yes localhost whoami)" = hduser
+          SCRIPT
+          chmod 755 /tmp/ssh-hduser.sh
+          cat > /tmp/ssh-test.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -iu hduser bash /tmp/ssh-hduser.sh
+          SCRIPT
+          /tmp/capture-stage 05_ssh /tmp/ssh-test.sh
+      - name: Record network configuration
+        shell: bash
+        run: |
+          cat > /tmp/network.sh <<'SCRIPT'
+          set -euo pipefail
+          hostname
+          ip -brief address
+          ip route
+          getent hosts localhost
+          sysctl net.ipv6.conf.all.disable_ipv6 net.ipv6.conf.default.disable_ipv6
+          echo 'IPv6 settings recorded, not changed on hosted runner.'
+          SCRIPT
+          /tmp/capture-stage 06_network /tmp/network.sh
+      - name: Acceptance for hosted Ubuntu
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in 01_ubuntu 02_install 03_versions 04_user_workspace 05_ssh 06_network; do
+            test "$(cat evidence/status/$name.code)" = 0
+            test -s evidence/screenshots/$name.png
+            test -s evidence/logs/$name.log
+          done
+          printf '%s\n' 'UBUNTU_RUNNER_PREP_PASS' 'VIRTUALBOX_GUEST_ADDITIONS_NOT_TESTED' 'VIRTUALBOX_SHARED_FOLDER_NOT_TESTED' 'IPV6_UNCHANGED' | tee evidence/acceptance.txt
+      - name: Download and verify official Hadoop 3.3.1 distribution
+        shell: bash
+        run: |
+          cat > /tmp/hadoop-download.sh <<'SCRIPT'
+          set -euo pipefail
+          mkdir -p /tmp/hadoop-dist
+          cd /tmp/hadoop-dist
+          file=hadoop-3.3.1.tar.gz
+          # Digest retrieved independently from the official Apache archive.
+          printf '%s  %s\n' '2fd0bf74852c797dc864f373ec82ffaa1e98706b309b30d1effa91ac399b477e1accc1ee74d4ccbb1db7da1c5c541b72e4a834f131a99f2814b030fbd043df66' "$file" > "$file.sha512"
+          downloaded=0
+          for base in https://archive.apache.org/dist/hadoop/common/hadoop-3.3.1 https://repo.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1 https://mirrors.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1; do
+            echo "Trying $base/$file"
+            rm -f "$file"
+            if wget -4 -nv --connect-timeout=15 --read-timeout=60 --tries=1 "$base/$file" -O "$file"; then
+              if sha512sum -c "$file.sha512"; then
+                downloaded=1
+                echo "Verified download source: $base/$file"
+                break
+              fi
+            fi
+          done
+          test "$downloaded" = 1
+          python3 - "$file" <<'PY'
+          import hashlib, pathlib, re, sys
+          p = pathlib.Path(sys.argv[1])
+          raw = p.with_name(p.name + ".sha512").read_text()
+          hashes = re.findall(r"(?i)\b[0-9a-f]{128}\b", raw)
+          if not hashes:
+              value = raw.split(":", 1)[-1]
+              hashes = ["".join(re.findall(r"(?i)\b[0-9a-f]{8,64}\b", value))]
+          assert len(hashes) == 1 and len(hashes[0]) == 128, raw
+          h = hashlib.sha512()
+          with p.open("rb") as stream:
+              for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                  h.update(chunk)
+          actual = h.hexdigest()
+          print("Official SHA-512:", hashes[0].lower())
+          print("Computed SHA-512:", actual)
+          assert actual == hashes[0].lower(), "Checksum mismatch"
+          print("HADOOP_DISTRIBUTION_SHA512_PASS")
+          PY
+          ls -lh "$file" "$file.sha512"
+          SCRIPT
+          /tmp/capture-stage 07_hadoop_download /tmp/hadoop-download.sh
+          mkdir -p evidence/config
+          cp /tmp/hadoop-dist/hadoop-3.3.1.tar.gz.sha512 evidence/config/
+      - name: Extract Hadoop and set ownership
+        shell: bash
+        run: |
+          cat > /tmp/hadoop-extract.sh <<'SCRIPT'
+          set -euo pipefail
+          test ! -e /usr/local/hadoop
+          sudo tar -xzf /tmp/hadoop-dist/hadoop-3.3.1.tar.gz -C /usr/local
+          sudo mv /usr/local/hadoop-3.3.1 /usr/local/hadoop
+          sudo chown -R hduser:hadoop /usr/local/hadoop
+          stat -c '%U:%G %a %n' /usr/local/hadoop /usr/local/hadoop/bin/hadoop /usr/local/hadoop/etc/hadoop
+          test "$(stat -c '%U:%G' /usr/local/hadoop)" = hduser:hadoop
+          ls -l /usr/local/hadoop
+          sudo -u hduser test -x /usr/local/hadoop/bin/hadoop
+          test -f /usr/local/hadoop/share/hadoop/mapreduce/hadoop-mapreduce-examples-3.3.1.jar
+          SCRIPT
+          /tmp/capture-stage 08_hadoop_extract /tmp/hadoop-extract.sh
+      - name: Configure Java and Hadoop environment for hduser
+        shell: bash
+        run: |
+          cat > /tmp/hadoop-env-setup.sh <<'SCRIPT'
+          set -euo pipefail
+          java_bin=$(readlink -f "$(command -v javac)")
+          java_home=$(dirname "$(dirname "$java_bin")")
+          printf 'Resolved JAVA_HOME: %s\n' "$java_home"
+          test "$java_home" = /usr/lib/jvm/java-8-openjdk-amd64
+          "$java_home/bin/java" -version
+          test -x "$java_home/bin/java"
+          cat > /tmp/hadoop-user-exports <<'EXPORTS'
+          # Hadoop environment
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export HADOOP_HOME=/usr/local/hadoop
+          export HADOOP_INSTALL=$HADOOP_HOME
+          export PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
+          EXPORTS
+          sudo -u hduser tee -a /home/hduser/.bashrc </tmp/hadoop-user-exports
+          printf '\nexport JAVA_HOME=%s\n' "$java_home" | sudo -u hduser tee -a /usr/local/hadoop/etc/hadoop/hadoop-env.sh
+          sudo -u hduser tail -n 7 /home/hduser/.bashrc
+          sudo -u hduser tail -n 3 /usr/local/hadoop/etc/hadoop/hadoop-env.sh
+          SCRIPT
+          /tmp/capture-stage 09_hadoop_environment /tmp/hadoop-env-setup.sh
+          cp /tmp/hadoop-user-exports evidence/config/bashrc-hadoop.sh
+          cp /usr/local/hadoop/etc/hadoop/hadoop-env.sh evidence/config/hadoop-env.sh
+      - name: Verify Hadoop version as hduser
+        shell: bash
+        run: |
+          cat > /tmp/hadoop-check-user.sh <<'SCRIPT'
+          set -e
+          source ~/.bashrc
+          set -euo pipefail
+          whoami
+          test "$(whoami)" = hduser
+          printenv JAVA_HOME HADOOP_HOME HADOOP_INSTALL
+          test "$JAVA_HOME" = /usr/lib/jvm/java-8-openjdk-amd64
+          test "$HADOOP_HOME" = /usr/local/hadoop
+          test "$HADOOP_INSTALL" = "$HADOOP_HOME"
+          command -v hadoop
+          test "$(command -v hadoop)" = /usr/local/hadoop/bin/hadoop
+          java -version
+          hadoop version | tee /tmp/hadoop-version-hduser.txt
+          grep -qx 'Hadoop 3.3.1' /tmp/hadoop-version-hduser.txt
+          SCRIPT
+          chmod 755 /tmp/hadoop-check-user.sh
+          cat > /tmp/hadoop-check.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser bash -ic 'source /tmp/hadoop-check-user.sh'
+          SCRIPT
+          /tmp/capture-stage 10_hadoop_version /tmp/hadoop-check.sh
+          cp /tmp/hadoop-version-hduser.txt evidence/config/hadoop-version.txt
+      - name: Accept native Hadoop installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in 07_hadoop_download 08_hadoop_extract 09_hadoop_environment 10_hadoop_version; do
+            test "$(cat evidence/status/$name.code)" = 0
+            test -s evidence/screenshots/$name.png
+            test -s evidence/logs/$name.log
+            identify evidence/screenshots/$name.png
+          done
+          grep -Fxq HADOOP_DISTRIBUTION_SHA512_PASS evidence/logs/07_hadoop_download.log
+          grep -qx 'Hadoop 3.3.1' evidence/config/hadoop-version.txt
+          echo HADOOP_INSTALL_PASS | tee -a evidence/acceptance.txt
+      - name: Prepare HDFS storage directories and environment
+        shell: bash
+        run: |
+          cat > /tmp/hadoop-storage.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo install -d -m 750 -o hduser -g hadoop /home/hduser/hadoop-data
+          for d in tmp namenode datanode; do
+            sudo install -d -m 750 -o hduser -g hadoop "/home/hduser/hadoop-data/$d"
+            sudo -u hduser test -w "/home/hduser/hadoop-data/$d"
+            stat -c '%U:%G %a %n' "/home/hduser/hadoop-data/$d"
+          done
+          cat > /tmp/hadoop-cluster-exports <<'EXPORTS'
+          export HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
+          export HADOOP_MAPRED_HOME=$HADOOP_HOME
+          EXPORTS
+          sudo -u hduser tee -a /home/hduser/.bashrc </tmp/hadoop-cluster-exports
+          sudo -u hduser tee -a /usr/local/hadoop/etc/hadoop/hadoop-env.sh <<'EXPORTS'
+          export HADOOP_MAPRED_HOME=/usr/local/hadoop
+          EXPORTS
+          sudo -u hduser tail -n 8 /home/hduser/.bashrc
+          sudo -u hduser tail -n 4 /usr/local/hadoop/etc/hadoop/hadoop-env.sh
+          SCRIPT
+          /tmp/capture-stage 11_hadoop_storage /tmp/hadoop-storage.sh
+          cat /tmp/hadoop-cluster-exports >> evidence/config/bashrc-hadoop.sh
+          cp /usr/local/hadoop/etc/hadoop/hadoop-env.sh evidence/config/hadoop-env.sh
+      - name: Write core-site.xml
+        shell: bash
+        run: |
+          cat > /tmp/configure-core-site.xml.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -u hduser tee /usr/local/hadoop/etc/hadoop/core-site.xml >/dev/null <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <configuration>
+            <property>
+              <name>fs.defaultFS</name>
+              <value>hdfs://localhost:9000</value>
+            </property>
+            <property>
+              <name>hadoop.tmp.dir</name>
+              <value>/home/hduser/hadoop-data/tmp</value>
+            </property>
+          </configuration>
+          XML
+          cat /usr/local/hadoop/etc/hadoop/core-site.xml
+          stat -c '%U:%G %a %n' /usr/local/hadoop/etc/hadoop/core-site.xml
+          SCRIPT
+          /tmp/capture-stage 12_core_site /tmp/configure-core-site.xml.sh
+          cp /usr/local/hadoop/etc/hadoop/core-site.xml evidence/config/
+      - name: Write hdfs-site.xml
+        shell: bash
+        run: |
+          cat > /tmp/configure-hdfs-site.xml.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -u hduser tee /usr/local/hadoop/etc/hadoop/hdfs-site.xml >/dev/null <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <configuration>
+            <property>
+              <name>dfs.replication</name>
+              <value>1</value>
+            </property>
+            <property>
+              <name>dfs.namenode.name.dir</name>
+              <value>file:///home/hduser/hadoop-data/namenode</value>
+            </property>
+            <property>
+              <name>dfs.datanode.data.dir</name>
+              <value>file:///home/hduser/hadoop-data/datanode</value>
+            </property>
+          </configuration>
+          XML
+          cat /usr/local/hadoop/etc/hadoop/hdfs-site.xml
+          stat -c '%U:%G %a %n' /usr/local/hadoop/etc/hadoop/hdfs-site.xml
+          SCRIPT
+          /tmp/capture-stage 13_hdfs_site /tmp/configure-hdfs-site.xml.sh
+          cp /usr/local/hadoop/etc/hadoop/hdfs-site.xml evidence/config/
+      - name: Write mapred-site.xml
+        shell: bash
+        run: |
+          cat > /tmp/configure-mapred-site.xml.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -u hduser tee /usr/local/hadoop/etc/hadoop/mapred-site.xml >/dev/null <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <configuration>
+            <property>
+              <name>mapreduce.framework.name</name>
+              <value>yarn</value>
+            </property>
+            <property>
+              <name>mapreduce.application.classpath</name>
+              <value>/usr/local/hadoop/share/hadoop/mapreduce/*:/usr/local/hadoop/share/hadoop/mapreduce/lib/*</value>
+            </property>
+            <property>
+              <name>mapreduce.map.memory.mb</name>
+              <value>1024</value>
+            </property>
+            <property>
+              <name>mapreduce.reduce.memory.mb</name>
+              <value>1024</value>
+            </property>
+            <property>
+              <name>mapreduce.map.java.opts</name>
+              <value>-Xmx768m</value>
+            </property>
+            <property>
+              <name>mapreduce.reduce.java.opts</name>
+              <value>-Xmx768m</value>
+            </property>
+            <property>
+              <name>yarn.app.mapreduce.am.resource.mb</name>
+              <value>1024</value>
+            </property>
+          </configuration>
+          XML
+          cat /usr/local/hadoop/etc/hadoop/mapred-site.xml
+          stat -c '%U:%G %a %n' /usr/local/hadoop/etc/hadoop/mapred-site.xml
+          SCRIPT
+          /tmp/capture-stage 14_mapred_site /tmp/configure-mapred-site.xml.sh
+          cp /usr/local/hadoop/etc/hadoop/mapred-site.xml evidence/config/
+      - name: Write yarn-site.xml
+        shell: bash
+        run: |
+          cat > /tmp/configure-yarn-site.xml.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -u hduser tee /usr/local/hadoop/etc/hadoop/yarn-site.xml >/dev/null <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <configuration>
+            <property>
+              <name>yarn.resourcemanager.hostname</name>
+              <value>localhost</value>
+            </property>
+            <property>
+              <name>yarn.nodemanager.aux-services</name>
+              <value>mapreduce_shuffle</value>
+            </property>
+            <property>
+              <name>yarn.nodemanager.env-whitelist</name>
+              <value>JAVA_HOME,HADOOP_COMMON_HOME,HADOOP_HDFS_HOME,HADOOP_CONF_DIR,CLASSPATH_PREPEND_DISTCACHE,HADOOP_YARN_HOME,HADOOP_MAPRED_HOME</value>
+            </property>
+            <property>
+              <name>yarn.nodemanager.resource.memory-mb</name>
+              <value>4096</value>
+            </property>
+            <property>
+              <name>yarn.nodemanager.resource.cpu-vcores</name>
+              <value>2</value>
+            </property>
+            <property>
+              <name>yarn.scheduler.minimum-allocation-mb</name>
+              <value>512</value>
+            </property>
+            <property>
+              <name>yarn.scheduler.maximum-allocation-mb</name>
+              <value>4096</value>
+            </property>
+          </configuration>
+          XML
+          cat /usr/local/hadoop/etc/hadoop/yarn-site.xml
+          stat -c '%U:%G %a %n' /usr/local/hadoop/etc/hadoop/yarn-site.xml
+          SCRIPT
+          /tmp/capture-stage 15_yarn_site /tmp/configure-yarn-site.xml.sh
+          cp /usr/local/hadoop/etc/hadoop/yarn-site.xml evidence/config/
+      - name: Configure single localhost worker
+        shell: bash
+        run: |
+          cat > /tmp/configure-workers.sh <<'SCRIPT'
+          set -euo pipefail
+          printf '%s\n' localhost | sudo -u hduser tee /usr/local/hadoop/etc/hadoop/workers
+          test "$(cat /usr/local/hadoop/etc/hadoop/workers)" = localhost
+          ls -l /usr/local/hadoop/etc/hadoop/workers
+          sudo -iu hduser ssh -o BatchMode=yes localhost 'whoami; hostname'
+          SCRIPT
+          /tmp/capture-stage 16_workers /tmp/configure-workers.sh
+          cp /usr/local/hadoop/etc/hadoop/workers evidence/config/
+      - name: Verify loaded HDFS MapReduce and YARN settings natively
+        shell: bash
+        run: |
+          cat > /tmp/ConfigCheck.java <<'JAVA'
+          import org.apache.hadoop.conf.Configuration;
+          import org.apache.hadoop.hdfs.HdfsConfiguration;
+          import org.apache.hadoop.mapred.JobConf;
+          import org.apache.hadoop.yarn.conf.YarnConfiguration;
+          public class ConfigCheck {
+              static void check(Configuration c, String key, String expected) {
+                  String actual = c.getTrimmed(key);
+                  System.out.println(key + " = " + actual);
+                  if (!expected.equals(actual)) throw new IllegalStateException(key + " expected " + expected);
+              }
+              public static void main(String[] args) {
+                  HdfsConfiguration h = new HdfsConfiguration();
+                  JobConf m = new JobConf();
+                  YarnConfiguration y = new YarnConfiguration();
+                  check(h, "fs.defaultFS", "hdfs://localhost:9000");
+                  check(h, "hadoop.tmp.dir", "/home/hduser/hadoop-data/tmp");
+                  check(h, "dfs.replication", "1");
+                  check(h, "dfs.namenode.name.dir", "file:///home/hduser/hadoop-data/namenode");
+                  check(h, "dfs.datanode.data.dir", "file:///home/hduser/hadoop-data/datanode");
+                  check(m, "mapreduce.framework.name", "yarn");
+                  check(m, "mapreduce.application.classpath", "/usr/local/hadoop/share/hadoop/mapreduce/*:/usr/local/hadoop/share/hadoop/mapreduce/lib/*");
+                  check(m, "mapreduce.map.memory.mb", "1024");
+                  check(m, "mapreduce.reduce.memory.mb", "1024");
+                  check(m, "mapreduce.map.java.opts", "-Xmx768m");
+                  check(m, "mapreduce.reduce.java.opts", "-Xmx768m");
+                  check(m, "yarn.app.mapreduce.am.resource.mb", "1024");
+                  check(y, "yarn.resourcemanager.hostname", "localhost");
+                  check(y, "yarn.nodemanager.aux-services", "mapreduce_shuffle");
+                  check(y, "yarn.nodemanager.env-whitelist", "JAVA_HOME,HADOOP_COMMON_HOME,HADOOP_HDFS_HOME,HADOOP_CONF_DIR,CLASSPATH_PREPEND_DISTCACHE,HADOOP_YARN_HOME,HADOOP_MAPRED_HOME");
+                  check(y, "yarn.nodemanager.resource.memory-mb", "4096");
+                  check(y, "yarn.nodemanager.resource.cpu-vcores", "2");
+                  check(y, "yarn.scheduler.minimum-allocation-mb", "512");
+                  check(y, "yarn.scheduler.maximum-allocation-mb", "4096");
+                  System.out.println("NATIVE_CONFIG_LOAD_PASS");
+              }
+          }
+          JAVA
+          sudo install -d -o hduser -g hadoop /home/hduser/config-check
+          sudo install -m 644 -o hduser -g hadoop /tmp/ConfigCheck.java /home/hduser/config-check/
+          cat > /tmp/check-config-user.sh <<'SCRIPT'
+          set -e
+          source ~/.bashrc
+          set -euo pipefail
+          whoami
+          test "$(whoami)" = hduser
+          test "$HADOOP_CONF_DIR" = /usr/local/hadoop/etc/hadoop
+          test "$(cat "$HADOOP_CONF_DIR/workers")" = localhost
+          hdfs getconf -confKey fs.defaultFS
+          hdfs getconf -confKey dfs.replication
+          hdfs getconf -confKey dfs.namenode.name.dir
+          hdfs getconf -confKey dfs.datanode.data.dir
+          test "$(hdfs getconf -confKey fs.defaultFS)" = hdfs://localhost:9000
+          test "$(hdfs getconf -confKey dfs.replication)" = 1
+          cd ~/config-check
+          cp="$(hadoop classpath --glob)"
+          javac -cp "$cp" ConfigCheck.java
+          java -cp "$cp:$PWD" ConfigCheck | tee /tmp/hadoop-native-config-check.txt
+          grep -Fxq NATIVE_CONFIG_LOAD_PASS /tmp/hadoop-native-config-check.txt
+          SCRIPT
+          chmod 755 /tmp/check-config-user.sh
+          cat > /tmp/check-config.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser bash -ic 'source /tmp/check-config-user.sh'
+          SCRIPT
+          /tmp/capture-stage 17_native_config_check /tmp/check-config.sh
+          cp /tmp/hadoop-native-config-check.txt evidence/config/native-config-check.txt
+          cp /tmp/ConfigCheck.java evidence/config/
+      - name: Accept configuration without formatting NameNode
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in 11_hadoop_storage 12_core_site 13_hdfs_site 14_mapred_site 15_yarn_site 16_workers 17_native_config_check; do
+            test "$(cat evidence/status/$name.code)" = 0
+            test -s evidence/logs/$name.log
+            identify evidence/screenshots/$name.png
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = Path("evidence/config")
+          for name in ("core-site.xml", "hdfs-site.xml", "mapred-site.xml", "yarn-site.xml"):
+              doc = ET.parse(root / name).getroot()
+              assert doc.tag == "configuration"
+              keys = [p.findtext("name") for p in doc.findall("property")]
+              assert keys and len(keys) == len(set(keys))
+              print(name, "valid XML; unique properties", len(keys))
+          PY
+          grep -Fxq NATIVE_CONFIG_LOAD_PASS evidence/config/native-config-check.txt
+          sudo test ! -e /home/hduser/hadoop-data/namenode/current/VERSION
+          printf '%s\n' HADOOP_CONFIG_PASS NAMENODE_NOT_FORMATTED SERVICES_NOT_STARTED | tee -a evidence/acceptance.txt
+      - name: Initialize fresh NameNode once
+        shell: bash
+        run: |
+          cp evidence/acceptance.txt evidence/config/stage6-acceptance.txt
+          sed -i '/^NAMENODE_NOT_FORMATTED$/d; /^SERVICES_NOT_STARTED$/d' evidence/acceptance.txt
+          mkdir -p evidence/cluster
+          cat >/tmp/cluster-user.sh <<'SCRIPT'
+          #!/bin/bash
+          set -euo pipefail
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export HADOOP_HOME=/usr/local/hadoop
+          export HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
+          export HADOOP_MAPRED_HOME=$HADOOP_HOME
+          export PATH=$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$JAVA_HOME/bin:$PATH
+          cd "$HOME"
+          exec "$@"
+          SCRIPT
+          chmod 755 /tmp/cluster-user.sh
+          cat >/tmp/format-namenode.sh <<'SCRIPT'
+          set -euo pipefail
+          dir=/home/hduser/hadoop-data/namenode
+          sudo -u hduser test ! -e "$dir/current/VERSION"
+          test -z "$(sudo -u hduser find "$dir" -mindepth 1 -print -quit)"
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs namenode -format -nonInteractive
+          sudo -u hduser test -s "$dir/current/VERSION"
+          sudo -u hduser cat "$dir/current/VERSION"
+          echo NAMENODE_FORMAT_PASS
+          SCRIPT
+          /tmp/capture-stage 18_namenode_format /tmp/format-namenode.sh
+          sudo cat /home/hduser/hadoop-data/namenode/current/VERSION >evidence/cluster/namenode-VERSION.txt
+          sha256sum evidence/cluster/namenode-VERSION.txt >evidence/cluster/namenode-VERSION.sha256
+      - name: Start HDFS daemons
+        shell: bash
+        run: |
+          cat >/tmp/start-hdfs.sh <<'SCRIPT'
+          set -euo pipefail
+          # Only the isolated single-node runner's local SSH endpoints are used.
+          sudo -u hduser tee -a /usr/local/hadoop/etc/hadoop/hadoop-env.sh <<'ENV'
+          export HADOOP_SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+          ENV
+          sudo -H -u hduser /tmp/cluster-user.sh start-dfs.sh
+          for i in {1..90}; do
+            if curl -fsS --max-time 3 'http://localhost:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState' >/tmp/hdfs-ready.json && python3 -c 'import json; a=json.load(open("/tmp/hdfs-ready.json"))["beans"]; assert a and int(a[0]["NumLiveDataNodes"])==1'; then break; fi
+            sleep 2
+          done
+          sudo -H -u hduser /tmp/cluster-user.sh jps
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs dfsadmin -safemode wait
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs dfsadmin -report | tee /tmp/hdfs-report.txt
+          grep -Fq 'Live datanodes (1)' /tmp/hdfs-report.txt
+          echo HDFS_START_PASS
+          SCRIPT
+          /tmp/capture-stage 19_start_dfs /tmp/start-hdfs.sh
+          cp /tmp/hdfs-report.txt evidence/cluster/
+          cp /usr/local/hadoop/etc/hadoop/hadoop-env.sh evidence/config/
+      - name: Start YARN daemons
+        shell: bash
+        run: |
+          cat >/tmp/start-yarn-stage.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser /tmp/cluster-user.sh start-yarn.sh
+          for i in {1..90}; do
+            if curl -fsS --max-time 3 http://localhost:8088/ws/v1/cluster/nodes >/tmp/yarn-nodes.json && python3 -c 'import json; a=json.load(open("/tmp/yarn-nodes.json"))["nodes"]["node"]; assert len(a)==1 and a[0]["state"]=="RUNNING"'; then break; fi
+            sleep 2
+          done
+          sudo -H -u hduser /tmp/cluster-user.sh /usr/local/hadoop/bin/yarn node -list -all | tee /tmp/yarn-node-list.txt
+          grep -Fq 'Total Nodes:1' /tmp/yarn-node-list.txt
+          grep -Fq RUNNING /tmp/yarn-node-list.txt
+          echo YARN_START_PASS
+          SCRIPT
+          /tmp/capture-stage 20_start_yarn /tmp/start-yarn-stage.sh
+          cp /tmp/yarn-node-list.txt evidence/cluster/
+      - name: Verify five Java daemons and cluster registration
+        shell: bash
+        run: |
+          cat >/tmp/verify-cluster.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser /tmp/cluster-user.sh jps | tee /tmp/cluster-jps.txt
+          for daemon in NameNode DataNode SecondaryNameNode ResourceManager NodeManager Jps; do
+            test "$(awk -v n="$daemon" '$2==n {c++} END {print c+0}' /tmp/cluster-jps.txt)" = 1
+          done
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs dfsadmin -safemode get | tee /tmp/hdfs-safemode.txt
+          grep -Fq 'Safe mode is OFF' /tmp/hdfs-safemode.txt
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs dfs -ls /
+          echo HADOOP_DAEMONS_PASS
+          SCRIPT
+          /tmp/capture-stage 21_jps /tmp/verify-cluster.sh
+          cp /tmp/cluster-jps.txt /tmp/hdfs-safemode.txt evidence/cluster/
+      - name: Verify actual HTTP endpoints and live node metrics
+        shell: bash
+        run: |
+          cat >/tmp/web-verify.sh <<'SCRIPT'
+          set -euo pipefail
+          curl -fsSL --max-time 15 -o /tmp/namenode-ui.html -w 'HDFS HTTP %{http_code}\n' http://localhost:9870/
+          curl -fsSL --max-time 15 -o /tmp/yarn-ui.html -w 'YARN HTTP %{http_code}\n' http://localhost:8088/
+          curl -fsS 'http://localhost:9870/jmx?qry=Hadoop:service=NameNode,name=FSNamesystemState' >/tmp/hdfs-state.json
+          curl -fsS http://localhost:8088/ws/v1/cluster/metrics >/tmp/yarn-metrics.json
+          curl -fsS http://localhost:8088/ws/v1/cluster/nodes >/tmp/yarn-nodes.json
+          python3 - <<'PY'
+          import json
+          h = json.load(open('/tmp/hdfs-state.json'))['beans'][0]
+          m = json.load(open('/tmp/yarn-metrics.json'))['clusterMetrics']
+          n = json.load(open('/tmp/yarn-nodes.json'))['nodes']['node']
+          print('HDFS live DataNodes:', h['NumLiveDataNodes'])
+          print('YARN active nodes:', m['activeNodes'])
+          print('YARN NodeManager:', n[0]['id'], n[0]['state'])
+          assert int(h['NumLiveDataNodes']) == 1
+          assert int(m['activeNodes']) == 1
+          assert len(n) == 1 and n[0]['state'] == 'RUNNING'
+          print('HDFS_YARN_HTTP_PASS')
+          PY
+          SCRIPT
+          /tmp/capture-stage 22_cluster_web_checks /tmp/web-verify.sh
+          cp /tmp/hdfs-state.json /tmp/yarn-metrics.json /tmp/yarn-nodes.json /tmp/namenode-ui.html /tmp/yarn-ui.html evidence/cluster/
+      - name: Capture real HDFS and YARN browser pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          "$browser" --version | tee evidence/cluster/browser-version.txt
+          for pair in '23_hdfs_webui|http://localhost:9870/dfshealth.html#tab-overview' '24_yarn_webui|http://localhost:8088/cluster/nodes'; do
+            name="${pair%%|*}"
+            url="${pair#*|}"
+            timeout 90 "$browser" --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --window-size=1600,1000 --user-data-dir=/tmp/chrome-"$name" --virtual-time-budget=10000 --screenshot="$PWD/evidence/screenshots/$name.png" "$url" >"evidence/logs/$name.log" 2>&1
+            identify "evidence/screenshots/$name.png"
+            timeout 90 "$browser" --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --user-data-dir=/tmp/chrome-dom-"$name" --virtual-time-budget=10000 --dump-dom "$url" >"evidence/cluster/$name.html" 2>>"evidence/logs/$name.log"
+            if [ "$name" = 23_hdfs_webui ]; then
+              grep -Eqi 'NameNode|DFS Health' "evidence/cluster/$name.html"
+            else
+              grep -Eqi 'NodeManager|Nodes of the cluster|RUNNING' "evidence/cluster/$name.html"
+            fi
+            ! grep -q 'chrome-error://chromewebdata' "evidence/cluster/$name.html"
+            echo 0 >"evidence/status/$name.code"
+          done
+      - name: Accept native single-node cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 18_namenode_format 19_start_dfs 20_start_yarn 21_jps 22_cluster_web_checks 23_hdfs_webui 24_yarn_webui; do
+            test "$(cat evidence/status/$n.code)" = 0
+            identify "evidence/screenshots/$n.png"
+          done
+          for marker in '18_namenode_format:NAMENODE_FORMAT_PASS' '19_start_dfs:HDFS_START_PASS' '20_start_yarn:YARN_START_PASS' '21_jps:HADOOP_DAEMONS_PASS' '22_cluster_web_checks:HDFS_YARN_HTTP_PASS'; do
+            grep -Fxq "${marker#*:}" "evidence/logs/${marker%%:*}.log"
+          done
+          sudo cat /home/hduser/hadoop-data/namenode/current/VERSION | cmp - evidence/cluster/namenode-VERSION.txt
+          printf '%s\n' NAMENODE_FORMAT_PASS HDFS_START_PASS YARN_START_PASS HADOOP_DAEMONS_PASS HDFS_YARN_HTTP_PASS HADOOP_CLUSTER_PASS | tee -a evidence/acceptance.txt
+      - name: Create and upload reproducible WordCount input
+        shell: bash
+        run: |
+          mkdir -p evidence/wordcount/input
+          cat > /tmp/wc-input-user.sh <<'SCRIPT'
+          set -euo pipefail
+          whoami
+          mkdir -p ~/books
+          cat > ~/books/hadoop.txt <<'TXT'
+          hadoop processes data
+          hadoop stores data in hdfs
+          mapreduce processes data
+          TXT
+          cat > ~/books/hdfs.txt <<'TXT'
+          hdfs stores data blocks
+          hdfs stores blocks on datanode
+          namenode manages metadata
+          TXT
+          cat > ~/books/yarn.txt <<'TXT'
+          yarn manages resources
+          yarn runs mapreduce jobs
+          hadoop uses yarn
+          TXT
+          for f in ~/books/*.txt; do
+            echo "=== $f ==="
+            cat "$f"
+          done
+          hdfs dfs -mkdir -p /user/hduser/input
+          hdfs dfs -put ~/books/*.txt /user/hduser/input
+          hdfs dfs -ls /user/hduser/input
+          hdfs dfs -count /user/hduser/input
+          for f in ~/books/*.txt; do
+            hdfs dfs -cat "/user/hduser/input/$(basename "$f")" | cmp - "$f"
+          done
+          echo WORDCOUNT_HDFS_INPUT_PASS
+          SCRIPT
+          chmod 755 /tmp/wc-input-user.sh
+          cat >/tmp/wc-input.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser /tmp/cluster-user.sh bash /tmp/wc-input-user.sh
+          SCRIPT
+          /tmp/capture-stage 25_wordcount_input /tmp/wc-input.sh
+          sudo cp /home/hduser/books/*.txt evidence/wordcount/input/
+          sudo chown -R "$(id -u):$(id -g)" evidence/wordcount
+      - name: Execute standard Hadoop MapReduce WordCount on YARN
+        shell: bash
+        run: |
+          cat >/tmp/wc-job-user.sh <<'SCRIPT'
+          set -euo pipefail
+          whoami
+          test "$(command -v yarn)" = /usr/local/hadoop/bin/yarn
+          if hdfs dfs -test -e /user/hduser/output; then
+            echo 'Refusing to overwrite existing HDFS output'
+            exit 1
+          fi
+          hadoop jar "$HADOOP_HOME/share/hadoop/mapreduce/hadoop-mapreduce-examples-3.3.1.jar" wordcount /user/hduser/input /user/hduser/output
+          SCRIPT
+          chmod 755 /tmp/wc-job-user.sh
+          cat >/tmp/wc-job.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser /tmp/cluster-user.sh bash /tmp/wc-job-user.sh 2>&1 | tee /tmp/wordcount-job.log
+          echo WORDCOUNT_JOB_EXIT_ZERO
+          SCRIPT
+          /tmp/capture-stage 26_wordcount_job /tmp/wc-job.sh
+          cp /tmp/wordcount-job.log evidence/wordcount/job.log
+      - name: Read HDFS result and compare against independent expected counts
+        shell: bash
+        run: |
+          cat >/tmp/wc-output.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs dfs -ls /user/hduser/output
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs dfs -test -e /user/hduser/output/_SUCCESS
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs dfs -cat /user/hduser/output/part-r-00000 | tee /tmp/wordcount-actual.tsv
+          python3 - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          files = sorted(Path('/home/hduser/books').glob('*.txt'))
+          assert len(files) == 3
+          expected = Counter(w for f in files for w in f.read_text().split())
+          rows = [line.split('\t') for line in Path('/tmp/wordcount-actual.tsv').read_text().splitlines()]
+          assert len(rows) == len({k for k,v in rows})
+          actual = {k:int(v) for k,v in rows}
+          assert actual == dict(expected), (expected, actual)
+          Path('/tmp/wordcount-expected.tsv').write_text(''.join(f'{k}\t{v}\n' for k,v in sorted(expected.items())))
+          print('Input files:', len(files))
+          print('Total words:', sum(expected.values()))
+          print('Unique words:', len(expected))
+          print('Exact match:', actual == dict(expected))
+          print('WORDCOUNT_RESULT_PASS')
+          PY
+          SCRIPT
+          /tmp/capture-stage 27_wordcount_result /tmp/wc-output.sh
+          cp /tmp/wordcount-actual.tsv /tmp/wordcount-expected.tsv evidence/wordcount/
+          cmp evidence/wordcount/wordcount-actual.tsv evidence/wordcount/wordcount-expected.tsv
+      - name: Confirm same WordCount application finished successfully in YARN
+        shell: bash
+        run: |
+          cat >/tmp/wc-yarn.sh <<'SCRIPT'
+          set -euo pipefail
+          app=$(python3 - <<'PY'
+          import re
+          s=open('/tmp/wordcount-job.log').read()
+          ids=set(re.findall(r'application_[0-9]+_[0-9]+',s))
+          assert len(ids)==1, ids
+          print(ids.pop())
+          PY
+          )
+          echo "$app" >/tmp/wordcount-app-id.txt
+          sudo -H -u hduser /tmp/cluster-user.sh /usr/local/hadoop/bin/yarn application -status "$app" | tee /tmp/wordcount-yarn-status.txt
+          curl -fsS --max-time 15 "http://localhost:8088/ws/v1/cluster/apps/$app" >/tmp/wordcount-yarn-app.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.load(open('/tmp/wordcount-yarn-app.json'))['app']
+          for k in ['id','name','user','applicationType','state','finalStatus','progress']:
+              print(f'{k}: {a[k]}')
+          assert a['id']==Path('/tmp/wordcount-app-id.txt').read_text().strip()
+          assert a['name'].lower()=='word count'
+          assert a['user']=='hduser'
+          assert a['applicationType']=='MAPREDUCE'
+          assert a['state']=='FINISHED' and a['finalStatus']=='SUCCEEDED' and float(a['progress'])==100
+          print('WORDCOUNT_YARN_SUCCEEDED')
+          PY
+          SCRIPT
+          /tmp/capture-stage 28_wordcount_yarn /tmp/wc-yarn.sh
+          cp /tmp/wordcount-app-id.txt /tmp/wordcount-yarn-status.txt /tmp/wordcount-yarn-app.json evidence/wordcount/
+      - name: Capture actual completed YARN application in browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=$(cat evidence/wordcount/wordcount-app-id.txt)
+          browser=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          url="http://localhost:8088/cluster/app/$app"
+          name=29_wordcount_yarn_webui
+          timeout 90 "$browser" --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --window-size=1600,1000 --user-data-dir=/tmp/chrome-"$name" --virtual-time-budget=10000 --screenshot="$PWD/evidence/screenshots/$name.png" "$url" >"evidence/logs/$name.log" 2>&1
+          identify "evidence/screenshots/$name.png"
+          timeout 90 "$browser" --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --user-data-dir=/tmp/chrome-dom-"$name" --virtual-time-budget=10000 --dump-dom "$url" >evidence/wordcount/yarn-app.html 2>>"evidence/logs/$name.log"
+          grep -Fq "$app" evidence/wordcount/yarn-app.html
+          grep -Fiq SUCCEEDED evidence/wordcount/yarn-app.html
+          ! grep -q 'chrome-error://chromewebdata' evidence/wordcount/yarn-app.html
+          echo 0 >"evidence/status/$name.code"
+      - name: Accept native HDFS WordCount with successful YARN application
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 25_wordcount_input 26_wordcount_job 27_wordcount_result 28_wordcount_yarn 29_wordcount_yarn_webui; do
+            test "$(cat evidence/status/$n.code)" = 0
+            identify "evidence/screenshots/$n.png"
+          done
+          grep -Fxq WORDCOUNT_HDFS_INPUT_PASS evidence/logs/25_wordcount_input.log
+          grep -Fxq WORDCOUNT_JOB_EXIT_ZERO evidence/logs/26_wordcount_job.log
+          grep -Fxq WORDCOUNT_RESULT_PASS evidence/logs/27_wordcount_result.log
+          grep -Fxq WORDCOUNT_YARN_SUCCEEDED evidence/logs/28_wordcount_yarn.log
+          cmp evidence/wordcount/wordcount-actual.tsv evidence/wordcount/wordcount-expected.tsv
+          printf '%s\n' WORDCOUNT_HDFS_INPUT_PASS WORDCOUNT_JOB_EXIT_ZERO WORDCOUNT_RESULT_PASS WORDCOUNT_YARN_SUCCEEDED WORDCOUNT_STAGE8_PASS | tee -a evidence/acceptance.txt
+      - name: Preserve actual cluster daemon logs and shut down runner services
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence/cluster/daemon-logs
+          if test -x /tmp/cluster-user.sh; then
+            sudo -H -u hduser /tmp/cluster-user.sh jps >evidence/cluster/final-jps.txt || true
+          fi
+          if test -d /usr/local/hadoop/logs; then
+            sudo cp -a /usr/local/hadoop/logs/. evidence/cluster/daemon-logs/
+            sudo chown -R "$(id -u):$(id -g)" evidence/cluster/daemon-logs
+          fi
+          if test -x /tmp/cluster-user.sh; then
+            sudo -H -u hduser /tmp/cluster-user.sh stop-yarn.sh >evidence/cluster/shutdown.log 2>&1 || true
+            sudo -H -u hduser /tmp/cluster-user.sh stop-dfs.sh >>evidence/cluster/shutdown.log 2>&1 || true
+          fi
+      - name: Upload genuine execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hadoop-wordcount-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
