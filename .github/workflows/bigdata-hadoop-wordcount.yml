@@ -151,6 +151,12 @@ jobs:
             test -s evidence/logs/$name.log
           done
           printf '%s\n' 'UBUNTU_RUNNER_PREP_PASS' 'VIRTUALBOX_GUEST_ADDITIONS_NOT_TESTED' 'VIRTUALBOX_SHARED_FOLDER_NOT_TESTED' 'IPV6_UNCHANGED' | tee evidence/acceptance.txt
+      - name: Restore verified Hadoop archive cache
+        id: hadoop_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/hadoop-dist/hadoop-3.3.1.tar.gz
+          key: hadoop-3.3.1-linux-x86_64-sha512-2fd0bf74852c797d-v1
       - name: Download and verify official Hadoop 3.3.1 distribution
         shell: bash
         run: |
@@ -162,17 +168,24 @@ jobs:
           # Digest retrieved independently from the official Apache archive.
           printf '%s  %s\n' '2fd0bf74852c797dc864f373ec82ffaa1e98706b309b30d1effa91ac399b477e1accc1ee74d4ccbb1db7da1c5c541b72e4a834f131a99f2814b030fbd043df66' "$file" > "$file.sha512"
           downloaded=0
-          for base in https://archive.apache.org/dist/hadoop/common/hadoop-3.3.1 https://repo.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1 https://mirrors.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1; do
-            echo "Trying $base/$file"
+          if test -f "$file" && sha512sum -c "$file.sha512"; then
+            downloaded=1
+            echo 'Using SHA-512 verified cached distribution'
+          else
             rm -f "$file"
-            if wget -4 -nv --connect-timeout=15 --read-timeout=60 --tries=1 "$base/$file" -O "$file"; then
-              if sha512sum -c "$file.sha512"; then
-                downloaded=1
-                echo "Verified download source: $base/$file"
-                break
+            for base in https://repo.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1 https://mirrors.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1 https://archive.apache.org/dist/hadoop/common/hadoop-3.3.1; do
+              echo "Trying $base/$file"
+              if timeout --kill-after=5s 180s wget -4 -nv --dns-timeout=15 --connect-timeout=15 --read-timeout=30 --tries=1 "$base/$file" -O "$file.partial"; then
+                mv "$file.partial" "$file"
+                if sha512sum -c "$file.sha512"; then
+                  downloaded=1
+                  echo "Verified download source: $base/$file"
+                  break
+                fi
               fi
-            fi
-          done
+              rm -f "$file.partial" "$file"
+            done
+          fi
           test "$downloaded" = 1
           python3 - "$file" <<'PY'
           import hashlib, pathlib, re, sys
@@ -198,6 +211,13 @@ jobs:
           /tmp/capture-stage 07_hadoop_download /tmp/hadoop-download.sh
           mkdir -p evidence/config
           cp /tmp/hadoop-dist/hadoop-3.3.1.tar.gz.sha512 evidence/config/
+      - name: Save verified Hadoop archive cache
+        if: steps.hadoop_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: /tmp/hadoop-dist/hadoop-3.3.1.tar.gz
+          key: hadoop-3.3.1-linux-x86_64-sha512-2fd0bf74852c797d-v1
       - name: Extract Hadoop and set ownership
         shell: bash
         run: |
