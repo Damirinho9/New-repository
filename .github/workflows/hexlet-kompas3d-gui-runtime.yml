@@ -33,9 +33,8 @@ jobs:
             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           mkdir -p runtime_evidence
           command -v kompas-v25 | tee runtime_evidence/launcher.txt
-          dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
 
-      - name: Accept EULA and invoke native File-Create dialog
+      - name: Accept EULA then create drawing on clean second launch
         shell: bash
         run: |
           set -euxo pipefail
@@ -48,10 +47,8 @@ jobs:
           openbox >runtime_evidence/openbox.log 2>&1 &
           sleep 2
 
-          kompas-v25 >runtime_evidence/kompas.out 2>runtime_evidence/kompas.err &
-          KPID=$!
-          echo "$KPID" > runtime_evidence/kompas.pid
-
+          kompas-v25 >runtime_evidence/kompas-first.out 2>runtime_evidence/kompas-first.err &
+          FIRST_PID=$!
           MAIN_WID=""
           for i in $(seq 1 90); do
             sleep 1
@@ -59,7 +56,6 @@ jobs:
             [ -n "$MAIN_WID" ] && break
           done
           test -n "$MAIN_WID"
-          echo "MAIN_WINDOW_ID=$MAIN_WID" | tee runtime_evidence/main-window.txt
           sleep 25
 
           EULA_WID=""
@@ -69,7 +65,6 @@ jobs:
             sleep 1
           done
           test -n "$EULA_WID"
-          xdotool getwindowgeometry --shell "$EULA_WID" | tee runtime_evidence/eula-geometry.txt
           eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
           CLICK_X=$((X + WIDTH * 65 / 100))
           CLICK_Y=$((Y + HEIGHT - 42))
@@ -78,50 +73,96 @@ jobs:
           import -display :99 -window root runtime_evidence/01_eula_before_accept.png
           xdotool click 1
           sleep 3
-
           EULA_STILL=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
           echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
           test -z "$EULA_STILL"
 
-          xdotool windowfocus --sync "$MAIN_WID"
-          xdotool windowactivate --sync "$MAIN_WID" || true
+          # Persist acceptance, then start a clean GUI instance.
+          xdotool windowclose "$MAIN_WID" || true
+          for i in $(seq 1 30); do
+            sleep 1
+            ! ps -p "$FIRST_PID" >/dev/null 2>&1 && break
+          done
+          if ps -p "$FIRST_PID" >/dev/null 2>&1; then kill "$FIRST_PID" 2>/dev/null || true; fi
+          sleep 3
+
+          kompas-v25 >runtime_evidence/kompas-second.out 2>runtime_evidence/kompas-second.err &
+          SECOND_PID=$!
+          echo "$SECOND_PID" > runtime_evidence/kompas-second.pid
+          SECOND_WID=""
+          for i in $(seq 1 90); do
+            sleep 1
+            SECOND_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$SECOND_WID" ] && break
+          done
+          test -n "$SECOND_WID"
+          echo "SECOND_WINDOW_ID=$SECOND_WID" | tee runtime_evidence/second-window.txt
+          sleep 20
+
+          EULA_SECOND=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+          echo "EULA_ON_SECOND_LAUNCH=$EULA_SECOND" | tee runtime_evidence/eula-second.txt
+          test -z "$EULA_SECOND"
+
+          xdotool windowfocus --sync "$SECOND_WID"
+          xdotool windowactivate --sync "$SECOND_WID" || true
           sleep 1
+
+          # First use the official File -> Create shortcut.
           xdotool key ctrl+n
-          sleep 5
+          sleep 4
+          FOCUS_N=$(xdotool getwindowfocus)
+          echo "FOCUS_AFTER_CTRL_N=$FOCUS_N" | tee runtime_evidence/create-attempt.txt
+          xdotool getwindowname "$FOCUS_N" | tee -a runtime_evidence/create-attempt.txt || true
 
-          FOCUS_AFTER=$(xdotool getwindowfocus)
-          echo "FOCUS_AFTER_CTRL_N=$FOCUS_AFTER" | tee runtime_evidence/create-focus.txt
-          xdotool getwindowname "$FOCUS_AFTER" | tee -a runtime_evidence/create-focus.txt || true
-          xdotool getwindowgeometry --shell "$FOCUS_AFTER" | tee runtime_evidence/create-focus-geometry.txt || true
-          wmctrl -l -G | tee runtime_evidence/wmctrl-after-ctrl-n.txt || true
-          xwininfo -root -tree > runtime_evidence/xwin-tree-after-ctrl-n.txt
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-windows-after-ctrl-n.txt || true
-          import -display :99 -window root runtime_evidence/02_after_ctrl_n.png
-
-          if [ "$FOCUS_AFTER" = "$MAIN_WID" ]; then
-            echo 'RESULT=FAIL_CREATE_DIALOG_NOT_OPENED' | tee runtime_evidence/result.txt
-            exit 51
+          # If no separate New Document dialog appeared, use the real Drawing tile
+          # on this clean, modal-free start page.
+          if [ "$FOCUS_N" = "$SECOND_WID" ]; then
+            xdotool key Escape || true
+            xdotool windowfocus --sync "$SECOND_WID"
+            xdotool mousemove --window "$SECOND_WID" --sync 919 170
+            xdotool getmouselocation --shell | tee runtime_evidence/drawing-tile-pointer-second.txt
+            xdotool click 1
+            sleep 12
           fi
 
-          CREATE_TITLE=$(xdotool getwindowname "$FOCUS_AFTER" 2>/dev/null || true)
-          echo "CREATE_TITLE=$CREATE_TITLE" | tee runtime_evidence/create-title.txt
-          echo 'RESULT=PASS_NATIVE_CREATE_DIALOG_OPENED' | tee runtime_evidence/result.txt
+          wmctrl -l -G | tee runtime_evidence/windows-after-create.txt || true
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/visible-after-create.txt || true
+          import -display :99 -window root runtime_evidence/02_after_create_attempt.png
 
-      - name: Strict File-Create gate
+          # Functional proof: an unsaved real drawing must invoke a native save dialog.
+          xdotool windowfocus --sync "$SECOND_WID" || true
+          xdotool key ctrl+s
+          sleep 5
+          SAVE_FOCUS=$(xdotool getwindowfocus)
+          echo "SAVE_FOCUS=$SAVE_FOCUS" | tee runtime_evidence/save-focus.txt
+          xdotool getwindowname "$SAVE_FOCUS" | tee -a runtime_evidence/save-focus.txt || true
+          xdotool getwindowgeometry --shell "$SAVE_FOCUS" | tee runtime_evidence/save-focus-geometry.txt || true
+          wmctrl -l -G | tee runtime_evidence/windows-after-save.txt || true
+          import -display :99 -window root runtime_evidence/03_save_dialog_gate.png
+
+          if [ "$SAVE_FOCUS" = "$SECOND_WID" ]; then
+            echo 'RESULT=FAIL_NO_NATIVE_SAVE_DIALOG' | tee runtime_evidence/result.txt
+            exit 52
+          fi
+
+          echo 'RESULT=PASS_REAL_UNSAVED_DRAWING_CREATED' | tee runtime_evidence/result.txt
+
+      - name: Strict real drawing gate
         shell: bash
         run: |
           set -euxo pipefail
-          test -s runtime_evidence/01_eula_before_accept.png
-          test -s runtime_evidence/02_after_ctrl_n.png
+          test -s runtime_evidence/02_after_create_attempt.png
+          test -s runtime_evidence/03_save_dialog_gate.png
           grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^RESULT=PASS_NATIVE_CREATE_DIALOG_OPENED$' runtime_evidence/result.txt
-          sha256sum runtime_evidence/01_eula_before_accept.png runtime_evidence/02_after_ctrl_n.png \
+          grep -q '^EULA_ON_SECOND_LAUNCH=$' runtime_evidence/eula-second.txt
+          grep -q '^RESULT=PASS_REAL_UNSAVED_DRAWING_CREATED$' runtime_evidence/result.txt
+          sha256sum runtime_evidence/02_after_create_attempt.png runtime_evidence/03_save_dialog_gate.png \
             | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-file-create-dialog-evidence
+          name: kompas3d-real-drawing-second-launch
           path: runtime_evidence/
           if-no-files-found: error
