@@ -1,0 +1,88 @@
+name: KOMPAS Stage 4 document host factory map
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-document-host-factory-map.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  map:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Map concrete document host constructors and factories
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-document-host-map
+          mkdir -p "$OUT"
+          R="$OUT/host-map.txt"
+          : > "$R"
+          # First find only libraries that actually define or reference the key host methods.
+          while IFS= read -r f; do
+            hits="$(nm -D -C "$f" 2>/dev/null | grep -E               'ItDocumentHost::(CreateNewDocument|CreateKompasDocument|OnCreateDocument)|(Gr|Pr|Md|Ed|.*3D.*)DocumentHost::(CreateNewDocument|CreateKompasDocument|OnCreateDocument)|(Gr|Pr|Md|Ed|.*3D.*)DocumentHost::(Gr|Pr|Md|Ed|.*3D.*)DocumentHost\(|vtable for (Gr|Pr|Md|Ed|.*3D.*)DocumentHost|typeinfo for (Gr|Pr|Md|Ed|.*3D.*)DocumentHost' || true)"
+            if [ -n "$hits" ]; then
+              {
+                echo "===== $f ====="
+                echo "$hits"
+                echo
+                echo "--- nearby create/new/open symbols"
+                nm -D -C "$f" 2>/dev/null | grep -E                   'Create(New)?Document|CreateKompasDocument|NewDocument|DocumentHost|DocumentTemplate|DocumentType|Create.*Host|New.*Host' | head -1200 || true
+                echo
+              } | tee -a "$R"
+            fi
+          done < <(find "$BIN" /opt/ascon/common -type f \( -name '*.so' -o -name '*.so.*' -o -perm -111 \) 2>/dev/null | sort -u)
+
+          {
+            echo "=== KOMPAS/KSINVISIBLE REFERENCES ==="
+            for f in "$BIN/ksinvisible" "$BIN/kKompas"; do
+              [ -f "$f" ] || continue
+              echo "--- $f"
+              nm -D -C "$f" 2>/dev/null | grep -E                 'CreateNewDocument|CreateKompasDocument|OnCreateDocument|DocumentHost|NewDocument' || true
+            done
+          } | tee -a "$R"
+
+          defs=$(grep -Ec ' [TW] ItDocumentHost::(CreateNewDocument|CreateKompasDocument|OnCreateDocument)' "$R" || true)
+          ctors=$(grep -Ec ' [TW] .*DocumentHost::.*DocumentHost\(' "$R" || true)
+          echo "HOST_CREATE_DEFINITIONS=$defs" | tee "$OUT/result.txt"
+          echo "HOST_CONSTRUCTORS=$ctors" | tee -a "$OUT/result.txt"
+          echo "RESULT=DOCUMENT_HOST_FACTORY_MAPPED" | tee -a "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-document-host-factory-map
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-document-host-map/**
