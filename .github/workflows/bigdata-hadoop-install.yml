@@ -158,10 +158,22 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/hadoop-dist
           cd /tmp/hadoop-dist
-          base=https://archive.apache.org/dist/hadoop/common/hadoop-3.3.1
           file=hadoop-3.3.1.tar.gz
-          wget -nv --timeout=60 --tries=3 "$base/$file.sha512" -O "$file.sha512"
-          wget -nv --timeout=60 --tries=3 "$base/$file" -O "$file"
+          # Digest retrieved independently from the official Apache archive.
+          printf '%s  %s\n' '2fd0bf74852c797dc864f373ec82ffaa1e98706b309b30d1effa91ac399b477e1accc1ee74d4ccbb1db7da1c5c541b72e4a834f131a99f2814b030fbd043df66' "$file" > "$file.sha512"
+          downloaded=0
+          for base in https://archive.apache.org/dist/hadoop/common/hadoop-3.3.1 https://repo.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1 https://mirrors.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1; do
+            echo "Trying $base/$file"
+            rm -f "$file"
+            if wget -4 -nv --connect-timeout=15 --read-timeout=60 --tries=1 "$base/$file" -O "$file"; then
+              if sha512sum -c "$file.sha512"; then
+                downloaded=1
+                echo "Verified download source: $base/$file"
+                break
+              fi
+            fi
+          done
+          test "$downloaded" = 1
           python3 - "$file" <<'PY'
           import hashlib, pathlib, re, sys
           p = pathlib.Path(sys.argv[1])
