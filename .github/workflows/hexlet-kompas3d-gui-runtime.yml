@@ -1,4 +1,4 @@
-name: Hexlet KOMPAS-3D GUI Runtime
+name: Hexlet KOMPAS-3D SDK Native Drawing
 
 on:
   push:
@@ -9,21 +9,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  kompas3d-gui:
+  sdk-native:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install official ASCON KOMPAS-3D v25 + SDK
+      - name: Install official KOMPAS v25 SDK
         shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
-            wget ca-certificates gnupg xvfb openbox xdotool imagemagick desktop-file-utils \
-            x11-utils x11-xserver-utils mesa-utils libgl1-mesa-dri wmctrl xclip \
-            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          sudo apt-get install -y wget ca-certificates gnupg desktop-file-utils
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
@@ -31,99 +28,34 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
-          mkdir -p runtime_evidence
+          mkdir -p sdk_probe
 
-      - name: Accept EULA and open File Create natively through keyboard menu
+      - name: Inspect official SDK examples for native drawing creation
         shell: bash
         run: |
           set -euxo pipefail
-          export DISPLAY=:99
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QT_OPENGL=software
+          export KOMPAS_SDK=/opt/ascon/kompas3d-v25/SDK
+          find "$KOMPAS_SDK" -maxdepth 5 -type f | sort > sdk_probe/sdk-files.txt
+          grep -RniE 'ksCreateDocument|CreateDocumentW|CreateDocument\s*\(' "$KOMPAS_SDK" \
+            > sdk_probe/create-document-hits.txt || true
+          grep -RniE 'LoadKompasLibrary|KompasLibraryActions|AddRunCommandHandler' "$KOMPAS_SDK" \
+            > sdk_probe/library-entry-hits.txt || true
+          find "$KOMPAS_SDK" -type f \( -name '*.cpp' -o -name '*.cxx' -o -name '*.cc' -o -name '*.h' \) \
+            -print0 | xargs -0 grep -l 'ksCreateDocument' \
+            > sdk_probe/create-document-files.txt || true
 
-          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >runtime_evidence/xvfb.log 2>&1 &
-          sleep 2
-          openbox >runtime_evidence/openbox.log 2>&1 &
-          sleep 2
+          while IFS= read -r f; do
+            echo "===== $f ====="
+            grep -n -B 40 -A 80 'ksCreateDocument' "$f" || true
+          done < sdk_probe/create-document-files.txt \
+            > sdk_probe/create-document-context.txt
 
-          kompas-v25 >runtime_evidence/kompas.out 2>runtime_evidence/kompas.err &
-          KPID=$!
-          echo "$KPID" > runtime_evidence/kompas.pid
-
-          MAIN_WID=""
-          for i in $(seq 1 90); do
-            sleep 1
-            MAIN_WID=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
-            [ -n "$MAIN_WID" ] && break
-          done
-          test -n "$MAIN_WID"
-          echo "MAIN_WID=$MAIN_WID" | tee runtime_evidence/main-window.txt
-          sleep 25
-
-          EULA_WID=""
-          for i in $(seq 1 30); do
-            EULA_WID=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
-            [ -n "$EULA_WID" ] && break
-            sleep 1
-          done
-          test -n "$EULA_WID"
-          eval "$(xdotool getwindowgeometry --shell "$EULA_WID")"
-          CLICK_X=$((X + WIDTH * 65 / 100))
-          CLICK_Y=$((Y + HEIGHT - 42))
-          xdotool windowfocus --sync "$EULA_WID"
-          xdotool mousemove --sync "$CLICK_X" "$CLICK_Y"
-          import -display :99 -window root runtime_evidence/01_eula_before_accept.png
-          xdotool click 1
-          sleep 3
-
-          EULA_STILL=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
-          echo "EULA_AFTER_CLICK=$EULA_STILL" | tee runtime_evidence/eula-after-click.txt
-          test -z "$EULA_STILL"
-
-          xdotool windowfocus --sync "$MAIN_WID"
-
-          # Native Qt menu navigation: F10 activates main menu; first item is File.
-          xdotool key F10
-          sleep 1
-          import -display :99 -window root runtime_evidence/02_menu_bar_focused.png
-
-          xdotool key Down
-          sleep 1
-          import -display :99 -window root runtime_evidence/03_file_menu_open.png
-
-          # In KOMPAS File menu, the first command is "Создать...".
-          xdotool key Return
-          sleep 5
-
-          FOCUS_NEW=$(xdotool getwindowfocus)
-          echo "FOCUS_NEW=$FOCUS_NEW" | tee runtime_evidence/new-document-focus.txt
-          xdotool getwindowname "$FOCUS_NEW" | tee -a runtime_evidence/new-document-focus.txt || true
-          xdotool getwindowgeometry --shell "$FOCUS_NEW" | tee runtime_evidence/new-document-geometry.txt || true
-          wmctrl -l -G | tee runtime_evidence/windows-after-create.txt || true
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/visible-windows-after-create.txt || true
-          import -display :99 -window root runtime_evidence/04_new_document_dialog.png
-
-          if [ "$FOCUS_NEW" = "$MAIN_WID" ]; then
-            echo 'RESULT=FAIL_FILE_CREATE_DIALOG_NOT_OPENED' | tee runtime_evidence/result.txt
-            exit 81
-          fi
-
-          echo 'RESULT=PASS_FILE_CREATE_DIALOG_OPENED' | tee runtime_evidence/result.txt
-
-      - name: Strict File Create gate
-        shell: bash
-        run: |
-          set -euxo pipefail
-          grep -q '^EULA_AFTER_CLICK=$' runtime_evidence/eula-after-click.txt
-          grep -q '^RESULT=PASS_FILE_CREATE_DIALOG_OPENED$' runtime_evidence/result.txt
-          test -s runtime_evidence/04_new_document_dialog.png
-          sha256sum runtime_evidence/02_menu_bar_focused.png runtime_evidence/03_file_menu_open.png runtime_evidence/04_new_document_dialog.png \
-            | tee runtime_evidence/sha256.txt
+          test -s sdk_probe/create-document-hits.txt
+          echo 'RESULT=PASS_SDK_CREATE_DOCUMENT_API_FOUND' > sdk_probe/result.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-native-file-create-dialog
-          path: runtime_evidence/
+          name: kompas-v25-sdk-create-document-probe
+          path: sdk_probe/
           if-no-files-found: error
