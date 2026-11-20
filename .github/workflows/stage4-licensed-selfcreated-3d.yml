@@ -1,0 +1,259 @@
+name: KOMPAS Stage 4 licensed native 3D self-created part
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-licensed-selfcreated-3d.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  native-3d:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+      - name: Install compiler and host libraries only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb dbus g++ clang python3 libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          CXXV1=$(find /usr/include /usr/lib/llvm-* -path '*/c++/v1/memory' -print -quit 2>/dev/null || true)
+          if [ -z "$CXXV1" ]; then
+            for v in 22 21 20 19 18; do
+              if apt-cache show "libc++-$v-dev" >/dev/null 2>&1 && apt-cache show "libc++abi-$v-dev" >/dev/null 2>&1; then
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "libc++-$v-dev" "libc++abi-$v-dev"
+                break
+              fi
+            done
+          fi
+      - name: Extract native vendor part template and compile stateful 3D writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          z=Path('/opt/ascon/kompas3d-v25/SDK/KsAPI/Samples.zip')
+          with zipfile.ZipFile(z) as a:
+              data=a.read('Examples/Content/part.m3d')
+          Path('/tmp/official-part.m3d').write_bytes(data)
+          PY
+          sha256sum /tmp/official-part.m3d | tee vendor-part-SHA256.txt
+
+          cat >/tmp/stage4_3d_writer.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <fstream>
+          #include <filesystem>
+          #include <string>
+          #include <cmath>
+          using namespace ksapi;
+          namespace fs=std::filesystem;
+          static std::ofstream lg("/tmp/stage4_3d.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          static IKompasDocumentPtr g_doc{},g_open{};
+          static int phase=0,waits=0,route=0;
+          static double built_mass=0,built_volume=0;
+          static const std::wstring seed=L"/tmp/Stage4_Existing_Seed.m3d";
+          static const std::wstring out=L"/tmp/Stage4_Minimal_Extrusion.m3d";
+
+          static bool rect(const IFragmentDocumentPtr& frag){
+            auto vm=frag->GetViewsAndLayersManager();auto views=vm?vm->GetViews():IViewsPtr{};auto v=views?views->GetActiveView():IViewPtr{};
+            IDrawingContainerPtr dc=v;if(!dc){log("WAIT_SKETCH_DRAWING");return false;}
+            auto ls=dc->GetLineSegments();if(!ls)return false;
+            const double q[4][4]={{-4,-3,4,-3},{4,-3,4,3},{4,3,-4,3},{-4,3,-4,-3}};
+            for(auto&p:q){auto s=ls->Add();if(!s)return false;s->SetX1(p[0]);s->SetY1(p[1]);s->SetX2(p[2]);s->SetY2(p[3]);s->SetStyle(ksCSNormal);if(!s->Update())return false;}
+            return true;
+          }
+
+          static bool metrics(const IPartPtr& top,double& mass,double& volume){
+            mass=top->GetMass();
+            IMassInertiaParamPtr m=top;
+            if(!m){log("FAIL_MASS_INERTIA_INTERFACE");return false;}
+            m->SetLengthUnits(ksLUnMM);
+            if(!m->Calculate()){log("FAIL_MASS_CALCULATE");return false;}
+            if(!m->IsActual()){log("FAIL_MASS_NOT_ACTUAL");return false;}
+            volume=m->GetVolume();
+            return std::isfinite(mass)&&mass>0&&std::isfinite(volume)&&volume>0;
+          }
+
+          extern "C" int run_variant06_writer(){
+            try{
+              IApplication& app=GetKompasApplication();
+              auto lm=app.GetApplicationLicenseManager();if(!lm){log("FAIL_LICENSE_MANAGER");return 1;}
+              bool lic=lm->IsKompasModuleActive(ksKompasModule3D);
+              log(std::string("LICENSE_3D_ACTIVE=")+(lic?"1":"0"));
+              if(!lic){log("RESULT=FAIL_3D_LICENSE");return 1;}
+              auto docs=app.GetDocuments();if(!docs){log("FAIL_DOCUMENTS");return 1;}
+
+              if(phase==0){
+                fs::remove(seed);fs::remove(out);
+                if(route==0){g_doc=docs->AddNewDocumentFromTemplate(L"/tmp/official-part.m3d",true);log(std::string("ROUTE_TEMPLATE_DOC=")+(g_doc?"1":"0"));}
+                else if(route==1){g_doc=docs->AddWithDefaultSettings(ksDocumentPart,true);log(std::string("ROUTE_DEFAULT_DOC=")+(g_doc?"1":"0"));}
+                else {g_doc=docs->Add(ksDocumentPart,true);log(std::string("ROUTE_ADD_DOC=")+(g_doc?"1":"0"));}
+                if(!g_doc){
+                  if(++route>2){log("RESULT=FAIL_NO_3D_CREATION_ROUTE");return 1;}
+                  return 3;
+                }
+                waits=0;phase=1;return 3;
+              }
+              if(phase==1){
+                IKompasDocument3DPtr d3=g_doc;
+                auto top=d3?d3->GetTopPart():IPartPtr{};
+                log(std::string("SEED_TOP_PART=")+(top?"1":"0"));
+                if(!top){
+                  if(++waits<8)return 3;
+                  try{g_doc->Close(kdDoNotSaveChanges);}catch(...){}
+                  g_doc={};waits=0;phase=0;++route;
+                  if(route>2){log("RESULT=FAIL_NO_INITIALIZED_3D_ROUTE");return 1;}
+                  return 3;
+                }
+                try{top->SetMaterial(L"Stage4Smoke",1.0);}catch(...){}
+                if(!g_doc->SaveAs(seed)){log("FAIL_SAVE_SEED");return 1;}
+                if(!fs::exists(seed)||fs::file_size(seed)<1024){log("FAIL_SEED_FILE");return 1;}
+                if(!g_doc->Close(kdDoNotSaveChanges)){log("FAIL_CLOSE_SEED");return 1;}
+                g_doc={};phase=2;waits=0;log("SEED_SAVE_CLOSE_PASS");return 3;
+              }
+              if(phase==2){
+                g_open=docs->Open(seed,true,false);
+                log(std::string("REOPEN_SEED_DOC=")+(g_open?"1":"0"));
+                if(!g_open){if(++waits<8)return 3;log("RESULT=FAIL_REOPEN_SEED");return 1;}
+                phase=3;waits=0;return 3;
+              }
+              if(phase==3){
+                IKompasDocument3DPtr d3=g_open;auto top=d3?d3->GetTopPart():IPartPtr{};
+                log(std::string("REOPEN_SEED_TOP_PART=")+(top?"1":"0"));
+                if(!top){if(++waits<8)return 3;log("RESULT=FAIL_REOPEN_SEED_TOPPART");return 1;}
+                log("OPEN_EXISTING_M3D_PASS");log("TOPPART_PASS");
+                auto mc=top->GetModelContainer();if(!mc){log("FAIL_MODEL_CONTAINER");return 1;}
+                auto sketches=mc->GetSketchs();auto sk=sketches?sketches->Add():ISketchPtr{};if(!sk){log("FAIL_SKETCH_ADD");return 1;}
+                auto plane=top->GetDefaultObject(o3d_planeXOY);if(!plane){log("FAIL_PLANE");return 1;}
+                sk->SetPlane(plane);if(!sk->Update()){log("FAIL_SKETCH_PLANE_UPDATE");return 1;}
+                auto frag=sk->BeginEdit(false);if(!frag){log("FAIL_BEGIN_EDIT");return 1;}
+                log("BEGIN_EDIT_PASS");
+                if(!rect(frag)){log("FAIL_RECTANGLE");return 1;}
+                if(!sk->EndEdit()||!sk->Update()){log("FAIL_END_EDIT");return 1;}
+                log("SKETCH_EDIT_PASS");
+                auto exts=mc->GetExtrusions();auto ext=exts?exts->Add(o3d_baseExtrusion):IExtrusionPtr{};if(!ext){log("FAIL_EXTRUSION_ADD");return 1;}
+                ext->SetProfiles({IModelObjectPtr(sk)});
+                if(!ext->SetSideParameters(true,etBlind,10.0,0.0,false,IModelObjectPtr{})){log("FAIL_SIDE_PARAMS");return 1;}
+                if(!ext->Update()){log("FAIL_EXTRUSION_UPDATE");return 1;}
+                if(!top->RebuildModel(true)||!d3->RebuildDocument()){log("FAIL_REBUILD");return 1;}
+                log("EXTRUSION_PASS");
+                if(!metrics(top,built_mass,built_volume)){log("FAIL_PHYSICAL_METRICS");return 1;}
+                log("MASS_AFTER="+std::to_string(built_mass));log("VOLUME_AFTER="+std::to_string(built_volume));
+                log("PHYSICAL_MASS_VOLUME_PASS");
+                if(!g_open->SaveAs(out)){log("FAIL_SAVE_FINAL");return 1;}
+                if(!g_open->Close(kdDoNotSaveChanges)){log("FAIL_CLOSE_FINAL");return 1;}
+                g_open={};phase=4;waits=0;log("SAVE_CLOSE_PASS");return 3;
+              }
+              if(phase==4){
+                g_open=docs->Open(out,true,false);
+                log(std::string("FINAL_REOPEN_DOC=")+(g_open?"1":"0"));
+                if(!g_open){if(++waits<8)return 3;log("RESULT=FAIL_FINAL_REOPEN");return 1;}
+                phase=5;waits=0;return 3;
+              }
+              if(phase==5){
+                IKompasDocument3DPtr d3=g_open;auto top=d3?d3->GetTopPart():IPartPtr{};
+                if(!top){if(++waits<8)return 3;log("RESULT=FAIL_FINAL_REOPEN_TOPPART");return 1;}
+                if(!d3->RebuildDocument()||!top->RebuildModel(true)){log("FAIL_FINAL_REBUILD");return 1;}
+                double m=0,v=0;if(!metrics(top,m,v)){log("FAIL_REOPEN_METRICS");return 1;}
+                log("REOPEN_MASS="+std::to_string(m));log("REOPEN_VOLUME="+std::to_string(v));
+                if(std::abs(m-built_mass)>std::max(1e-8,std::abs(built_mass)*1e-5)){log("FAIL_MASS_MISMATCH");return 1;}
+                if(std::abs(v-built_volume)>std::max(1e-6,std::abs(built_volume)*1e-5)){log("FAIL_VOLUME_MISMATCH");return 1;}
+                if(!g_open->Save()){log("FAIL_FINAL_SAVE");return 1;}
+                if(!g_open->Close(kdDoNotSaveChanges)){log("FAIL_FINAL_CLOSE");return 1;}
+                log("REOPEN_REBUILD_PASS");log("RESULT=PASS_MINIMAL_NATIVE_3D_EXTRUSION_MASS_VOLUME_REOPEN");return 0;
+              }
+            }catch(const std::exception&e){log(std::string("EXCEPTION=")+e.what());}
+             catch(...){log("EXCEPTION=unknown");}
+            return 1;
+          }
+          CPP
+
+          CXXV1=$(find /usr/include /usr/lib/llvm-* -path '*/c++/v1/memory' -print -quit 2>/dev/null)
+          CXXV1=$(dirname "$CXXV1")
+          /usr/bin/clang++ -std=c++20 -stdlib=libc++ -nostdinc++ -I"$CXXV1" -O2 -fPIC -shared -pthread -I"$INC" \
+            /tmp/stage4_3d_writer.cpp -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi -o /tmp/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread kompas-linux/bootstrap_variant06_poll.cpp -ldl -o /tmp/bootstrap_variant06_qt.so
+      - name: Run licensed self-created 3D native acceptance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export HOME="$RUNNER_TEMP/selfcreated-3d-home" XDG_CONFIG_HOME="$HOME/.config"
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25" result/stage4-selfcreated-3d
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          export DISPLAY=:120 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          sudo mkdir -p /tmp/.X11-unix; sudo chmod 1777 /tmp/.X11-unix
+          Xvfb :120 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb120.out 2>/tmp/xvfb120.err &
+          XV=$!; trap 'kill "$XV" 2>/dev/null || true' EXIT
+          sleep 2
+          rm -f /tmp/stage4_3d.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/Stage4_Existing_Seed.m3d /tmp/Stage4_Minimal_Extrusion.m3d
+          setsid dbus-run-session -- env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" DISPLAY=:120 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$LD_LIBRARY_PATH" LD_PRELOAD=/tmp/bootstrap_variant06_qt.so \
+            "$BIN/ksinvisible" -automation >result/stage4-selfcreated-3d/kompas.out 2>result/stage4-selfcreated-3d/kompas.err &
+          KP=$!
+          ok=0
+          for i in $(seq 1 160); do
+            sleep 1
+            if grep -q '^RESULT=PASS_MINIMAL_NATIVE_3D_EXTRUSION_MASS_VOLUME_REOPEN$' /tmp/stage4_3d.log 2>/dev/null; then ok=1; break; fi
+            if grep -q '^RESULT=FAIL_' /tmp/stage4_3d.log 2>/dev/null; then break; fi
+            if grep -q 'POLL_BOOTSTRAP_RETRY_LIMIT' /tmp/work1_bootstrap.log 2>/dev/null; then break; fi
+            kill -0 "$KP" 2>/dev/null || break
+          done
+          cat /tmp/stage4_3d.log 2>/dev/null || true
+          cat /tmp/work1_bootstrap.log 2>/dev/null || true
+          cp /tmp/stage4_3d.log result/stage4-selfcreated-3d/ 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log result/stage4-selfcreated-3d/ 2>/dev/null || true
+          cp /tmp/Stage4_Existing_Seed.m3d result/stage4-selfcreated-3d/ 2>/dev/null || true
+          cp /tmp/Stage4_Minimal_Extrusion.m3d result/stage4-selfcreated-3d/ 2>/dev/null || true
+          kill -TERM -- "-$KP" 2>/dev/null || true
+          wait "$KP" 2>/dev/null || true
+          test "$ok" = 1
+          test -s result/stage4-selfcreated-3d/Stage4_Minimal_Extrusion.m3d
+          sha256sum result/stage4-selfcreated-3d/Stage4_Minimal_Extrusion.m3d | tee result/stage4-selfcreated-3d/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-selfcreated-native-3d
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            vendor-part-SHA256.txt
+            result/stage4-selfcreated-3d/**
