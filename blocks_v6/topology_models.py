@@ -103,7 +103,7 @@ def _kp501a_card(alias,vth):
 
 
 def _retarget_vto(card,vto):
-    n=re.subn(r"(?i)(\\bVTO\\s*=\\s*)[-+0-9.eE]+",lambda q:q.group(1)+format(vto,".6g"),card,count=1)
+    n=re.subn("(?i)(VTO[ \\t]*=[ \\t]*)[-+0-9.eE]+",lambda q:q.group(1)+format(vto,".6g"),card,count=1)
     if n[1]!=1: raise RuntimeError("VT3 vendor VTO not found exactly once")
     return n[0]
 
