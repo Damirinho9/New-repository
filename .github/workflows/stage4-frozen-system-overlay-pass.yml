@@ -47,7 +47,7 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            wget ca-certificates gnupg xvfb xauth dbus procps \
+            wget ca-certificates gnupg xvfb xauth dbus procps desktop-file-utils \
             clang-18 libc++-18-dev libc++abi-18-dev \
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
             libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
