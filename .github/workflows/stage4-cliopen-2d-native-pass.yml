@@ -142,7 +142,7 @@ jobs:
               if(!view||!lines||count<1){log("FAIL_REOPEN_EDITABLE");return 2;}
               bool found=false;
               for(int i=0;i<count;i++){
-                auto s=lines->GetByIndex(i); if(!s)continue;
+                auto s=lines->GetLineSegment(i); if(!s)continue;
                 if(std::abs(s->GetX1()-777.0)<1e-6 && std::abs(s->GetY1()-888.0)<1e-6 &&
                    std::abs(s->GetX2()-817.0)<1e-6 && std::abs(s->GetY2()-888.0)<1e-6){found=true;break;}
               }
