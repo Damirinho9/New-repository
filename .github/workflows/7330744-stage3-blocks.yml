@@ -1,4 +1,4 @@
-name: 7330744 Stage 4 real I_PH load switching sweep
+name: 7330744 Phase A final native acceptance
 
 on:
   push:
@@ -112,7 +112,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw "Harvest failed"}
           New-Item -ItemType Directory -Force vendor,blocks-out | Out-Null
           Copy-Item dep-candidate\vendor\* vendor\ -Force
-          $models=@('PHOTO_DIODE_RATED','MUR1510G','MDA2504','30_AMP','HDR1X5','1N4742A')
+          $models=@('PHOTO_DIODE_RATED','MUR1510G','MDA2504','30_AMP','HDR1X5','1N4742A','SCOPE')
           foreach($m in $models){
             python -m multisimforge parts fetch "$m" 2>&1 | Out-File -Append blocks-out\fetch.log
           }
@@ -124,17 +124,74 @@ jobs:
           $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
           $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
           $env:PYTHONPATH="$env:GITHUB_WORKSPACE\fullv6;$env:GITHUB_WORKSPACE\blocks_v6"
-          $env:STAGE4_SWEEP_ONLY='1'
+          $env:PHASEA_FINAL_ONLY='1'
           python -u blocks_v6\run_blocks.py 2>&1 | Tee-Object -FilePath blocks-out\console.log
           $rc=$LASTEXITCODE
           if($rc -ne 0){exit $rc}
 
+      - name: Structural inspect of final native files
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          foreach($s in @('DARK','THRESHOLD','LIGHT','TRANSIENT')){
+            $f="$env:GITHUB_WORKSPACE\phaseA-final\7330744_PhotoRelay_V6_$s.ms14"
+            python -m multisimforge check "$f" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\phaseA-final\check_$s.json"
+            if($LASTEXITCODE -ne 0){throw "$s structural check failed"}
+            python -m multisimforge inspect "$f" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\phaseA-final\inspect_$s.json"
+          }
+
+      - name: Genuine Multisim circuit and XSC1 captures
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          foreach($s in @('DARK','THRESHOLD','LIGHT','TRANSIENT')){
+            $f="$env:GITHUB_WORKSPACE\phaseA-final\7330744_PhotoRelay_V6_$s.ms14"
+            python -m multisimforge capture "$f" "$env:GITHUB_WORKSPACE\phaseA-final\capture_$s" --wait 1.5 --timeout 90
+            if($LASTEXITCODE -ne 0){throw "$s real Multisim capture failed"}
+          }
+          python -m multisimforge com stop
+
+      - name: Fresh GUI save close reopen and Run again
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $ms=(Get-Content stage3-final\multisim-path.txt -Raw).Trim()
+          python blocks_v6\native_verify_phaseA.py "$ms" "$env:GITHUB_WORKSPACE\phaseA-final" 2>&1 | Tee-Object -FilePath phaseA-final\native-verify-console.txt
+          if($LASTEXITCODE -ne 0){throw "native fresh reopen failed"}
+
+      - name: Re-simulate saved files after fresh reopen
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $env:MULTISIMFORGE_LIBRARY_DIR="$env:GITHUB_WORKSPACE\fullv6-lib"
+          $env:MULTISIMFORGE_PYTHON32='C:\Python311-32\python.exe'
+          foreach($s in @('DARK','THRESHOLD','LIGHT')){
+            $f="$env:GITHUB_WORKSPACE\phaseA-final\7330744_PhotoRelay_V6_$s.ms14"
+            python -m multisimforge sim "$f" --nets sens,t1,t2,drv,g18,g25,n_int,sw,l,ac_src,n --tran 1.0,6000 --csv "$env:GITHUB_WORKSPACE\phaseA-final\reopen_sim_$s" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\phaseA-final\reopen_sim_$s.json"
+            if($LASTEXITCODE -ne 0){throw "$s post-reopen sim failed"}
+          }
+          $f="$env:GITHUB_WORKSPACE\phaseA-final\7330744_PhotoRelay_V6_TRANSIENT.ms14"
+          python -m multisimforge sim "$f" --nets sens,t1,t2,drv,g18,g25,n_int,sw,l,ac_src,n --tran 1.2,12000 --csv "$env:GITHUB_WORKSPACE\phaseA-final\reopen_sim_TRANSIENT" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\phaseA-final\reopen_sim_TRANSIENT.json"
+          if($LASTEXITCODE -ne 0){throw "TRANSIENT post-reopen sim failed"}
+
+      - name: Final Phase A hashes
+        shell: powershell
+        run: |
+          Get-ChildItem phaseA-final -Filter *.ms14 | ForEach-Object {
+            "$($_.Name)  size=$($_.Length)  sha256=$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)"
+          } | Out-File phaseA-final\sha256.txt
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: 7330744-stage4-real-load-switching
+          name: 7330744-phaseA-native-final
           path: |
-            blocks-out/
+            phaseA-final/
+            blocks-out/PHASE_A_FINE_SWEEP.json
             docs/7330744/V6_SOURCE_REFERENCE.md
             vendor/
           if-no-files-found: error
