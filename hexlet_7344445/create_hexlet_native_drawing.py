@@ -37,10 +37,47 @@ print('DOCS1=', docs)
 if docs is None:
     raise SystemExit('GetDocuments #1 returned None')
 
+try:
+    print('LOCK_TEMPLATES_BEFORE=', int(bool(docs.IsLockTemplatesSettings())))
+    docs.SetLockTemplatesSettings(True)
+    print('LOCK_TEMPLATES_AFTER=', int(bool(docs.IsLockTemplatesSettings())))
+except Exception as exc:
+    print('LOCK_TEMPLATES_ERROR=', type(exc).__name__, str(exc))
+
 doc = docs.AddWithDefaultSettings(c.ksDocumentDrawing, True)
+print('DOC_ADD_DEFAULT=', doc)
+
+if doc is None:
+    try:
+        doc = docs.Add(c.ksDocumentDrawing, True)
+        print('DOC_ADD_PLAIN=', doc)
+    except Exception as exc:
+        print('DOC_ADD_PLAIN_ERROR=', type(exc).__name__, str(exc))
+
+if doc is None:
+    import glob
+    templates = sorted(
+        glob.glob('/opt/ascon/kompas3d-v25/Templates/**/*.cdt', recursive=True)
+        + glob.glob('/etc/ascon/KOMPAS-3D/25/Templates/**/*.cdt', recursive=True)
+    )
+    print('CDT_TEMPLATES=', templates[:20])
+    for template in templates:
+        try:
+            cand = docs.AddNewDocumentFromTemplate(template, True)
+            print('DOC_ADD_TEMPLATE=', template, cand)
+            if cand is not None:
+                doc = cand
+                break
+        except Exception as exc:
+            print('DOC_ADD_TEMPLATE_ERROR=', template, type(exc).__name__, str(exc))
+
 print('DOC1=', doc)
 if doc is None:
-    raise SystemExit('AddWithDefaultSettings(ksDocumentDrawing) returned None')
+    try:
+        print('KOMPAS_ERROR=', app.GetKompasError())
+    except Exception as exc:
+        print('KOMPAS_ERROR_QUERY_FAIL=', type(exc).__name__, str(exc))
+    raise SystemExit('All native drawing creation routes returned None')
 
 print('DOC1_TYPE=', doc.GetDocumentType())
 if doc.GetDocumentType() != c.ksDocumentDrawing:
