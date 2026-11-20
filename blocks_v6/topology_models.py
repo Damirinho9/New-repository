@@ -86,6 +86,21 @@ def _patch_fd320(root,xmlio,notes):
         raise RuntimeError("VD1 SPICE patch count=0")
     notes["VD1"]=f"FD320 bounded embedded model patched copies={patched}: IS=2nA, Cj=80pF, BV=30V; external I_PH is photocurrent."
 
+
+def _kp501a_card(alias,vth):
+    # Datasheet-bounded static switch model for KP501A.
+    # A/B datasheet does not specify the forward body diode listed for KP501V.
+    # RON <= 10 ohm; ROFF=100M gives <=2.4uA at 240V, below the 10uA residual-current limit.
+    # This is an engineering approximation, not a manufacturer SPICE card.
+    vh=0.03
+    return chr(10).join([
+        f".SUBCKT {alias} 1 2 3",
+        "* KP501A_NO_BODY_DIODE datasheet-bounded static channel model",
+        "SDS 1 3 2 3 SWKP501A",
+        f".MODEL SWKP501A SW(RON=10 ROFF=100MEG VT={vth:.6g} VH={vh:.6g})",
+        f".ENDS {alias}",
+    ])
+
 def patch_models(root,xmlio,refs=None):
     notes={}
     refs=set(refs or ("VT1","VT2","VT3","VS1","VS2","VD1","VD3","VD4","VD5"))
@@ -96,16 +111,20 @@ def patch_models(root,xmlio,refs=None):
         n1,n2=x.split()[1],y.split()[1]
         if ref.startswith("VT"):
             small=ref!="VT3"
-            src="vendor/ZVN2120G.txt" if small else "vendor/SIHFBE30.lib"
-            expected="ZVN2120G" if small else "SIHFBE30"
-            try:
-                s,t=vendor_card(src,n1,expected),vendor_card(src,n2,expected)
-                notes[ref]=expected+" vendor electrical proxy"
-            except (OSError,ValueError,StopIteration) as exc:
-                # A fallback is explicitly an approximate diagnostic card, not an approved substitution.
-                args=(1.5,0.08,2,2,220) if small else (3.2,0.55,0.8,0.8,800)
-                s,t=_mos(n1,*args),_mos(n2,*args)
-                notes[ref]="APPROXIMATE ONLY: "+str(exc)
+            if small:
+                vth=float(os.environ.get("KP501_VTO","1.2"))
+                if not (1.0 <= vth <= 3.0): raise RuntimeError("KP501_VTO outside datasheet 1..3V")
+                s,t=_kp501a_card(n1,vth),_kp501a_card(n2,vth)
+                notes[ref]=f"KP501A datasheet-bounded no-body-diode switch model Vth={vth:g}V RON=10ohm ROFF=100Mohm"
+            else:
+                src="vendor/SIHFBE30.lib"; expected="SIHFBE30"
+                try:
+                    s,t=vendor_card(src,n1,expected),vendor_card(src,n2,expected)
+                    notes[ref]=expected+" vendor electrical proxy"
+                except (OSError,ValueError,StopIteration) as exc:
+                    args=(3.2,0.55,0.8,0.8,800)
+                    s,t=_mos(n1,*args),_mos(n2,*args)
+                    notes[ref]="APPROXIMATE ONLY: "+str(exc)
         else:
             s,t=_relative(x),_relative(y)
             notes[ref]="Functional cathode-referenced NI SCR, not manufacturer T123-250"
@@ -133,6 +152,7 @@ def verify_saved_cards(root,xmlio,refs=None):
         c=_find_component(root,xmlio,ref);m=_find_model(root,c);a,b=_cards(c,m,xmlio)
         for x in (xmlio.text(a.get("String")),xmlio.text(b.get("Value"))):
             _validate(x)
+            if ref in ("VT1","VT2") and "KP501A_NO_BODY_DIODE" not in x: raise RuntimeError(ref+": KP501A no-diode model lost")
             if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": gate reference lost")
     if "VD1" in refs:
         c=_find_component(root,xmlio,"VD1")
