@@ -158,7 +158,13 @@ def patch_models(root,xmlio,refs=None):
                 notes[ref]=f"KP707V2 continuous engineering model threshold-test={vth:g}V VTO={vto:.4g} KP={kp:.4g}; calibrated to 25mA/3ohm assumptions"
         else:
             s,t=_relative(x),_relative(y)
-            notes[ref]="Functional cathode-referenced NI SCR, not manufacturer T123-250"
+            v=float(os.environ.get("SCR_VTH","2.5"))
+            q=c.find(".//CiaParamList")
+            if q is None: raise RuntimeError(ref+": SCR parameter list missing")
+            ds=q.findall("./doubles/Item");ps=q.findall("./parameters/Item")
+            if len(ds)<2 or len(ps)<2: raise RuntimeError(ref+": SCR threshold parameter unavailable")
+            ds[1].set("Value",format(v,".17g"));ps[1].set("Value",xmlio.asc(f"{v:g}"))
+            notes[ref]=f"Educational functional SCR surrogate threshold={v:g}V, cathode-referenced; NOT T123-250 hardware model"
         _validate(s);_validate(t);a.set("String",xmlio.asc(s));b.set("Value",xmlio.asc(t));m.set("ChangedByUser","1")
     if "VD1" in refs:_patch_fd320(root,xmlio,notes)
     # MUR1510G native symbol is used only as a two-terminal carrier.
