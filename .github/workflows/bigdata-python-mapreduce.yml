@@ -1,0 +1,474 @@
+name: Native Hadoop stages 12-13 Python MapReduce WordCount
+on:
+  push:
+    branches: [bigdata-7341730-native]
+    paths:
+      - '.github/workflows/bigdata-python-mapreduce.yml'
+      - 'python/wordcount/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  python-streaming-wordcount:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - name: Checkout project sources
+        uses: actions/checkout@v4
+
+      - name: Prepare evidence display
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p evidence/screenshots evidence/logs evidence/status evidence/python-wordcount evidence/cluster
+          sudo apt-get update
+          sudo apt-get install -y xvfb xterm openbox imagemagick x11-utils
+          Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp >evidence/logs/xvfb.log 2>&1 &
+          export DISPLAY=:99
+          for i in {1..30}; do xdpyinfo >/dev/null 2>&1 && break; sleep 1; done
+          openbox >evidence/logs/openbox.log 2>&1 &
+          echo DISPLAY=:99 >> "$GITHUB_ENV"
+          echo "EVIDENCE=$PWD/evidence" >> "$GITHUB_ENV"
+          cat > /tmp/capture-python-stage <<'CAPTURE'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          name="$1"
+          script="$2"
+          log="$EVIDENCE/logs/$name.log"
+          status="$EVIDENCE/status/$name.code"
+          xterm -geometry 132x43+15+15 -fa 'DejaVu Sans Mono' -fs 12 -T "$name" -hold -e bash -c 'stty sane; stty onlcr; set -o pipefail; bash -x "$1" 2>&1 | tee "$2"; rc=$?; echo "$rc" > "$3"; printf "\nExit status: %s\n" "$rc"; exit "$rc"' _ "$script" "$log" "$status" &
+          pid=$!
+          for i in {1..1200}; do test -f "$status" && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+          sleep 2
+          import -window root "$EVIDENCE/screenshots/$name.png"
+          kill "$pid" 2>/dev/null || true
+          test -f "$status"
+          test "$(cat "$status")" = 0
+          CAPTURE
+          chmod +x /tmp/capture-python-stage
+
+      - name: Install Java Python and SSH
+        shell: bash
+        run: |
+          cat >/tmp/install-python-stage.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-8-jdk openssh-server python3 curl
+          sudo update-alternatives --set java /usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java
+          sudo update-alternatives --set javac /usr/lib/jvm/java-8-openjdk-amd64/bin/javac
+          java -version
+          python3 --version
+          sudo systemctl enable --now ssh
+          getent group hadoop >/dev/null || sudo addgroup hadoop
+          id hduser >/dev/null 2>&1 || sudo adduser --disabled-password --gecos '' --ingroup hadoop hduser
+          sudo -H -u hduser bash -lc '
+            set -euo pipefail
+            mkdir -p ~/.ssh
+            chmod 700 ~/.ssh
+            if test ! -f ~/.ssh/id_rsa; then ssh-keygen -q -t rsa -b 3072 -N "" -f ~/.ssh/id_rsa; fi
+            touch ~/.ssh/authorized_keys
+            grep -qxF "$(cat ~/.ssh/id_rsa.pub)" ~/.ssh/authorized_keys || cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+            chmod 600 ~/.ssh/id_rsa ~/.ssh/authorized_keys
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 localhost "whoami"
+          '
+          sudo install -d -m 750 -o hduser -g hadoop /home/hduser/hadoop-data
+          for d in tmp namenode datanode; do sudo install -d -m 750 -o hduser -g hadoop "/home/hduser/hadoop-data/$d"; done
+          SCRIPT
+          /tmp/capture-python-stage 48_python_environment /tmp/install-python-stage.sh
+
+      - name: Restore verified Hadoop 3.3.1 archive
+        id: hadoop_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/hadoop-dist/hadoop-3.3.1.tar.gz
+          key: hadoop-3.3.1-linux-x86_64-sha512-2fd0bf74852c797d-v1
+
+      - name: Download and verify Hadoop archive if cache is unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hadoop-dist
+          cd /tmp/hadoop-dist
+          file=hadoop-3.3.1.tar.gz
+          expected=2fd0bf74852c797dc864f373ec82ffaa1e98706b309b30d1effa91ac399b477e1accc1ee74d4ccbb1db7da1c5c541b72e4a834f131a99f2814b030fbd043df66
+          if ! test -s "$file" || ! printf '%s  %s\n' "$expected" "$file" | sha512sum -c -; then
+            rm -f "$file"
+            downloaded=0
+            for url in https://apache.root.lu/hadoop/core/hadoop-3.3.1/hadoop-3.3.1.tar.gz https://repo.huaweicloud.com/apache/hadoop/common/hadoop-3.3.1/hadoop-3.3.1.tar.gz https://archive.apache.org/dist/hadoop/common/hadoop-3.3.1/hadoop-3.3.1.tar.gz; do
+              echo "Trying $url"
+              if timeout --kill-after=5s 180s curl -4 -fL --connect-timeout 15 --max-time 175 --retry 1 -o "$file.partial" "$url"; then
+                if printf '%s  %s\n' "$expected" "$file.partial" | sha512sum -c -; then
+                  mv "$file.partial" "$file"
+                  downloaded=1
+                  break
+                fi
+              fi
+              rm -f "$file.partial"
+            done
+            test "$downloaded" = 1
+          fi
+          printf '%s  %s\n' "$expected" "$file" | sha512sum -c -
+          sha256sum "$file" | tee "$GITHUB_WORKSPACE/evidence/python-wordcount/hadoop-archive.sha256"
+          echo HADOOP_DISTRIBUTION_SHA512_PASS
+      - name: Save verified Hadoop archive cache
+        if: steps.hadoop_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: /tmp/hadoop-dist/hadoop-3.3.1.tar.gz
+          key: hadoop-3.3.1-linux-x86_64-sha512-2fd0bf74852c797d-v1
+
+      - name: Configure and start native single-node Hadoop cluster
+        shell: bash
+        run: |
+          cat >/tmp/configure-python-cluster.sh <<'SCRIPT'
+          set -euo pipefail
+          test ! -e /usr/local/hadoop
+          sudo tar -xzf /tmp/hadoop-dist/hadoop-3.3.1.tar.gz -C /usr/local
+          sudo mv /usr/local/hadoop-3.3.1 /usr/local/hadoop
+          sudo chown -R hduser:hadoop /usr/local/hadoop
+          sudo install -d -m 750 -o hduser -g hadoop /home/hduser/hadoop-data/tmp /home/hduser/hadoop-data/namenode /home/hduser/hadoop-data/datanode
+          sudo -u hduser tee /usr/local/hadoop/etc/hadoop/hadoop-env.sh >/dev/null <<'ENV'
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export HADOOP_SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+          ENV
+          sudo -u hduser tee /usr/local/hadoop/etc/hadoop/core-site.xml >/dev/null <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <configuration>
+            <property><name>fs.defaultFS</name><value>hdfs://localhost:9000</value></property>
+            <property><name>hadoop.tmp.dir</name><value>/home/hduser/hadoop-data/tmp</value></property>
+          </configuration>
+          XML
+          sudo -u hduser tee /usr/local/hadoop/etc/hadoop/hdfs-site.xml >/dev/null <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <configuration>
+            <property><name>dfs.replication</name><value>1</value></property>
+            <property><name>dfs.namenode.name.dir</name><value>file:///home/hduser/hadoop-data/namenode</value></property>
+            <property><name>dfs.datanode.data.dir</name><value>file:///home/hduser/hadoop-data/datanode</value></property>
+          </configuration>
+          XML
+          sudo -u hduser tee /usr/local/hadoop/etc/hadoop/mapred-site.xml >/dev/null <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <configuration>
+            <property><name>mapreduce.framework.name</name><value>yarn</value></property>
+            <property><name>mapreduce.application.classpath</name><value>/usr/local/hadoop/share/hadoop/mapreduce/*:/usr/local/hadoop/share/hadoop/mapreduce/lib/*</value></property>
+            <property><name>mapreduce.map.memory.mb</name><value>1024</value></property>
+            <property><name>mapreduce.reduce.memory.mb</name><value>1024</value></property>
+            <property><name>mapreduce.map.java.opts</name><value>-Xmx768m</value></property>
+            <property><name>mapreduce.reduce.java.opts</name><value>-Xmx768m</value></property>
+            <property><name>yarn.app.mapreduce.am.resource.mb</name><value>1024</value></property>
+            <property><name>yarn.app.mapreduce.am.command-opts</name><value>-Xmx768m</value></property>
+          </configuration>
+          XML
+          sudo -u hduser tee /usr/local/hadoop/etc/hadoop/yarn-site.xml >/dev/null <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <configuration>
+            <property><name>yarn.resourcemanager.hostname</name><value>localhost</value></property>
+            <property><name>yarn.nodemanager.aux-services</name><value>mapreduce_shuffle</value></property>
+            <property><name>yarn.nodemanager.env-whitelist</name><value>JAVA_HOME,HADOOP_COMMON_HOME,HADOOP_HDFS_HOME,HADOOP_CONF_DIR,CLASSPATH_PREPEND_DISTCACHE,HADOOP_YARN_HOME,HADOOP_MAPRED_HOME</value></property>
+            <property><name>yarn.nodemanager.resource.memory-mb</name><value>4096</value></property>
+            <property><name>yarn.nodemanager.resource.cpu-vcores</name><value>2</value></property>
+            <property><name>yarn.scheduler.minimum-allocation-mb</name><value>512</value></property>
+            <property><name>yarn.scheduler.maximum-allocation-mb</name><value>4096</value></property>
+          </configuration>
+          XML
+          printf '%s\n' localhost | sudo -u hduser tee /usr/local/hadoop/etc/hadoop/workers
+          sudo -u hduser tee -a /home/hduser/.bashrc >/dev/null <<'ENV'
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export HADOOP_HOME=/usr/local/hadoop
+          export HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
+          export HADOOP_MAPRED_HOME=$HADOOP_HOME
+          export PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$JAVA_HOME/bin
+          ENV
+          cat >/tmp/cluster-user.sh <<'USER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export HADOOP_HOME=/usr/local/hadoop
+          export HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
+          export HADOOP_MAPRED_HOME=$HADOOP_HOME
+          export PATH=$HADOOP_HOME/bin:$HADOOP_HOME/sbin:$JAVA_HOME/bin:$PATH
+          export LC_ALL=C.UTF-8
+          cd "$HOME"
+          exec "$@"
+          USER
+          chmod 755 /tmp/cluster-user.sh
+          sudo -H -u hduser /tmp/cluster-user.sh hadoop version
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs namenode -format -nonInteractive
+          sudo -H -u hduser /tmp/cluster-user.sh start-dfs.sh
+          ready=0
+          for i in {1..90}; do
+            if curl -fsS --max-time 3 http://localhost:9870/jmx?qry=Hadoop:service:NameNode,name=FSNamesystemState >/tmp/python-hdfs-state.json; then
+              if python3 -c 'import json; x=json.load(open("/tmp/python-hdfs-state.json"))["beans"][0]; assert int(x["NumLiveDataNodes"]) == 1'; then ready=1; break; fi
+            fi
+            sleep 2
+          done
+          test "$ready" = 1
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs dfsadmin -safemode wait
+          sudo -H -u hduser /tmp/cluster-user.sh start-yarn.sh
+          ready=0
+          for i in {1..90}; do
+            if curl -fsS --max-time 3 http://localhost:8088/ws/v1/cluster/nodes >/tmp/python-yarn-nodes.json; then
+              if python3 -c 'import json; x=json.load(open("/tmp/python-yarn-nodes.json"))["nodes"]["node"]; assert len(x)==1 and x[0]["state"]=="RUNNING"'; then ready=1; break; fi
+            fi
+            sleep 2
+          done
+          test "$ready" = 1
+          sudo -H -u hduser /tmp/cluster-user.sh jps | tee "$GITHUB_WORKSPACE/evidence/cluster/jps.txt"
+          for daemon in NameNode DataNode SecondaryNameNode ResourceManager NodeManager; do
+            grep -Eq "[0-9]+ $daemon" "$GITHUB_WORKSPACE/evidence/cluster/jps.txt"
+          done
+          sudo -H -u hduser /tmp/cluster-user.sh hdfs dfsadmin -report | tee "$GITHUB_WORKSPACE/evidence/cluster/hdfs-report.txt"
+          sudo -H -u hduser /tmp/cluster-user.sh yarn node -list -all | tee "$GITHUB_WORKSPACE/evidence/cluster/yarn-nodes.txt"
+          echo PYTHON_STAGE_CLUSTER_READY
+          SCRIPT
+          /tmp/capture-python-stage 49_python_cluster /tmp/configure-python-cluster.sh
+
+      - name: Display Python mapper and reducer sources
+        shell: bash
+        run: |
+          cat >/tmp/python-source-review.sh <<'SCRIPT'
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/python/wordcount"
+          echo '=== mapper.py ==='
+          cat mapper.py
+          echo
+          echo '=== reducer.py ==='
+          cat reducer.py
+          echo
+          echo '=== Python syntax compilation ==='
+          python3 -m py_compile mapper.py reducer.py test_wordcount.py
+          echo PYTHON_MAPPER_REDUCER_SOURCE_PASS
+          SCRIPT
+          /tmp/capture-python-stage 50_python_mapper_reducer_source /tmp/python-source-review.sh
+
+      - name: Run local unit tests for mapper and reducer
+        shell: bash
+        run: |
+          cat >/tmp/python-unit-tests.sh <<'SCRIPT'
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/python/wordcount"
+          python3 -m unittest -v test_wordcount.py
+          echo PYTHON_MAPPER_UNIT_TESTS_PASS
+          echo PYTHON_REDUCER_UNIT_TESTS_PASS
+          echo PYTHON_LOCAL_PIPELINE_PASS
+          SCRIPT
+          /tmp/capture-python-stage 51_python_unit_tests /tmp/python-unit-tests.sh
+
+      - name: Copy original Hadoop texts and upload isolated HDFS input
+        shell: bash
+        run: |
+          cat >/tmp/python-hdfs-input.sh <<'SCRIPT'
+          set -euo pipefail
+          LAB=/home/hduser/python/wordcount
+          HDFS_BASE=/user/hduser/python_wordcount
+          mkdir -p "$LAB/input"
+          test -n "$(find /usr/local/hadoop -maxdepth 1 -type f -name '*.txt' -print -quit)"
+          find /usr/local/hadoop -maxdepth 1 -type f -name '*.txt' -exec cp -t "$LAB/input" {} +
+          chmod 755 "$LAB/mapper.py" "$LAB/reducer.py"
+          echo 'Local input files:'
+          ls -lh "$LAB/input"
+          hdfs dfs -mkdir -p "$HDFS_BASE/input"
+          hdfs dfs -put "$LAB"/input/*.txt "$HDFS_BASE/input/"
+          hdfs dfs -ls "$HDFS_BASE/input"
+          for file in "$LAB"/input/*.txt; do
+            hdfs dfs -cat "$HDFS_BASE/input/$(basename "$file")" | cmp - "$file"
+          done
+          echo PYTHON_HDFS_INPUT_PASS
+          SCRIPT
+          chmod 755 /tmp/python-hdfs-input.sh
+          cat >/tmp/run-python-hdfs-input.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser /tmp/cluster-user.sh bash -x /tmp/python-hdfs-input.sh
+          SCRIPT
+          chmod 755 /tmp/run-python-hdfs-input.sh
+          /tmp/capture-python-stage 52_python_hdfs_input /tmp/run-python-hdfs-input.sh
+
+      - name: Execute Python mapper and reducer through Hadoop Streaming
+        shell: bash
+        run: |
+          cat >/tmp/python-streaming-job.sh <<'SCRIPT'
+          set -euo pipefail
+          LAB=/home/hduser/python/wordcount
+          HDFS_BASE=/user/hduser/python_wordcount
+          cd "$LAB"
+          STREAMING_JAR=$(find /usr/local/hadoop/share/hadoop -type f -name 'hadoop-streaming-3.3.1.jar' -print -quit)
+          test -n "$STREAMING_JAR"
+          test -s "$STREAMING_JAR"
+          printf 'Streaming JAR: %s\n' "$STREAMING_JAR"
+          sha256sum "$STREAMING_JAR" | tee "$LAB/streaming-jar.sha256"
+          if hdfs dfs -test -e "$HDFS_BASE/output"; then
+            echo 'Refusing to overwrite an existing Python Streaming output'; exit 1
+          fi
+          hadoop jar "$STREAMING_JAR" \
+            -D mapreduce.job.name=python-wordcount-stage12-13 \
+            -D mapreduce.job.reduces=1 \
+            -files mapper.py,reducer.py \
+            -mapper "python3 mapper.py" \
+            -reducer "python3 reducer.py" \
+            -input "$HDFS_BASE/input" \
+            -output "$HDFS_BASE/output" 2>&1 | tee "$LAB/streaming-job.log"
+          hdfs dfs -test -e "$HDFS_BASE/output/_SUCCESS"
+          hdfs dfs -ls "$HDFS_BASE/output"
+          echo PYTHON_STREAMING_JOB_PASS
+          SCRIPT
+          chmod 755 /tmp/python-streaming-job.sh
+          cat >/tmp/run-python-streaming-job.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser /tmp/cluster-user.sh bash -x /tmp/python-streaming-job.sh
+          SCRIPT
+          chmod 755 /tmp/run-python-streaming-job.sh
+          /tmp/capture-python-stage 53_python_streaming_job /tmp/run-python-streaming-job.sh
+
+      - name: Verify HDFS result against independent Python token counts
+        shell: bash
+        run: |
+          cat >/tmp/python-streaming-results.sh <<'SCRIPT'
+          set -euo pipefail
+          LAB=/home/hduser/python/wordcount
+          HDFS_BASE=/user/hduser/python_wordcount
+          hdfs dfs -cat "$HDFS_BASE/output"/part-* > "$LAB/output-actual.tsv"
+          hdfs dfs -get "$HDFS_BASE/output" "$LAB/output-from-hdfs"
+          cmp "$LAB/output-actual.tsv" "$LAB/output-from-hdfs"/part-*
+          test -s "$LAB/output-from-hdfs/_SUCCESS"
+          python3 - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import json
+          p = Path('/home/hduser/python/wordcount')
+          files = sorted((p / 'input').glob('*.txt'))
+          expected = Counter()
+          for file in files:
+              with file.open(encoding='utf-8', errors='strict') as stream:
+                  for line in stream:
+                      expected.update(line.strip().split())
+          rows = [line.split('\t', 1) for line in (p / 'output-actual.tsv').read_text(encoding='utf-8').splitlines() if line]
+          actual = {}
+          for word, count in rows:
+              assert word not in actual, f'duplicate output key: {word!r}'
+              actual[word] = int(count)
+          assert actual == dict(expected), 'Hadoop Streaming output differs from independent Python Counter'
+          expected_text = ''.join(f'{word}\t{count}\n' for word, count in sorted(expected.items(), key=lambda item: item[0].encode('utf-8')))
+          assert (p / 'output-actual.tsv').read_text(encoding='utf-8') == expected_text, 'output ordering or content mismatch'
+          metrics = {
+              'input_files': [{'name': f.name, 'bytes': f.stat().st_size} for f in files],
+              'total_tokens': sum(actual.values()),
+              'unique_tokens': len(actual),
+              'exact_match': True,
+              'tokenization': 'Python str.strip().split()',
+              'output_file': 'Hadoop Streaming part file'
+          }
+          (p / 'python-wordcount-metrics.json').write_text(json.dumps(metrics, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          print('Input files:', len(files))
+          print('Total tokens:', metrics['total_tokens'])
+          print('Unique tokens:', metrics['unique_tokens'])
+          print('Independent Counter comparison: EXACT MATCH')
+          print('PYTHON_WORDCOUNT_INDEPENDENT_PASS')
+          PY
+          SCRIPT
+          chmod 755 /tmp/python-streaming-results.sh
+          cat >/tmp/run-python-streaming-results.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser /tmp/cluster-user.sh bash -x /tmp/python-streaming-results.sh
+          SCRIPT
+          chmod 755 /tmp/run-python-streaming-results.sh
+          /tmp/capture-python-stage 54_python_streaming_result /tmp/run-python-streaming-results.sh
+
+      - name: Verify Python Streaming application in YARN
+        shell: bash
+        run: |
+          cat >/tmp/python-yarn-status.sh <<'SCRIPT'
+          set -euo pipefail
+          LAB=/home/hduser/python/wordcount
+          APP=$(grep -oE 'Submitted application application_[0-9]+_[0-9]+' "$LAB/streaming-job.log" | awk '{print $3}' | tail -n 1)
+          test -n "$APP"
+          printf '%s\n' "$APP" | tee "$LAB/yarn-app-id.txt"
+          yarn application -status "$APP" | tee "$LAB/yarn-status.txt"
+          curl -fsS "http://localhost:8088/ws/v1/cluster/apps/$APP" > "$LAB/yarn-app.json"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('/home/hduser/python/wordcount')
+          app = json.loads((p / 'yarn-app.json').read_text())['app']
+          for key in ('id', 'name', 'user', 'applicationType', 'state', 'finalStatus', 'progress'):
+              print(f'{key}: {app[key]}')
+          assert app['id'] == (p / 'yarn-app-id.txt').read_text().strip()
+          assert app['user'] == 'hduser'
+          assert app['applicationType'] == 'MAPREDUCE'
+          assert app['state'] == 'FINISHED'
+          assert app['finalStatus'] == 'SUCCEEDED'
+          assert float(app['progress']) == 100.0
+          print('PYTHON_STREAMING_YARN_SUCCEEDED')
+          PY
+          SCRIPT
+          chmod 755 /tmp/python-yarn-status.sh
+          cat >/tmp/run-python-yarn-status.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -H -u hduser /tmp/cluster-user.sh bash -x /tmp/python-yarn-status.sh
+          SCRIPT
+          chmod 755 /tmp/run-python-yarn-status.sh
+          /tmp/capture-python-stage 55_python_streaming_yarn /tmp/run-python-yarn-status.sh
+
+      - name: Capture real YARN browser page for Python Streaming job
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)
+          app=$(cat /home/hduser/python/wordcount/yarn-app-id.txt)
+          url="http://localhost:8088/cluster/app/$app"
+          timeout 90 "$browser" --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --window-size=1600,1000 --user-data-dir=/tmp/chrome-python-streaming --virtual-time-budget=10000 --screenshot="$PWD/evidence/screenshots/56_python_streaming_webui.png" "$url" >evidence/logs/56_python_streaming_webui.log 2>&1
+          identify evidence/screenshots/56_python_streaming_webui.png
+          timeout 90 "$browser" --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --user-data-dir=/tmp/chrome-dom-python-streaming --virtual-time-budget=10000 --dump-dom "$url" >evidence/python-wordcount/yarn-webui.html 2>>evidence/logs/56_python_streaming_webui.log
+          grep -Fq "$app" evidence/python-wordcount/yarn-webui.html
+          grep -Fiq SUCCEEDED evidence/python-wordcount/yarn-webui.html
+          ! grep -q 'chrome-error://chromewebdata' evidence/python-wordcount/yarn-webui.html
+          echo 0 > evidence/status/56_python_streaming_webui.code
+
+      - name: Final acceptance and preserve project evidence
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 48_python_environment 49_python_cluster 50_python_mapper_reducer_source 51_python_unit_tests 52_python_hdfs_input 53_python_streaming_job 54_python_streaming_result 55_python_streaming_yarn 56_python_streaming_webui; do
+            test "$(cat "evidence/status/$n.code")" = 0
+            test -s "evidence/screenshots/$n.png"
+            identify "evidence/screenshots/$n.png"
+          done
+          grep -Fxq PYTHON_STAGE_CLUSTER_READY evidence/logs/49_python_cluster.log
+          grep -Fxq PYTHON_MAPPER_REDUCER_SOURCE_PASS evidence/logs/50_python_mapper_reducer_source.log
+          grep -Fxq PYTHON_MAPPER_UNIT_TESTS_PASS evidence/logs/51_python_unit_tests.log
+          grep -Fxq PYTHON_REDUCER_UNIT_TESTS_PASS evidence/logs/51_python_unit_tests.log
+          grep -Fxq PYTHON_LOCAL_PIPELINE_PASS evidence/logs/51_python_unit_tests.log
+          grep -Fxq PYTHON_HDFS_INPUT_PASS evidence/logs/52_python_hdfs_input.log
+          grep -Fxq PYTHON_STREAMING_JOB_PASS evidence/logs/53_python_streaming_job.log
+          grep -Fxq PYTHON_WORDCOUNT_INDEPENDENT_PASS evidence/logs/54_python_streaming_result.log
+          grep -Fxq PYTHON_STREAMING_YARN_SUCCEEDED evidence/logs/55_python_streaming_yarn.log
+          sudo cp -a /home/hduser/python/wordcount/. evidence/python-wordcount/
+          sudo chown -R "$(id -u):$(id -g)" evidence/python-wordcount
+          cp python/wordcount/README.md python/wordcount/mapper.py python/wordcount/reducer.py python/wordcount/test_wordcount.py evidence/python-wordcount/
+          printf '%s\n' PYTHON_MAPPER_PASS PYTHON_REDUCER_PASS PYTHON_STREAMING_YARN_SUCCEEDED PYTHON_WORDCOUNT_INDEPENDENT_PASS PYTHON_MAPREDUCE_STAGE12_PASS PYTHON_MAPREDUCE_STAGE13_PASS | tee evidence/acceptance.txt
+          (cd evidence && find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+          echo PYTHON_MAPREDUCE_FINAL_ACCEPTANCE_PASS
+
+      - name: Preserve Hadoop daemon logs and stop services
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence/cluster/daemon-logs
+          if test -d /usr/local/hadoop/logs; then
+            sudo cp -a /usr/local/hadoop/logs/. evidence/cluster/daemon-logs/ || true
+            sudo chown -R "$(id -u):$(id -g)" evidence/cluster/daemon-logs || true
+          fi
+          if test -x /tmp/cluster-user.sh; then
+            sudo -H -u hduser /tmp/cluster-user.sh stop-yarn.sh >evidence/cluster/shutdown.log 2>&1 || true
+            sudo -H -u hduser /tmp/cluster-user.sh stop-dfs.sh >>evidence/cluster/shutdown.log 2>&1 || true
+          fi
+
+      - name: Upload Python MapReduce execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hadoop-python-mapreduce-stages-12-13
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
