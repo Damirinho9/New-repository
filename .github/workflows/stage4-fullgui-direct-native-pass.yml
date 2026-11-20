@@ -38,6 +38,8 @@ jobs:
           file "$BIN/kKompas" | tee gui-file.txt
           ldd "$BIN/kKompas" | tee gui-ldd.txt
           ! grep -q 'not found' gui-ldd.txt
+          command -v kompas-v25 | tee gui-launcher.txt || true
+          find /opt/ascon /etc/ascon /usr/share -type f -name QtResources.bin -print 2>/dev/null | tee gui-resources.txt || true
 
       - name: Run independent strict 2D and 3D gates in full GUI API sessions
         shell: bash
@@ -46,9 +48,20 @@ jobs:
           BIN=/opt/ascon/kompas3d-v25/Bin
           export PYTHONPATH="$BIN"
           export LD_LIBRARY_PATH="$BIN${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8
           unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
-          mkdir -p result/stage4-fullgui-2d result/stage4-fullgui-3d
+          mkdir -p result/stage4-fullgui-2d result/stage4-fullgui-3d "$HOME/.config/ascon/KOMPAS-3D/25"
+          RES=$(find /opt/ascon /etc/ascon /usr/share -type f -name QtResources.bin -print -quit 2>/dev/null || true)
+          if [ -n "$RES" ]; then
+            cp -f "$RES" "$HOME/.config/ascon/KOMPAS-3D/25/QtResources.bin"
+            echo "QTRES_SOURCE=$RES" | tee result/qtresources.txt
+            sha256sum "$RES" "$HOME/.config/ascon/KOMPAS-3D/25/QtResources.bin" | tee -a result/qtresources.txt
+          else
+            echo "QTRES_NOT_FOUND" | tee result/qtresources.txt
+          fi
+          LAUNCHER=$(command -v kompas-v25 || true)
+          if [ -z "$LAUNCHER" ]; then LAUNCHER="$BIN/kKompas"; fi
+          echo "GUI_LAUNCHER=$LAUNCHER" | tee result/gui-launcher.txt
 
           cat >/tmp/s4_fullgui_2d.py <<'PY'
           import hashlib,math,pathlib,time,traceback,ksapi
@@ -209,7 +222,7 @@ jobs:
           run_gui() {
             local port="$1" tag="$2" script="$3"
             rm -f "$HOME/.config/ascon/KOMPAS-3D/25/QtResources.bin" 2>/dev/null || true
-            xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"               dbus-run-session -- "$BIN/kKompas" -APIServer="$port" >"result/$tag/kompas.out" 2>"result/$tag/kompas.err" &
+            xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"               dbus-run-session -- "$LAUNCHER" -APIServer="$port" >"result/$tag/kompas.out" 2>"result/$tag/kompas.err" &
             local kp=$!
             local found=0
             for i in $(seq 1 120); do
@@ -252,4 +265,6 @@ jobs:
             os-release.txt
             gui-file.txt
             gui-ldd.txt
+            gui-launcher.txt
+            gui-resources.txt
             result/**
