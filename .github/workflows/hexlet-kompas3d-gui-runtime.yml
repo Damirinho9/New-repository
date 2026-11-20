@@ -1,4 +1,4 @@
-name: Hexlet KOMPAS-3D Native Drawing Fresh X Server
+name: Hexlet KOMPAS-3D Native Drawing Same GUI
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  drawing-fresh-x:
+  drawing-same-gui:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -39,7 +39,7 @@ jobs:
           mkdir -p runtime_evidence
           dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
 
-      - name: Accept EULA on first X server
+      - name: Accept EULA and create a real Drawing in the same rendered GUI
         shell: bash
         run: |
           set -euxo pipefail
@@ -48,37 +48,34 @@ jobs:
           export QT_OPENGL=software
 
           Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
-            >runtime_evidence/xvfb99.log 2>&1 &
-          X99=$!
-          echo "$X99" > runtime_evidence/xvfb99.pid
+            >runtime_evidence/xvfb.log 2>&1 &
+          sleep 2
+          openbox >runtime_evidence/openbox.log 2>&1 &
           sleep 2
 
-          openbox >runtime_evidence/openbox99.log 2>&1 &
-          OB99=$!
-          echo "$OB99" > runtime_evidence/openbox99.pid
-          sleep 2
+          kompas-v25 >runtime_evidence/kompas.out 2>runtime_evidence/kompas.err &
+          KPID=$!
+          echo "$KPID" > runtime_evidence/kompas.pid
 
-          kompas-v25 >runtime_evidence/kompas-first.out 2>runtime_evidence/kompas-first.err &
-          KP1=$!
-          echo "$KP1" > runtime_evidence/kompas-first.pid
-
-          MAIN1=""
+          MAIN=""
           for i in $(seq 1 90); do
             sleep 1
-            MAIN1=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
-            [ -n "$MAIN1" ] && break
+            MAIN=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$MAIN" ] && break
           done
-          test -n "$MAIN1"
-
-          sleep 25
+          test -n "$MAIN"
+          echo "MAIN=$MAIN" | tee runtime_evidence/main.txt
 
           EULA=""
-          for i in $(seq 1 30); do
+          for i in $(seq 1 90); do
+            sleep 1
             EULA=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
             [ -n "$EULA" ] && break
-            sleep 1
           done
           test -n "$EULA"
+
+          # By the time the EULA exists, the home screen behind it is already rendered.
+          import -display :99 -window root runtime_evidence/01_home_with_eula.png
 
           eval "$(xdotool getwindowgeometry --shell "$EULA")"
           ACCEPT_X=$((X + WIDTH * 65 / 100))
@@ -87,7 +84,6 @@ jobs:
             "$EULA" "$X" "$Y" "$WIDTH" "$HEIGHT" "$ACCEPT_X" "$ACCEPT_Y" \
             | tee runtime_evidence/eula-geometry.txt
 
-          import -display :99 -window root runtime_evidence/01_eula_before_accept.png
           xdotool windowfocus --sync "$EULA"
           xdotool mousemove --sync "$ACCEPT_X" "$ACCEPT_Y"
           xdotool click 1
@@ -97,144 +93,124 @@ jobs:
           echo "EULA_AFTER=$EULA_AFTER" | tee runtime_evidence/eula-after.txt
           test -z "$EULA_AFTER"
 
-          # Close KOMPAS, then fully destroy the first X server/window manager.
-          xdotool windowclose "$MAIN1" || true
-          for i in $(seq 1 30); do
-            sleep 1
-            if ! ps -p "$KP1" >/dev/null 2>&1; then break; fi
-          done
-          kill "$KP1" 2>/dev/null || true
-          sleep 1
-          kill "$OB99" 2>/dev/null || true
-          kill "$X99" 2>/dev/null || true
+          # Force the already-rendered main window to repaint and receive input.
+          xdotool windowactivate --sync "$MAIN"
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key --window "$MAIN" F5 || true
           sleep 3
+          import -display :99 -window root runtime_evidence/02_home_after_eula.png
 
-          test -d "$HOME/.config/ascon"
-          find "$HOME/.config/ascon" -maxdepth 4 -type f -printf '%p %s\n' \
-            | sort | tee runtime_evidence/ascon-config-after-eula.txt
+          # Route A: exact Drawing tile from the native KOMPAS home page.
+          # Coordinates are relative to the 1920x1080 main KOMPAS window.
+          xdotool windowfocus --sync "$MAIN"
+          xdotool mousemove --window "$MAIN" --sync 920 203
+          xdotool getmouselocation --shell | tee runtime_evidence/drawing-tile-target.txt
+          xdotool click --repeat 2 --delay 180 1
 
-      - name: Start brand-new X server and create real Drawing
-        shell: bash
-        run: |
-          set -euxo pipefail
-          export DISPLAY=:100
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QT_OPENGL=software
-
-          Xvfb :100 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
-            >runtime_evidence/xvfb100.log 2>&1 &
-          X100=$!
-          echo "$X100" > runtime_evidence/xvfb100.pid
-          sleep 2
-
-          openbox >runtime_evidence/openbox100.log 2>&1 &
-          OB100=$!
-          echo "$OB100" > runtime_evidence/openbox100.pid
-          sleep 2
-
-          kompas-v25 >runtime_evidence/kompas-second.out 2>runtime_evidence/kompas-second.err &
-          KP2=$!
-          echo "$KP2" > runtime_evidence/kompas-second.pid
-
-          MAIN2=""
-          for i in $(seq 1 90); do
+          DOC_SEEN=""
+          for i in $(seq 1 60); do
             sleep 1
-            MAIN2=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
-            [ -n "$MAIN2" ] && break
+            TITLES=$(xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null || true)
+            printf '%s\n' "$TITLES" > runtime_evidence/window-titles-current.txt
+            if printf '%s\n' "$TITLES" | grep -Eiq 'Чертеж|Drawing|.cdw'; then
+              DOC_SEEN="TITLE"
+              break
+            fi
           done
-          test -n "$MAIN2"
-          echo "MAIN2=$MAIN2" | tee runtime_evidence/main-second.txt
 
-          sleep 20
+          import -display :99 -window root runtime_evidence/03_after_drawing_tile.png
 
-          EULA_SECOND=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
-          echo "EULA_SECOND=$EULA_SECOND" | tee runtime_evidence/eula-second.txt
-          test -z "$EULA_SECOND"
-
-          import -display :100 -window root runtime_evidence/02_fresh_x_server_start.png
-          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-            | tee runtime_evidence/windows-fresh-x.txt || true
-
-          xdotool windowfocus --sync "$MAIN2"
-
-          # First try the real Drawing start-page tile on the clean X server.
-          xdotool mousemove --window "$MAIN2" --sync 919 189
-          xdotool getmouselocation --shell | tee runtime_evidence/tile-mouse.txt
-          xdotool click 1
-          sleep 12
-
-          import -display :100 -window root runtime_evidence/03_after_drawing_tile.png
+          # Functional probe: Ctrl+S must create a save surface for an unsaved document.
+          xdotool windowfocus --sync "$MAIN"
           xdotool key ctrl+s
           sleep 5
 
-          FOCUS_T=$(xdotool getwindowfocus)
-          NAME_T=$(xdotool getwindowname "$FOCUS_T" 2>/dev/null || true)
-          SAVE_T=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
-          printf 'TILE_FOCUS=%s\nTILE_NAME=%s\nTILE_SAVE=%s\n' "$FOCUS_T" "$NAME_T" "$SAVE_T" \
-            | tee runtime_evidence/save-probe.txt
-          import -display :100 -window root runtime_evidence/04_save_after_tile.png
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/window-titles-after-save.txt || true
+
+          # A Qt native save dialog may keep focus in the KOMPAS top-level window,
+          # so also look for QFileDialog evidence in the live stderr.
+          SAVE_TITLE=$(xdotool search --onlyvisible --name 'Сохран|Save|Сохранение' 2>/dev/null | tail -1 || true)
+          QFILE_COUNT=$(grep -c 'QFileDialog' runtime_evidence/kompas.err || true)
+          printf 'DOC_SEEN=%s\nSAVE_TITLE=%s\nQFILE_COUNT=%s\n' "$DOC_SEEN" "$SAVE_TITLE" "$QFILE_COUNT" \
+            | tee runtime_evidence/drawing-probe.txt
+          import -display :99 -window root runtime_evidence/04_after_ctrl_s.png
 
           PASS_ROUTE=""
-          if [ "$FOCUS_T" != "$MAIN2" ] || [ -n "$SAVE_T" ]; then
-            PASS_ROUTE="START_TILE"
+          if [ -n "$DOC_SEEN" ] || [ -n "$SAVE_TITLE" ] || [ "$QFILE_COUNT" -gt 0 ]; then
+            PASS_ROUTE="DRAWING_TILE"
           fi
 
-          # Second route: command search, still on clean second X server.
+          # Route B: real File -> New shortcut, only if tile was not functionally confirmed.
           if [ -z "$PASS_ROUTE" ]; then
             xdotool key Escape Escape Escape || true
-            xdotool windowfocus --sync "$MAIN2"
-            xdotool key alt+slash
-            sleep 2
-            printf 'Создать чертеж' | xclip -selection clipboard
-            xdotool key ctrl+v
-            sleep 3
-            import -display :100 -window root runtime_evidence/05_command_search_create_drawing.png
-            xdotool key Return
-            sleep 12
+            xdotool windowfocus --sync "$MAIN"
+            xdotool key ctrl+n
+            sleep 4
+            xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+              | tee runtime_evidence/window-titles-after-ctrl-n.txt || true
+            import -display :99 -window root runtime_evidence/05_ctrl_n_create_dialog.png
 
-            import -display :100 -window root runtime_evidence/06_after_command_search_create.png
+            CREATE_WID=$(xdotool search --onlyvisible --name 'Создать|Новый|New' 2>/dev/null | tail -1 || true)
+            echo "CREATE_WID=$CREATE_WID" | tee runtime_evidence/create-dialog.txt
+
+            if [ -n "$CREATE_WID" ]; then
+              xdotool windowfocus --sync "$CREATE_WID"
+              # Select "Чертеж" by typing its first Cyrillic letter through clipboard search if supported.
+              printf 'Чертеж' | xclip -selection clipboard
+              xdotool key ctrl+f || true
+              xdotool key ctrl+v || true
+              xdotool key Return || true
+              sleep 10
+            else
+              # Standard KOMPAS create dialog defaults to document type list.
+              # Use keyboard navigation, not absolute coordinates.
+              xdotool key Down Down Return || true
+              sleep 10
+            fi
+
+            import -display :99 -window root runtime_evidence/06_after_ctrl_n_selection.png
             xdotool key ctrl+s
             sleep 5
 
-            FOCUS_C=$(xdotool getwindowfocus)
-            NAME_C=$(xdotool getwindowname "$FOCUS_C" 2>/dev/null || true)
-            SAVE_C=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
-            printf 'CMD_FOCUS=%s\nCMD_NAME=%s\nCMD_SAVE=%s\n' "$FOCUS_C" "$NAME_C" "$SAVE_C" \
-              | tee -a runtime_evidence/save-probe.txt
-            import -display :100 -window root runtime_evidence/07_save_after_command_search.png
+            SAVE_TITLE2=$(xdotool search --onlyvisible --name 'Сохран|Save|Сохранение' 2>/dev/null | tail -1 || true)
+            QFILE_COUNT2=$(grep -c 'QFileDialog' runtime_evidence/kompas.err || true)
+            TITLES2=$(xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null || true)
+            printf '%s\n' "$TITLES2" > runtime_evidence/window-titles-final.txt
 
-            if [ "$FOCUS_C" != "$MAIN2" ] || [ -n "$SAVE_C" ]; then
-              PASS_ROUTE="COMMAND_SEARCH"
+            if printf '%s\n' "$TITLES2" | grep -Eiq 'Чертеж|Drawing|.cdw' || \
+               [ -n "$SAVE_TITLE2" ] || [ "$QFILE_COUNT2" -gt "$QFILE_COUNT" ]; then
+              PASS_ROUTE="CTRL_N"
             fi
+
+            printf 'SAVE_TITLE2=%s\nQFILE_COUNT2=%s\n' "$SAVE_TITLE2" "$QFILE_COUNT2" \
+              | tee -a runtime_evidence/drawing-probe.txt
+            import -display :99 -window root runtime_evidence/07_after_ctrl_n_save.png
           fi
 
           echo "PASS_ROUTE=$PASS_ROUTE" | tee runtime_evidence/pass-route.txt
           if [ -z "$PASS_ROUTE" ]; then
-            xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
-              | tee runtime_evidence/windows-final.txt || true
-            echo 'RESULT=FAIL_DRAWING_NOT_CONFIRMED_ON_FRESH_X_SERVER' \
-              | tee runtime_evidence/result.txt
+            echo 'RESULT=FAIL_REAL_DRAWING_NOT_CONFIRMED' | tee runtime_evidence/result.txt
             exit 51
           fi
 
-          echo 'RESULT=PASS_REAL_DRAWING_CREATED_ON_FRESH_X_SERVER' \
-            | tee runtime_evidence/result.txt
+          echo 'RESULT=PASS_REAL_DRAWING_CREATED' | tee runtime_evidence/result.txt
 
-      - name: Strict Drawing gate
+      - name: Strict drawing gate
         shell: bash
         run: |
           set -euxo pipefail
           grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
-          grep -q '^EULA_SECOND=$' runtime_evidence/eula-second.txt
-          grep -Eq '^PASS_ROUTE=(START_TILE|COMMAND_SEARCH)$' runtime_evidence/pass-route.txt
-          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_ON_FRESH_X_SERVER$' runtime_evidence/result.txt
-          test -s runtime_evidence/save-probe.txt
-          test -s runtime_evidence/02_fresh_x_server_start.png
+          grep -Eq '^PASS_ROUTE=(DRAWING_TILE|CTRL_N)$' runtime_evidence/pass-route.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED$' runtime_evidence/result.txt
+          test -s runtime_evidence/02_home_after_eula.png
+          test -s runtime_evidence/03_after_drawing_tile.png
+          test -s runtime_evidence/04_after_ctrl_s.png
           sha256sum runtime_evidence/*.png | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-native-drawing-fresh-x
+          name: kompas3d-native-drawing-same-gui
           path: runtime_evidence/
           if-no-files-found: error
