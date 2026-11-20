@@ -224,6 +224,19 @@ jobs:
           SCRIPT
           /tmp/capture-python-stage 49_python_cluster /tmp/configure-python-cluster.sh
 
+      - name: Install project Python scripts into hduser workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo install -d -m 755 -o hduser -g hadoop /home/hduser/python/wordcount
+          sudo install -m 755 -o hduser -g hadoop python/wordcount/mapper.py /home/hduser/python/wordcount/mapper.py
+          sudo install -m 755 -o hduser -g hadoop python/wordcount/reducer.py /home/hduser/python/wordcount/reducer.py
+          sudo install -m 644 -o hduser -g hadoop python/wordcount/test_wordcount.py /home/hduser/python/wordcount/test_wordcount.py
+          sudo install -m 644 -o hduser -g hadoop python/wordcount/README.md /home/hduser/python/wordcount/README.md
+          sudo -H -u hduser ls -la /home/hduser/python/wordcount
+          cmp python/wordcount/mapper.py /home/hduser/python/wordcount/mapper.py
+          cmp python/wordcount/reducer.py /home/hduser/python/wordcount/reducer.py
+
       - name: Display Python mapper and reducer sources
         shell: bash
         run: |
