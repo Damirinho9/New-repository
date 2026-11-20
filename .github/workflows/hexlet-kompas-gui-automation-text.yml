@@ -1,0 +1,260 @@
+name: Hexlet KOMPAS GUI Automation Native Text
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-kompas3d-gui-clean
+    paths:
+      - ".github/workflows/hexlet-kompas-gui-automation-text.yml"
+  workflow_dispatch:
+
+jobs:
+  gui-automation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS v25 GUI + SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget ca-certificates gnupg desktop-file-utils \
+            xvfb openbox xdotool imagemagick x11-utils x11-xserver-utils \
+            mesa-utils libgl1-mesa-dri xclip net-tools iproute2 \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          mkdir -p gui_automation
+
+      - name: Launch full GUI with automation, accept EULA, open real Drawing
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DISPLAY=:99
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QT_OPENGL=software
+
+          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
+            >gui_automation/xvfb.log 2>&1 &
+          sleep 2
+          openbox >gui_automation/openbox.log 2>&1 &
+          sleep 2
+
+          kompas-v25 -automation >gui_automation/kompas.out 2>gui_automation/kompas.err &
+          KPID=$!
+          echo "$KPID" > gui_automation/kompas.pid
+
+          MAIN=""
+          for i in $(seq 1 90); do
+            sleep 1
+            MAIN=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$MAIN" ] && break
+          done
+          test -n "$MAIN"
+          echo "MAIN=$MAIN" | tee gui_automation/main.txt
+
+          EULA=""
+          for i in $(seq 1 90); do
+            sleep 1
+            EULA=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+            [ -n "$EULA" ] && break
+          done
+          test -n "$EULA"
+
+          eval "$(xdotool getwindowgeometry --shell "$EULA")"
+          ACCEPT_X=$((X + WIDTH * 65 / 100))
+          ACCEPT_Y=$((Y + HEIGHT - 42))
+          xdotool windowfocus --sync "$EULA"
+          xdotool mousemove --sync "$ACCEPT_X" "$ACCEPT_Y"
+          xdotool click 1
+          sleep 3
+
+          EULA_AFTER=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+          echo "EULA_AFTER=$EULA_AFTER" | tee gui_automation/eula-after.txt
+          test -z "$EULA_AFTER"
+
+          xdotool windowactivate --sync "$MAIN"
+          xdotool windowfocus --sync "$MAIN"
+          xdotool key --window "$MAIN" F5 || true
+          sleep 3
+          import -display :99 -window root gui_automation/01_home.png
+
+          LIC=""
+          for attempt in $(seq 1 12); do
+            echo "ATTEMPT=$attempt" | tee -a gui_automation/drawing-attempts.txt
+            xdotool windowactivate --sync "$MAIN"
+            xdotool windowfocus --sync "$MAIN"
+            xdotool mousemove --window "$MAIN" --sync 920 203
+            xdotool click --repeat 2 --delay 220 1
+            for j in $(seq 1 4); do
+              sleep 1
+              LIC=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+              [ -n "$LIC" ] && break
+            done
+            [ -n "$LIC" ] && break
+            xdotool key Escape || true
+          done
+
+          echo "LICENSE_DIALOG=$LIC" | tee gui_automation/license-dialog.txt
+          test -n "$LIC"
+          import -display :99 -window root gui_automation/02_real_drawing_warning.png
+
+          xdotool windowfocus --sync "$LIC"
+          xdotool key Escape || true
+          sleep 2
+          LIC_AFTER=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
+          echo "LICENSE_DIALOG_AFTER=$LIC_AFTER" | tee gui_automation/license-after.txt
+          test -z "$LIC_AFTER"
+
+          xdotool windowfocus --sync "$MAIN"
+          import -display :99 -window root gui_automation/03_real_drawing_clean.png
+
+          ss -ltnp | grep -Ei 'kompas|kKompas' | tee gui_automation/sockets.txt || true
+
+      - name: Attach API to full GUI and add exact text
+        shell: bash
+        env:
+          DISPLAY: :99
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          QT_OPENGL: software
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 - <<'PY' | tee gui_automation/api-text.log
+          import hashlib, pathlib
+          import ksapi
+          from constants import constants as c
+
+          app=ksapi.GetKompas()
+          print("APP",app)
+          if app is None:
+              raise SystemExit("GetKompas full GUI automation returned None")
+          print("APP_NAME",app.GetApplicationName(True))
+          print("BUILD",app.GetBuildNumber())
+
+          active=app.GetActiveDocument()
+          print("ACTIVE",active)
+          if active is None:
+              raise SystemExit("GetActiveDocument returned None")
+          print("ACTIVE_TYPE",active.GetDocumentType())
+          if active.GetDocumentType()!=c.ksDocumentDrawing:
+              raise SystemExit(f"active doc not drawing: {active.GetDocumentType()}")
+
+          d2=ksapi.IKompasDocument2D(active)
+          view=d2.GetViewsAndLayersManager().GetViews().GetActiveView()
+          dc=ksapi.IDrawingContainer(view)
+          texts=dc.GetDrawingTexts()
+          print("TEXT_COUNT_BEFORE",texts.GetCount())
+
+          t=texts.Add()
+          print("TEXT_OBJ",t)
+          if t is None:
+              raise SystemExit("DrawingTexts.Add returned None")
+          t.SetX(70.0); t.SetY(120.0)
+
+          it=ksapi.IText(t)
+          line=it.Add()
+          print("TEXT_LINE",line)
+          if line is None:
+              raise SystemExit("IText.Add returned None")
+          item=line.Add()
+          print("TEXT_ITEM",item)
+          if item is None:
+              raise SystemExit("line.Add returned None")
+          item.SetStr("Привет, Хекслет!")
+          try:
+              ksapi.ITextFont(item).SetHeight(10.0)
+          except Exception as exc:
+              print("FONT_WARN",type(exc).__name__,str(exc))
+          ok=t.Update()
+          print("TEXT_UPDATE",ok)
+          if not ok:
+              raise SystemExit("DrawingText.Update false")
+          print("TEXT_COUNT_AFTER",texts.GetCount())
+
+          out=pathlib.Path("gui_automation/Hexlet_KOMPAS3D_Privet_Hexlet.cdw").resolve()
+          save=active.SaveAs(str(out))
+          print("SAVEAS",save)
+          if not out.exists() or out.stat().st_size==0:
+              raise SystemExit("native CDW not saved")
+          print("SIZE",out.stat().st_size)
+          print("SHA256",hashlib.sha256(out.read_bytes()).hexdigest())
+          print("RESULT=PASS_GUI_AUTOMATION_NATIVE_TEXT")
+          PY
+
+          sleep 4
+          import -display :99 -window root gui_automation/04_text_after_api.png
+
+      - name: Reopen saved CDW in the same native API
+        shell: bash
+        env:
+          DISPLAY: :99
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          python3 - <<'PY' | tee gui_automation/reopen.log
+          import ksapi
+          from constants import constants as c
+          from pathlib import Path
+
+          app=ksapi.GetKompas()
+          if app is None:
+              raise SystemExit("GetKompas None at reopen")
+          docs=app.GetDocuments()
+          p=Path("gui_automation/Hexlet_KOMPAS3D_Privet_Hexlet.cdw").resolve()
+
+          active=app.GetActiveDocument()
+          if active is not None:
+              try: active.Close(c.kdDoNotSaveChanges)
+              except Exception as exc: print("CLOSE_WARN",type(exc).__name__,str(exc))
+
+          doc=docs.Open(str(p),True,False)
+          print("REOPEN",doc)
+          if doc is None:
+              raise SystemExit("reopen failed")
+          print("TYPE",doc.GetDocumentType())
+          if doc.GetDocumentType()!=c.ksDocumentDrawing:
+              raise SystemExit("reopened type not drawing")
+          d2=ksapi.IKompasDocument2D(doc)
+          v=d2.GetViewsAndLayersManager().GetViews().GetActiveView()
+          texts=ksapi.IDrawingContainer(v).GetDrawingTexts()
+          print("REOPEN_TEXT_COUNT",texts.GetCount())
+          if texts.GetCount()<1:
+              raise SystemExit("no text after reopen")
+          print("RESULT=PASS_REOPEN_TEXT_PERSISTED")
+          PY
+
+          sleep 3
+          import -display :99 -window root gui_automation/05_reopened_text.png
+
+      - name: Strict native gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q '^EULA_AFTER=$' gui_automation/eula-after.txt
+          grep -Eq '^LICENSE_DIALOG=[0-9]+$' gui_automation/license-dialog.txt
+          grep -q '^LICENSE_DIALOG_AFTER=$' gui_automation/license-after.txt
+          grep -q '^RESULT=PASS_GUI_AUTOMATION_NATIVE_TEXT$' gui_automation/api-text.log
+          grep -q '^RESULT=PASS_REOPEN_TEXT_PERSISTED$' gui_automation/reopen.log
+          grep -q '^REOPEN_TEXT_COUNT[[:space:]]\+[1-9]' gui_automation/reopen.log
+          test -s gui_automation/Hexlet_KOMPAS3D_Privet_Hexlet.cdw
+          test -s gui_automation/04_text_after_api.png
+          test -s gui_automation/05_reopened_text.png
+          file gui_automation/Hexlet_KOMPAS3D_Privet_Hexlet.cdw | tee gui_automation/file-type.txt
+          sha256sum gui_automation/Hexlet_KOMPAS3D_Privet_Hexlet.cdw gui_automation/04_text_after_api.png gui_automation/05_reopened_text.png \
+            | tee gui_automation/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas-gui-automation-native-text
+          path: gui_automation/
+          if-no-files-found: error
