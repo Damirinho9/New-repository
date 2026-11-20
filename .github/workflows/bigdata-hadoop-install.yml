@@ -234,7 +234,7 @@ jobs:
           cat > /tmp/hadoop-check-user.sh <<'SCRIPT'
           set -e
           source ~/.bashrc
-          set -eu
+          set -euo pipefail
           whoami
           test "$(whoami)" = hduser
           printenv JAVA_HOME HADOOP_HOME HADOOP_INSTALL
@@ -264,7 +264,10 @@ jobs:
             test -s evidence/logs/$name.log
             identify evidence/screenshots/$name.png
           done
-          grep -q '^HADOOP_DISTRIBUTION_SHA512_PASS
+          grep -Fxq HADOOP_DISTRIBUTION_SHA512_PASS evidence/logs/07_hadoop_download.log
+          grep -qx 'Hadoop 3.3.1' evidence/config/hadoop-version.txt
+          echo HADOOP_INSTALL_PASS | tee -a evidence/acceptance.txt
+      - name: Upload genuine execution evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -272,14 +275,3 @@ jobs:
           path: evidence/
           if-no-files-found: error
           retention-days: 14
- evidence/logs/07_hadoop_download.log
-          grep -qx 'Hadoop 3.3.1' evidence/config/hadoop-version.txt
-          echo HADOOP_INSTALL_PASS | tee -a evidence/acceptance.txt
-      - name: Upload genuine execution evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ubuntu-preparation-evidence
-          path: evidence/
-          if-no-files-found: error
-          retention-days: 7
