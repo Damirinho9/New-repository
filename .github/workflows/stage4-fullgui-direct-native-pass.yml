@@ -24,7 +24,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             wget ca-certificates gnupg xvfb xauth dbus iproute2 procps             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1             libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0             libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             wget ca-certificates gnupg xvfb xauth dbus iproute2 procps desktop-file-utils             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1             libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0             libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh >/tmp/ascon-script.out 2>/tmp/ascon-script.err || true
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
