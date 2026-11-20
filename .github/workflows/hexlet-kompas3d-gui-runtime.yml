@@ -1,4 +1,4 @@
-name: Hexlet KOMPAS-3D Stage4 Real Drawing
+name: Hexlet KOMPAS-3D Stage4 New Document Dialog
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  stage4-real-drawing:
+  stage4-new-dialog:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -31,18 +31,14 @@ jobs:
           sudo bash /tmp/ascon.sh || true
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
             | sudo tee /etc/apt/sources.list.d/ascon.list
-
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ascon-kompas-v25 \
-            ascon-kompas-graphic-v25 \
-            ascon-kompas3d-v25 \
-            ascon-kompas-sdk-v25
+            ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
 
           mkdir -p runtime_evidence
           dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
 
-      - name: Accept EULA and open a real Drawing
+      - name: Open File-New dialog and create Drawing
         shell: bash
         run: |
           set -euxo pipefail
@@ -53,7 +49,6 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
             >runtime_evidence/xvfb.log 2>&1 &
           sleep 2
-
           openbox >runtime_evidence/openbox.log 2>&1 &
           sleep 2
 
@@ -67,7 +62,6 @@ jobs:
             [ -n "$MAIN" ] && break
           done
           test -n "$MAIN"
-          echo "MAIN=$MAIN" | tee runtime_evidence/main.txt
 
           EULA=""
           for i in $(seq 1 90); do
@@ -80,12 +74,6 @@ jobs:
           eval "$(xdotool getwindowgeometry --shell "$EULA")"
           ACCEPT_X=$((X + WIDTH * 65 / 100))
           ACCEPT_Y=$((Y + HEIGHT - 42))
-          printf 'EULA=%s\nX=%s\nY=%s\nWIDTH=%s\nHEIGHT=%s\nACCEPT_X=%s\nACCEPT_Y=%s\n' \
-            "$EULA" "$X" "$Y" "$WIDTH" "$HEIGHT" "$ACCEPT_X" "$ACCEPT_Y" \
-            | tee runtime_evidence/eula-geometry.txt
-
-          import -display :99 -window root runtime_evidence/01_eula_before_accept.png
-
           xdotool windowfocus --sync "$EULA"
           xdotool mousemove --sync "$ACCEPT_X" "$ACCEPT_Y"
           xdotool click 1
@@ -95,41 +83,63 @@ jobs:
           echo "EULA_AFTER=$EULA_AFTER" | tee runtime_evidence/eula-after.txt
           test -z "$EULA_AFTER"
 
-          # Proven repaint step from the successful drawing run.
           xdotool windowactivate --sync "$MAIN"
           xdotool windowfocus --sync "$MAIN"
           xdotool key --window "$MAIN" F5 || true
           sleep 3
-          import -display :99 -window root runtime_evidence/02_home_after_eula.png
+          import -display :99 -window root runtime_evidence/01_home_after_eula.png
 
-          # Proven native "Чертеж" tile position on 1920x1080 KOMPAS home page.
-          xdotool mousemove --window "$MAIN" --sync 920 203
-          xdotool getmouselocation --shell | tee runtime_evidence/drawing-tile-target.txt
+          # Ctrl+N is KOMPAS' native File -> New command.
+          xdotool key --window "$MAIN" ctrl+n
+
+          NEW=""
+          for i in $(seq 1 30); do
+            sleep 1
+            NEW=$(xdotool search --onlyvisible --name '^НОВЫЙ ДОКУМЕНТ$|^Новый документ$|New Document' 2>/dev/null | tail -1 || true)
+            [ -n "$NEW" ] && break
+          done
+          echo "NEW_DOCUMENT_WINDOW=$NEW" | tee runtime_evidence/new-document-window.txt
+          test -n "$NEW"
+
+          xdotool getwindowname "$NEW" | tee runtime_evidence/new-document-title.txt
+          xdotool getwindowgeometry --shell "$NEW" | tee runtime_evidence/new-document-geometry.txt
+          import -display :99 -window root runtime_evidence/02_new_document_dialog.png
+
+          eval "$(xdotool getwindowgeometry --shell "$NEW")"
+          # Native "Чертеж" icon is ~44% across and ~21% down in this dialog.
+          DRAW_X=$((X + WIDTH * 44 / 100))
+          DRAW_Y=$((Y + HEIGHT * 21 / 100))
+          printf 'DRAW_X=%s\nDRAW_Y=%s\n' "$DRAW_X" "$DRAW_Y" \
+            | tee runtime_evidence/drawing-dialog-target.txt
+
+          xdotool windowfocus --sync "$NEW"
+          xdotool mousemove --sync "$DRAW_X" "$DRAW_Y"
           xdotool click --repeat 2 --delay 180 1
 
+          # The New Document dialog must close if a type was selected.
+          for i in $(seq 1 20); do
+            sleep 1
+            NEW_AFTER=$(xdotool search --onlyvisible --name '^НОВЫЙ ДОКУМЕНТ$|^Новый документ$|New Document' 2>/dev/null | tail -1 || true)
+            [ -z "$NEW_AFTER" ] && break
+          done
+          echo "NEW_DOCUMENT_AFTER=$NEW_AFTER" | tee runtime_evidence/new-document-after.txt
+          test -z "$NEW_AFTER"
+
+          # Opening a real Drawing in this runner produces the known license warning.
           LIC=""
           for i in $(seq 1 30); do
             sleep 1
             LIC=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
             [ -n "$LIC" ] && break
           done
-
           echo "LICENSE_DIALOG=$LIC" | tee runtime_evidence/license-dialog.txt
           test -n "$LIC"
 
-          # This frame must show the actual sheet behind the license warning.
-          import -display :99 -window root runtime_evidence/03_real_drawing_with_license_warning.png
+          import -display :99 -window root runtime_evidence/03_real_drawing_open.png
 
-          eval "$(xdotool getwindowgeometry --shell "$LIC")"
-          CLOSE_X=$((X + WIDTH * 87 / 100))
-          CLOSE_Y=$((Y + HEIGHT - 24))
-          printf 'X=%s\nY=%s\nWIDTH=%s\nHEIGHT=%s\nCLOSE_X=%s\nCLOSE_Y=%s\n' \
-            "$X" "$Y" "$WIDTH" "$HEIGHT" "$CLOSE_X" "$CLOSE_Y" \
-            | tee runtime_evidence/license-dialog-geometry.txt
-
+          # Close only the warning, preserving the Drawing.
           xdotool windowfocus --sync "$LIC"
-          xdotool mousemove --sync "$CLOSE_X" "$CLOSE_Y"
-          xdotool click 1
+          xdotool key Escape || true
           sleep 2
 
           LIC_AFTER=$(xdotool search --onlyvisible --name 'МЕНЕДЖЕР ЛИЦЕНЗИЙ|Менеджер лицензий|LICENSE MANAGER' 2>/dev/null | tail -1 || true)
@@ -139,20 +149,18 @@ jobs:
           xdotool windowfocus --sync "$MAIN"
           import -display :99 -window root runtime_evidence/04_real_drawing_clean.png
 
-          # API7 probe on the already-open real GUI drawing.
+          # Optional API7 attach probe.
           export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
           python3 - <<'PY' | tee runtime_evidence/api7-probe.txt
           import ksapi
           app = ksapi.GetKompas()
           print("GETKOMPAS=", app)
-          if app is None:
-              print("API7_GUI_ATTACH=UNAVAILABLE")
-          else:
-              print("API7_GUI_ATTACH=AVAILABLE")
+          print("API7_GUI_ATTACH=AVAILABLE" if app is not None else "API7_GUI_ATTACH=UNAVAILABLE")
+          if app is not None:
               try:
                   print("APP_NAME=", app.GetApplicationName(True))
                   print("BUILD=", app.GetBuildNumber())
-                  docs = app.GetDocuments()
+                  docs=app.GetDocuments()
                   print("DOCS=", docs)
                   try:
                       print("DOCS_COUNT=", docs.GetCount())
@@ -162,19 +170,21 @@ jobs:
                   print("API7_PROBE_ERROR=", type(exc).__name__, str(exc))
           PY
 
-          echo 'RESULT=PASS_NATIVE_REAL_DRAWING_OPENED' | tee runtime_evidence/result.txt
+          echo 'RESULT=PASS_NATIVE_REAL_DRAWING_OPENED_VIA_NEW_DIALOG' | tee runtime_evidence/result.txt
 
-      - name: Strict stage 4 gate
+      - name: Strict Stage 4 gate
         shell: bash
         run: |
           set -euxo pipefail
           grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
+          grep -Eq '^NEW_DOCUMENT_WINDOW=[0-9]+$' runtime_evidence/new-document-window.txt
+          grep -q '^NEW_DOCUMENT_AFTER=$' runtime_evidence/new-document-after.txt
           grep -Eq '^LICENSE_DIALOG=[0-9]+$' runtime_evidence/license-dialog.txt
           grep -q '^LICENSE_DIALOG_AFTER=$' runtime_evidence/license-dialog-after.txt
-          grep -q '^RESULT=PASS_NATIVE_REAL_DRAWING_OPENED$' runtime_evidence/result.txt
+          grep -q '^RESULT=PASS_NATIVE_REAL_DRAWING_OPENED_VIA_NEW_DIALOG$' runtime_evidence/result.txt
 
-          test -s runtime_evidence/02_home_after_eula.png
-          test -s runtime_evidence/03_real_drawing_with_license_warning.png
+          test -s runtime_evidence/02_new_document_dialog.png
+          test -s runtime_evidence/03_real_drawing_open.png
           test -s runtime_evidence/04_real_drawing_clean.png
           test -s runtime_evidence/api7-probe.txt
 
@@ -183,6 +193,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas3d-stage4-real-drawing
+          name: kompas3d-stage4-new-document-dialog
           path: runtime_evidence/
           if-no-files-found: error
