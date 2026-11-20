@@ -1,0 +1,49 @@
+name: Inspect KsAPI OpenKompasInvisible helper
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/inspect-openkompasinvisible-helper.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Inspect exact frozen KsAPI helper implementation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          PY="$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25/Bin/ksapi.py"
+          test -s "$PY"
+          mkdir -p "$GITHUB_WORKSPACE/result/openinv-helper"
+          {
+            echo '=== TOP 80 ==='
+            sed -n '1,80p' "$PY"
+            echo '=== HELPER MATCHES ==='
+            grep -n -C 8 -E '^def (OpenKompasInvisible|GetKompasInvisible|OpenKompas|GetKompas|SetKompasPath)' "$PY" || true
+          } | tee "$GITHUB_WORKSPACE/result/openinv-helper/ksapi-helper.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-openkompasinvisible-helper-source
+          path: result/openinv-helper/**
