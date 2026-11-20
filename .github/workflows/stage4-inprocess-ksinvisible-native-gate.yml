@@ -59,7 +59,8 @@ jobs:
             xvfb xauth dbus procps python3 \
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
             libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
-            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
+            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0 \
+            libxcb-composite0 libxcb-shape0 libxv1 libopengl0 libglu1-mesa
 
       - name: Compile in-process native writer and preload bootstrap
         shell: bash
