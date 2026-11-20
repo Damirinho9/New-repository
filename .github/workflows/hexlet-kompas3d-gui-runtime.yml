@@ -35,10 +35,7 @@ jobs:
             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           mkdir -p runtime_evidence
           command -v kompas-v25 | tee runtime_evidence/launcher.txt
-          python3 - <<'PY' | tee runtime_evidence/pyatspi-import.txt
-import pyatspi
-print("PYATSPI_IMPORT=PASS")
-PY
+          python3 -c 'import pyatspi; print("PYATSPI_IMPORT=PASS")' | tee runtime_evidence/pyatspi-import.txt
 
       - name: Accept EULA and invoke Drawing semantically through AT-SPI
         shell: bash
