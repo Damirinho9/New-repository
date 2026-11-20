@@ -1,4 +1,4 @@
-name: Hexlet KOMPAS-3D KsAPICLink Probe
+name: Hexlet KOMPAS-3D Native Drawing
 
 on:
   push:
@@ -6,20 +6,24 @@ on:
       - hexlet-7344445-kompas3d-gui-clean
     paths:
       - ".github/workflows/hexlet-kompas3d-gui-runtime.yml"
+      - "hexlet_7344445/create_hexlet_native_drawing.py"
   workflow_dispatch:
 
 jobs:
-  link-probe:
+  native-drawing:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Install official KOMPAS v25 SDK
+
+      - name: Install official KOMPAS v25 + SDK
         shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y wget ca-certificates gnupg desktop-file-utils unzip
+          sudo apt-get install -y \
+            wget ca-certificates gnupg desktop-file-utils xvfb \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
@@ -27,26 +31,36 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
-          mkdir -p link_probe/samples
-      - name: Extract official KsAPICLink Python samples and README
+          dpkg -l 'ascon-kompas*' | tee installed-packages.txt
+
+      - name: Create native CDW exactly through official OpenKompasInvisible pattern
         shell: bash
         run: |
           set -euxo pipefail
-          SDK=/opt/ascon/kompas3d-v25/SDK/KsAPICLink
-          cp "$SDK/ReadMe.txt" link_probe/ReadMe.txt
-          unzip -q "$SDK/Python/Samples.zip" -d link_probe/samples
-          find link_probe/samples -type f -printf '%P\n' | sort > link_probe/sample-files.txt
-          grep -RniE 'Connect|Application|Documents|AddWithDefaultSettings|CreateDocument|GetDocuments|GetActiveDocument' \
-            link_probe/samples > link_probe/sample-api-hits.txt || true
-          for f in $(find link_probe/samples -type f \( -name '*.py' -o -name '*.txt' \)); do
-            echo "===== $f ====="
-            sed -n '1,260p' "$f"
-          done > link_probe/sample-sources.txt
-          test -s link_probe/sample-sources.txt
-          echo RESULT=PASS_KSAPICLINK_SAMPLES_EXTRACTED > link_probe/result.txt
+          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
+          timeout 240 xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
+            python3 hexlet_7344445/create_hexlet_native_drawing.py \
+            | tee native-drawing.log
+
+      - name: Strict Save Close Reopen gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q '^RESULT=PASS_NATIVE_DRAWING_SAVE_CLOSE_REOPEN$' native-drawing.log
+          grep -q '^DOC1_TYPE= *1$' native-drawing.log
+          grep -Eq '^REOPEN_TEXT_COUNT= *[1-9][0-9]*$' native-drawing.log
+          test -s native_drawing/Hexlet_KOMPAS3D_Privet_Hexlet.cdw
+          test -s native_drawing/Hexlet_KOMPAS3D_Privet_Hexlet_REOPENED.cdw
+          test -s native_drawing/validation.json
+          file native_drawing/*.cdw | tee native_drawing/file-types.txt
+          sha256sum native_drawing/*.cdw | tee native_drawing/sha256.txt
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas-v25-ksapiclink-python-samples
-          path: link_probe/
-          if-no-files-found: error
+          name: hexlet-kompas3d-native-drawing
+          path: |
+            native_drawing/
+            native-drawing.log
+            installed-packages.txt
+          if-no-files-found: warn
