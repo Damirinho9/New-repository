@@ -112,10 +112,11 @@ def patch_models(root,xmlio,refs=None):
         if ref.startswith("VT"):
             small=ref!="VT3"
             if small:
-                vth=float(os.environ.get("KP501_VTO","1.2"))
-                if not (1.0 <= vth <= 3.0): raise RuntimeError("KP501_VTO outside datasheet 1..3V")
-                s,t=_kp501a_card(n1,vth),_kp501a_card(n2,vth)
-                notes[ref]=f"KP501A datasheet-bounded no-body-diode switch model Vth={vth:g}V RON=10ohm ROFF=100Mohm"
+                # KP501A datasheet names ZVN2120 as the foreign prototype. Use the vendor ZVN2120G card
+                # without hand-tuning its transfer curve. Package/pinout equivalence is NOT implied.
+                src="vendor/ZVN2120G.txt"; expected="ZVN2120G"
+                s,t=vendor_card(src,n1,expected),vendor_card(src,n2,expected)
+                notes[ref]="ZVN2120G official vendor electrical proxy for KP501A prototype; not exact KP501A"
             else:
                 src="vendor/SIHFBE30.lib"; expected="SIHFBE30"
                 try:
@@ -152,7 +153,6 @@ def verify_saved_cards(root,xmlio,refs=None):
         c=_find_component(root,xmlio,ref);m=_find_model(root,c);a,b=_cards(c,m,xmlio)
         for x in (xmlio.text(a.get("String")),xmlio.text(b.get("Value"))):
             _validate(x)
-            if ref in ("VT1","VT2") and "KP501A_NO_BODY_DIODE" not in x: raise RuntimeError(ref+": KP501A no-diode model lost")
             if ref.startswith("VS") and "EGREL GREL" not in x:raise RuntimeError(ref+": gate reference lost")
     if "VD1" in refs:
         c=_find_component(root,xmlio,"VD1")

@@ -107,59 +107,60 @@ def amps(a):return a.get("metrics",{}).get("drive_i",{}).get("rms")
 # Stage 4 targeted autonomous I_PH sweep using the already proven power/control configuration.
 # No diagnostic source acts on DRV, T2 or SCR gates in these runs.
 if os.environ.get("STAGE4_SWEEP_ONLY","0")=="1":
-    # Endpoint qualification first. Only source-ambiguous D/S is varied; KP501A threshold stays inside 1..3V datasheet range.
-    # At >3uA SENS is already forward-clamped, so 0 and 4uA are sufficient to reject a non-responsive configuration.
+    # KCL basis: to pull T1 and T2 down, the sensor must sink roughly
+    # Uctrl/R4 + Uctrl/R5 ~= 12/10k + 12/5.1k = 3.55 mA before MOS channel details.
+    # FD320 sensitivity is ~0.15 uA/lux, so mA photocurrent corresponds to strong daylight.
+    # Use the official ZVN2120G vendor card because KP501A documentation names ZVN2120 as prototype.
     endpoints=[]
-    for vth in (1.0,1.1,1.2,1.3,1.5,2.0):
-        os.environ["KP501_VTO"]=str(vth)
-        for f1 in (False,True):
-            for f2 in (False,True):
-                net0=power("dc_tb",False)+control(False)+source()
-                dark=run(f"qual_v{str(vth).replace('.','p')}_f{int(f1)}{int(f2)}_dark",net0+photo(f1,f2,0),PWR+PH+["vt3_r6"],1.2)
-                light=run(f"qual_v{str(vth).replace('.','p')}_f{int(f1)}{int(f2)}_light",net0+photo(f1,f2,4),PWR+PH+["vt3_r6"],1.2)
-                ld,ll=load(dark),load(light)
-                span=abs(ll-ld) if ld is not None and ll is not None else None
-                rec={"VTH_V":vth,"f1":f1,"f2":f2,"dark":dark["name"],"light":light["name"],
-                    "dark_load_V":ld,"light_load_V":ll,"span_V":span,
-                    "dark_sens_V":dark.get("metrics",{}).get("sens",{}).get("mean"),
-                    "light_sens_V":light.get("metrics",{}).get("sens",{}).get("mean"),
-                    "dark_t2_V":dark.get("metrics",{}).get("t2",{}).get("mean"),
-                    "light_t2_V":light.get("metrics",{}).get("t2",{}).get("mean"),
-                    "pass": ld is not None and ll is not None and min(ld,ll)<=30 and max(ld,ll)>=170 and span>=140}
-                endpoints.append(rec);save("STAGE4_ENDPOINT_QUALIFICATION.json",endpoints)
+    for f1 in (False,True):
+        for f2 in (False,True):
+            net0=power("dc_tb",False)+control(False)+source()
+            dark=run(f"mA_f{int(f1)}{int(f2)}_dark",net0+photo(f1,f2,0),PWR+PH+["vt3_r6"],3.5)
+            mid=run(f"mA_f{int(f1)}{int(f2)}_5mA",net0+photo(f1,f2,5000),PWR+PH+["vt3_r6"],3.5)
+            high=run(f"mA_f{int(f1)}{int(f2)}_8mA",net0+photo(f1,f2,8000),PWR+PH+["vt3_r6"],3.5)
+            for level,light in ((5000,mid),(8000,high)):
+                ld,ll=load(dark),load(light); span=abs(ll-ld) if ld is not None and ll is not None else None
+                rec={"f1":f1,"f2":f2,"light_I_PH_uA":level,"dark":dark["name"],"light":light["name"],
+                     "dark_load_V":ld,"light_load_V":ll,"span_V":span,
+                     "dark_sens_V":dark.get("metrics",{}).get("sens",{}).get("mean"),
+                     "light_sens_V":light.get("metrics",{}).get("sens",{}).get("mean"),
+                     "dark_t1_V":dark.get("metrics",{}).get("t1",{}).get("mean"),
+                     "light_t1_V":light.get("metrics",{}).get("t1",{}).get("mean"),
+                     "dark_t2_V":dark.get("metrics",{}).get("t2",{}).get("mean"),
+                     "light_t2_V":light.get("metrics",{}).get("t2",{}).get("mean"),
+                     "pass":ld is not None and ll is not None and min(ld,ll)<=30 and max(ld,ll)>=170 and span>=140}
+                endpoints.append(rec);save("STAGE4_MA_ENDPOINTS.json",endpoints)
     viable=[x for x in endpoints if x["pass"]]
-    # If strict endpoints do not pass, preserve the best measured configuration and fail without wasting another 64 full runs.
     measured=[x for x in endpoints if x["span_V"] is not None]
     best=max(measured,key=lambda x:x["span_V"]) if measured else None
     if not viable:
-        result={"result":"FAIL_REAL_LOAD_SWITCHING","phase":"endpoint_qualification",
-            "criterion":{"off_max_Vrms":30,"on_min_Vrms":170,"span_min_Vrms":140},
-            "best":best,"tested":len(endpoints),
-            "kp501_basis":{"Vth_range_V":[1,3],"RON_max_ohm":10,"residual_current_max_uA":10,"body_diode":"not specified for A/B; model omitted"}}
+        result={"result":"FAIL_REAL_LOAD_SWITCHING","phase":"mA_endpoint",
+          "criterion":{"off_max_Vrms":30,"on_min_Vrms":170,"span_min_Vrms":140},
+          "kcl_estimate_mA":3.552941176470588,"fd320_sensitivity_uA_per_lux":0.15,
+          "best":best,"endpoints":endpoints}
         save("STAGE4_RESULT.json",result);print(json.dumps(result,ensure_ascii=False),flush=True);sys.exit(2)
-    best=max(viable,key=lambda x:x["span_V"])
-    os.environ["KP501_VTO"]=str(best["VTH_V"])
-    f1,f2=best["f1"],best["f2"]
+    best=max(viable,key=lambda x:x["span_V"]);f1,f2=best["f1"],best["f2"]
     net0=power("dc_tb",False)+control(False)+source()
-    sweep_values=(0,0.1,0.2,0.3,0.4,0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.5,4,5,6,8)
+    sweep_values=(0,100,250,500,750,1000,1500,2000,2500,3000,3250,3500,3750,4000,4500,5000,6000,7000,8000)
     rows=[]
     for i,u in enumerate(sweep_values):
-        rr=run(f"stage4_selected_{i:02d}_{str(u).replace('.','p')}u",net0+photo(f1,f2,u),PWR+PH+["vt3_r6"],1.5)
-        rows.append({"I_PH_uA":u,"run":rr["name"],"LOAD_RMS_V":load(rr),
-            "SENS_mean_V":rr.get("metrics",{}).get("sens",{}).get("mean"),
-            "T1_mean_V":rr.get("metrics",{}).get("t1",{}).get("mean"),
-            "T2_mean_V":rr.get("metrics",{}).get("t2",{}).get("mean"),
-            "DRV_mean_V":rr.get("metrics",{}).get("drv",{}).get("mean"),
-            "G1K1_RMS_V":rr.get("metrics",{}).get("gk1",{}).get("rms"),
-            "G2K2_RMS_V":rr.get("metrics",{}).get("gk2",{}).get("rms"),
-            "SW_RMS_V":rr.get("metrics",{}).get("sw",{}).get("rms")})
-        save("STAGE4_SELECTED_SWEEP.json",rows)
+        rr=run(f"stage4_mA_{i:02d}_{u}u",net0+photo(f1,f2,u),PWR+PH+["vt3_r6"],4.0)
+        rows.append({"I_PH_uA":u,"illumination_lux_at_0p15uA_per_lux":u/0.15,
+          "run":rr["name"],"LOAD_RMS_V":load(rr),
+          "SENS_mean_V":rr.get("metrics",{}).get("sens",{}).get("mean"),
+          "T1_mean_V":rr.get("metrics",{}).get("t1",{}).get("mean"),
+          "T2_mean_V":rr.get("metrics",{}).get("t2",{}).get("mean"),
+          "DRV_mean_V":rr.get("metrics",{}).get("drv",{}).get("mean"),
+          "G1K1_RMS_V":rr.get("metrics",{}).get("gk1",{}).get("rms"),
+          "G2K2_RMS_V":rr.get("metrics",{}).get("gk2",{}).get("rms"),
+          "SW_RMS_V":rr.get("metrics",{}).get("sw",{}).get("rms")})
+        save("STAGE4_MA_SWEEP.json",rows)
     good=[x for x in rows if x["LOAD_RMS_V"] is not None]
     lo=min(good,key=lambda x:x["LOAD_RMS_V"]);hi=max(good,key=lambda x:x["LOAD_RMS_V"]);span=hi["LOAD_RMS_V"]-lo["LOAD_RMS_V"]
     passed=lo["LOAD_RMS_V"]<=30 and hi["LOAD_RMS_V"]>=170 and span>=140
-    result={"result":"PASS_REAL_LOAD_SWITCHING" if passed else "FAIL_REAL_LOAD_SWITCHING","phase":"selected_sweep",
-        "criterion":{"off_max_Vrms":30,"on_min_Vrms":170,"span_min_Vrms":140},"selected_endpoint":best,
-        "min_load":lo,"max_load":hi,"span_V":span,"rows":rows}
+    result={"result":"PASS_REAL_LOAD_SWITCHING" if passed else "FAIL_REAL_LOAD_SWITCHING",
+      "phase":"mA_sweep","criterion":{"off_max_Vrms":30,"on_min_Vrms":170,"span_min_Vrms":140},
+      "kcl_estimate_mA":3.552941176470588,"selected_endpoint":best,"min_load":lo,"max_load":hi,"span_V":span,"rows":rows}
     with (OUT/"STAGE4_IPH_SWEEP.csv").open("w",newline="",encoding="utf-8") as fh:
         cols=list(rows[0]);cw=csv.DictWriter(fh,fieldnames=cols);cw.writeheader();cw.writerows(rows)
     if passed:
