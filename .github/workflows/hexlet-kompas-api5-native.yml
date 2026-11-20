@@ -1,0 +1,82 @@
+name: Hexlet KOMPAS-3D Native API5 CDW Text
+
+on:
+  push:
+    branches:
+      - hexlet-7344445-kompas3d-gui-clean
+    paths:
+      - "hexlet_7344445/api5_create_drawing_text.py"
+      - ".github/workflows/hexlet-kompas-api5-native.yml"
+  workflow_dispatch:
+
+jobs:
+  api5-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install official KOMPAS v25 + SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg desktop-file-utils xvfb net-tools iproute2 \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
+            | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+          mkdir -p api5_native
+
+      - name: Launch native ksinvisible and create CDW with exact text through API5
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
+            /tmp/kKompas -automation >api5_native/ksinvisible.out 2>api5_native/ksinvisible.err &
+          WRAP=$!
+
+          KP=""
+          for i in $(seq 1 60); do
+            sleep 1
+            KP=$(pgrep -x kKompas | head -1 || true)
+            [ -n "$KP" ] && break
+          done
+          test -n "$KP"
+          echo "KPID=$KP" | tee api5_native/pid.txt
+
+          for i in $(seq 1 60); do
+            sleep 1
+            ss -ltnp > api5_native/sockets.txt || true
+            grep -q kKompas api5_native/sockets.txt && break || true
+          done
+          grep -q kKompas api5_native/sockets.txt
+
+          timeout 120 python3 hexlet_7344445/api5_create_drawing_text.py \
+            | tee api5_native/api5-run.log
+
+          kill "$WRAP" 2>/dev/null || true
+
+      - name: Strict API5 native gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -q '^RESULT=PASS_NATIVE_API5_CDW_TEXT_SAVE_REOPEN$' api5_native/api5-run.log
+          test -s api5_native/Hexlet_KOMPAS3D_Privet_Hexlet.cdw
+          test -s api5_native/Hexlet_KOMPAS3D_Privet_Hexlet_REOPENED.cdw
+          file api5_native/*.cdw | tee api5_native/file-types.txt
+          sha256sum api5_native/*.cdw | tee api5_native/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kompas3d-native-api5-cdw-text
+          path: api5_native/
+          if-no-files-found: error
