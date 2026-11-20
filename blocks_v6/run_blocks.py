@@ -46,14 +46,34 @@ def metrics(t,y,start,end):
     duration=end-start
     return {"mean":float(np.trapezoid(yy,tt)/duration),"rms":float(np.sqrt(np.trapezoid(yy*yy,tt)/duration)),
             "min":float(yy.min()),"max":float(yy.max())}
-def run(name,net,nets,dur):
-    record={"name":name,"diagnostic":not name.startswith("full_"),"duration_s":dur}
+def run(name,net,nets,dur,scope=False,points=8000,final_layout=False):
+    net=list(net)
+    if scope:
+        # Harvested native SCOPE order is 1,2,4,3,5,6. This yields A=SENS-0 and B=L-SW.
+        net += ["XSC1 sens 0 sw l 0 0 SCOPE"]
+    record={"name":name,"diagnostic":not name.startswith("full_"),"duration_s":dur,"scope":scope}
     RESULTS[name]=record
     file=OUT/(name+".ms14");(OUT/(name+".net")).write_text("\n".join(net)+"\n",encoding="utf-8")
     try:
-        # Single diagnostic build: layout is not acceptance of the final drawing.
-        spec={"netlist":"\n".join(net)+"\n","output":str(file),"net_names":True,"sheet":[21,11],"sim_time":str(int(dur*1000))+"ms","layout":{"GND":[[108,756],[540,756],[972,756],[1404,756],[1836,756]]}}
-        builder.build(spec,lib=LIB,allow_fallback=True,auto_repair=True,repair_budget_s=12)
+        # Final files use an explicit source-like layout. Diagnostics may use compact auto-layout.
+        layout={"GND":[[72,144],[252,558],[432,558],[666,558],[900,558],[1080,558],[1233,558],[1404,648],[1512,648],[270,558],[900,810]]}
+        if final_layout:
+            layout.update({
+              "R1":[144,180,90],"R2":[144,270,90],"XVD1":[144,378,90],"C1":[252,378,90],"C2":[306,180,90],
+              "XVT1":[432,288],"R3":[432,414,90],"R4":[504,180,90],"XVT2":[576,288],"XVD2":[666,180,90],
+              "R5":[720,234,90],"XVT3":[756,378],"R6":[846,342],"XHL1":[828,144,90],"XVD3":[900,198,90],
+              "RU1":[900,432,90],"R7":[990,234],"XVS1":[1080,414,90],"R8":[1152,486,90],"XVD4":[1233,486,90],
+              "XFU1":[1008,324],"XVD6":[1197,342],"XVD5":[1323,198],"R9":[1323,270],"XVS2":[1404,342,90],
+              "C3":[1512,450,90],"XFU2":[1512,576],"XXP1":[1908,306,90],
+              "I1":[270,486,90],"I2":[360,486,90],"V1":[1908,648,90],"RLINE":[1800,648],"RLOAD":[1800,144,90],"RREF":[1656,756,90]
+            })
+            if scope:
+                layout["XSC1"]=[1566,756]
+        spec={"netlist":"\n".join(net)+"\n","output":str(file),"net_names":True,"sheet":[22,12],"sim_time":f"{dur:.6g}s","layout":layout,
+              "colors":{"sens":"red","sw":"blue","g18":"green","g25":"green"}}
+        if scope:
+            spec["instruments"]={"XSC1":{"timebase":"100ms","a_scale":"5V","b_scale":"100V","a_coupling":"dc","b_coupling":"dc","trigger":"none"}}
+        builder.build(spec,lib=LIB,allow_fallback=False if final_layout else True,auto_repair=True,repair_budget_s=90 if final_layout else 12)
         root=xmlio.load(file)
         refs={s.split()[0][1:] for s in net if s.startswith("X")}
         refs &= {"VT1","VT2","VT3","VS1","VS2","VD1","VD3","VD4","VD5"}
@@ -67,7 +87,7 @@ def run(name,net,nets,dur):
         critical=[z for z in record["geometry"].get("problems",[]) if "run on top of each other" not in z]
         if critical:raise RuntimeError("Structural problems: "+repr(critical))
         dest=OUT/(name+"_csv")
-        p=subprocess.run([sys.executable,"-m","multisimforge","sim",str(file.resolve()),"--nets",",".join(nets),"--tran",f"{dur},8000","--csv",str(dest.resolve())],capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=150)
+        p=subprocess.run([sys.executable,"-m","multisimforge","sim",str(file.resolve()),"--nets",",".join(nets),"--tran",f"{dur},{points}","--csv",str(dest.resolve())],capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=150)
         (OUT/(name+"_sim.log")).write_text(p.stdout+"\n"+p.stderr,encoding="utf-8")
         j=json.loads(p.stdout);record["sim_status"]=j.get("status");record["sim_warnings"]=j.get("warnings")
         if p.returncode or j.get("status") not in ("PASS","WARN") or j.get("failures") or j.get("missing"):raise RuntimeError("Native sim failed")
@@ -79,7 +99,8 @@ def run(name,net,nets,dur):
         if "l" in data and "sw" in data:
             data["load"]=data["l"]-data["sw"];data["load_i"]=data["load"]/1000
             data["gk1"]=data["g18"]-data["n_int"];data["gk2"]=data["g25"]-data["sw"]
-            data["drive_i"]=data["drv"]-data["drvmon"]
+            if "drvmon" in data:
+                data["drive_i"]=data["drv"]-data["drvmon"]
             # Report polarity coverage from each supply half-wave separately, only on the settled window.
             line=data["ac_src"]-data["n"]
             m=t>=start
@@ -106,6 +127,110 @@ def ordered_power(off,on):
 def amps(a):return a.get("metrics",{}).get("drive_i",{}).get("rms")
 # Stage 4 targeted autonomous I_PH sweep using the already proven power/control configuration.
 # No diagnostic source acts on DRV, T2 or SCR gates in these runs.
+if os.environ.get("PHASEA_FINAL_ONLY","0")=="1":
+    FINAL=Path("phaseA-final"); FINAL.mkdir(exist_ok=True)
+    os.environ["SCR_VTH"]="0.32"
+    os.environ["KP707_VTO"]="1.5"
+    f1,f2=False,True
+
+    def power_final():
+        return [
+          x("VS1","SCR",A="sw",K="n_int",G="g18"),"R8 g18 n_int 56",
+          x("VD4","MUR1510G",A="n_int",K="g18"),"XFU1 drv br_top 30_AMP",bridge("dc_tb"),
+          x("VD5","MUR1510G",A="sw",K="g25"),"R9 g25 sw 56",x("VS2","SCR",A="n_int",K="sw",G="g25"),
+          "C3 l n_int 47n CAPACITOR_VIRTUAL","XFU2 n_int n 30_AMP","RREF n_int 0 1G",
+          "V1 ac_src n SIN(0 311.1269837 50)","RLINE ac_src l 10","RLOAD l sw 1k"
+        ]
+
+    FINAL_NETS=["drv","br_top","g18","g25","n_int","sw","l","ac_src","n"]+PH+["vt3_r6"]
+    base=power_final()+control(False)+source()
+
+    fine_values=[7000,7050,7100,7150,7200,7250,7300,7350,7400,7450,7500]
+    fine=[]
+    for u in fine_values:
+        rr=run(f"phaseA_fine_{u}u",base+photo(f1,f2,u),FINAL_NETS,1.0,points=6000,final_layout=True)
+        fine.append({"I_PH_uA":u,"run":rr["name"],"LOAD_RMS_V":load(rr),
+          "SENS_mean_V":rr.get("metrics",{}).get("sens",{}).get("mean"),
+          "T1_mean_V":rr.get("metrics",{}).get("t1",{}).get("mean"),
+          "T2_mean_V":rr.get("metrics",{}).get("t2",{}).get("mean"),
+          "DRV_mean_V":rr.get("metrics",{}).get("drv",{}).get("mean")})
+        save("PHASE_A_FINE_SWEEP.json",fine)
+
+    dark_num=run("phaseA_dark_numeric",base+photo(f1,f2,0),FINAL_NETS,1.0,points=6000,final_layout=True)
+    light_num=run("phaseA_light_numeric",base+photo(f1,f2,8000),FINAL_NETS,1.0,points=6000,final_layout=True)
+    mids=[z for z in fine if z["LOAD_RMS_V"] is not None and 30 < z["LOAD_RMS_V"] < 170]
+    if not mids:
+        raise SystemExit("PHASE_A_FINAL: no converged threshold state between 30 and 170 Vrms")
+    threshold=min(mids,key=lambda z:abs(z["LOAD_RMS_V"]-110))
+    if load(dark_num) is None or load(dark_num)>30:
+        raise SystemExit("PHASE_A_FINAL: DARK not OFF")
+    if load(light_num) is None or load(light_num)<170:
+        raise SystemExit("PHASE_A_FINAL: LIGHT not ON")
+
+    selected={"DARK":0.0,"THRESHOLD":float(threshold["I_PH_uA"]),"LIGHT":8000.0}
+    final_records={}
+    for label,u in selected.items():
+        rr=run(f"phaseA_final_{label.lower()}",base+photo(f1,f2,u),FINAL_NETS,1.0,scope=True,points=6000,final_layout=True)
+        if load(rr) is None:
+            raise SystemExit("PHASE_A_FINAL: "+label+" no numeric result with XSC1")
+        dest=FINAL/f"7330744_PhotoRelay_V6_{label}.ms14"
+        dest.write_bytes((OUT/(rr["name"]+".ms14")).read_bytes())
+        final_records[label]={"I_PH_uA":u,"LOAD_RMS_V":load(rr),
+          "SENS_mean_V":rr["metrics"]["sens"]["mean"],"T1_mean_V":rr["metrics"]["t1"]["mean"],
+          "T2_mean_V":rr["metrics"]["t2"]["mean"],"DRV_mean_V":rr["metrics"]["drv"]["mean"],
+          "sha256":hashlib.sha256(dest.read_bytes()).hexdigest(),"size":dest.stat().st_size,
+          "check":rr.get("geometry"),"pinmap":rr.get("pinmap")}
+    if final_records["DARK"]["LOAD_RMS_V"]>30 or final_records["LIGHT"]["LOAD_RMS_V"]<170:
+        raise SystemExit("PHASE_A_FINAL: XSC1 changed DARK/LIGHT acceptance")
+    if not (30 < final_records["THRESHOLD"]["LOAD_RMS_V"] < 170):
+        raise SystemExit("PHASE_A_FINAL: XSC1 threshold state not intermediate")
+
+    uth=selected["THRESHOLD"]*1e-6
+    ulight=selected["LIGHT"]*1e-6
+    sensor=photo(f1,f2,0)[:-1]
+    sensor += [
+      f"I1 sens 0 PULSE(0 {uth:.12g} 200m 20m 20m 750m 2s)",
+      f"I2 sens 0 PULSE(0 {ulight-uth:.12g} 500m 20m 20m 300m 2s)"
+    ]
+    tr=run("phaseA_final_transient",base+sensor,FINAL_NETS,1.2,scope=True,points=12000,final_layout=True)
+    if tr.get("status")!="MEASURED":
+        raise SystemExit("PHASE_A_FINAL: transient did not converge")
+    tpath=OUT/"phaseA_final_transient_csv"/"tran.csv"
+    rows=list(csv.DictReader(tpath.open(encoding="utf-8-sig")))
+    tt=np.array([float(z["time"]) for z in rows])
+    lv=np.array([float(z["l"])-float(z["sw"]) for z in rows])
+    def wrms(a,b):
+        mm=(tt>=a)&(tt<=b)
+        if mm.sum()<20: return None
+        return float(np.sqrt(np.mean(lv[mm]*lv[mm])))
+    seq={"dark1_Vrms":wrms(.08,.18),"threshold1_Vrms":wrms(.30,.45),"light_Vrms":wrms(.60,.75),
+         "threshold2_Vrms":wrms(.84,.93),"dark2_Vrms":wrms(1.04,1.15)}
+    if seq["dark1_Vrms"] is None or seq["dark2_Vrms"] is None or max(seq["dark1_Vrms"],seq["dark2_Vrms"])>30:
+        raise SystemExit("PHASE_A_FINAL: transient dark windows failed")
+    if seq["light_Vrms"] is None or seq["light_Vrms"]<170:
+        raise SystemExit("PHASE_A_FINAL: transient light window failed")
+    if seq["threshold1_Vrms"] is None or not (30<seq["threshold1_Vrms"]<170):
+        raise SystemExit("PHASE_A_FINAL: transient threshold window failed")
+    tdest=FINAL/"7330744_PhotoRelay_V6_TRANSIENT.ms14"
+    tdest.write_bytes((OUT/"phaseA_final_transient.ms14").read_bytes())
+    (FINAL/"TRANSIENT.csv").write_bytes(tpath.read_bytes())
+    (FINAL/"FINE_SWEEP.csv").write_text(
+      "I_PH_uA,LOAD_RMS_V,SENS_mean_V,T1_mean_V,T2_mean_V,DRV_mean_V\n"+
+      "\n".join(f'{z["I_PH_uA"]},{z["LOAD_RMS_V"]},{z["SENS_mean_V"]},{z["T1_mean_V"]},{z["T2_mean_V"]},{z["DRV_mean_V"]}' for z in fine),
+      encoding="utf-8"
+    )
+    summary={"result":"PASS_NUMERIC_PHASE_A_FINAL",
+      "model_scope":"Educational functional model only, not T123-250 hardware validation.",
+      "SCR_VTH_V":0.32,"bridge_mode":"dc_tb","selected":selected,"states":final_records,"transient":seq,
+      "transient_sha256":hashlib.sha256(tdest.read_bytes()).hexdigest(),"transient_size":tdest.stat().st_size,
+      "limitations":["I_PH is a simulation control current; LIGHT=8mA is not a calibrated FD320 lux conversion.",
+                     "C1/C2/C3 are simulation assumptions because the source BOM omits capacitances.",
+                     "VS1/VS2 use a functional cathode-referenced SCR surrogate at 0.32V, not an exact T123-250 hardware model.",
+                     "RREF=1G is simulation-only to reference separated CASE and N_INT."]}
+    (FINAL/"PHASE_A_SUMMARY.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
+    print(json.dumps(summary,ensure_ascii=False),flush=True)
+    sys.exit(0)
+
 if os.environ.get("STAGE4_SWEEP_ONLY","0")=="1":
     # Hardware note: exact T123-250 is incompatible with the 1k educational load
     # (I_H up to 0.30A > 220V/1k) and requires gate drive far above this source circuit.
