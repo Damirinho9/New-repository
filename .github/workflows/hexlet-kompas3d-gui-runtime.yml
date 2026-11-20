@@ -1,4 +1,4 @@
-name: Hexlet KOMPAS-3D SDK Native Drawing
+name: Hexlet KOMPAS-3D KsAPICLink Probe
 
 on:
   push:
@@ -9,18 +9,17 @@ on:
   workflow_dispatch:
 
 jobs:
-  sdk-native:
+  link-probe:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
       - name: Install official KOMPAS v25 SDK
         shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y wget ca-certificates gnupg desktop-file-utils
+          sudo apt-get install -y wget ca-certificates gnupg desktop-file-utils unzip
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
           echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' \
@@ -28,34 +27,26 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
-          mkdir -p sdk_probe
-
-      - name: Inspect official SDK examples for native drawing creation
+          mkdir -p link_probe/samples
+      - name: Extract official KsAPICLink Python samples and README
         shell: bash
         run: |
           set -euxo pipefail
-          export KOMPAS_SDK=/opt/ascon/kompas3d-v25/SDK
-          find "$KOMPAS_SDK" -maxdepth 5 -type f | sort > sdk_probe/sdk-files.txt
-          grep -RniE 'ksCreateDocument|CreateDocumentW|CreateDocument\s*\(' "$KOMPAS_SDK" \
-            > sdk_probe/create-document-hits.txt || true
-          grep -RniE 'LoadKompasLibrary|KompasLibraryActions|AddRunCommandHandler' "$KOMPAS_SDK" \
-            > sdk_probe/library-entry-hits.txt || true
-          find "$KOMPAS_SDK" -type f \( -name '*.cpp' -o -name '*.cxx' -o -name '*.cc' -o -name '*.h' \) \
-            -print0 | xargs -0 grep -l 'ksCreateDocument' \
-            > sdk_probe/create-document-files.txt || true
-
-          while IFS= read -r f; do
+          SDK=/opt/ascon/kompas3d-v25/SDK/KsAPICLink
+          cp "$SDK/ReadMe.txt" link_probe/ReadMe.txt
+          unzip -q "$SDK/Python/Samples.zip" -d link_probe/samples
+          find link_probe/samples -type f -printf '%P\n' | sort > link_probe/sample-files.txt
+          grep -RniE 'Connect|Application|Documents|AddWithDefaultSettings|CreateDocument|GetDocuments|GetActiveDocument' \
+            link_probe/samples > link_probe/sample-api-hits.txt || true
+          for f in $(find link_probe/samples -type f \( -name '*.py' -o -name '*.txt' \)); do
             echo "===== $f ====="
-            grep -n -B 40 -A 80 'ksCreateDocument' "$f" || true
-          done < sdk_probe/create-document-files.txt \
-            > sdk_probe/create-document-context.txt
-
-          test -s sdk_probe/create-document-hits.txt
-          echo 'RESULT=PASS_SDK_CREATE_DOCUMENT_API_FOUND' > sdk_probe/result.txt
-
+            sed -n '1,260p' "$f"
+          done > link_probe/sample-sources.txt
+          test -s link_probe/sample-sources.txt
+          echo RESULT=PASS_KSAPICLINK_SAMPLES_EXTRACTED > link_probe/result.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: kompas-v25-sdk-create-document-probe
-          path: sdk_probe/
+          name: kompas-v25-ksapiclink-python-samples
+          path: link_probe/
           if-no-files-found: error
