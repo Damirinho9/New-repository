@@ -16,6 +16,22 @@ if app is None:
 print('APP1_NAME=', app.GetApplicationName(True))
 print('APP1_BUILD=', app.GetBuildNumber())
 
+lm = app.GetApplicationLicenseManager()
+print('LICENSE_MANAGER=', lm)
+if lm is not None:
+    try:
+        print('KOMPAS_VARIANT=', lm.GetKompasVariant())
+    except Exception as exc:
+        print('KOMPAS_VARIANT_ERROR=', type(exc).__name__, str(exc))
+    try:
+        before2d = lm.IsKompasModuleActive(c.ksKompasModule2D)
+        print('LICENSE_2D_BEFORE=', int(bool(before2d)))
+        lm.SetKompasModuleActive(c.ksKompasModule2D, True)
+        after2d = lm.IsKompasModuleActive(c.ksKompasModule2D)
+        print('LICENSE_2D_AFTER=', int(bool(after2d)))
+    except Exception as exc:
+        print('LICENSE_2D_ERROR=', type(exc).__name__, str(exc))
+
 docs = app.GetDocuments()
 print('DOCS1=', docs)
 if docs is None:
