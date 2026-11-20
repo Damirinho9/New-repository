@@ -1,0 +1,76 @@
+name: KOMPAS Stage 4 KompasAppl ABI disassembly probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-kompasappl-abi-disasm.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Disassemble KompasAppl accessors and creation function
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-kompasappl-abi
+          mkdir -p "$OUT"
+          F="$BIN/libEquipmentObject.so"
+          {
+            echo "=== MANGLED SYMBOLS ==="
+            nm -D "$F" | grep -E '_ZN10KompasAppl(9GetKompas|9SetKompas|16CreateDocument3D)' || true
+            echo
+            echo "=== GETKOMPAS DISASM ==="
+            objdump -d -C --disassemble='_ZN10KompasAppl9GetKompasEv' "$F" || true
+            echo
+            echo "=== SETKOMPAS DISASM ==="
+            objdump -d -C --disassemble='_ZN10KompasAppl9SetKompasEPN5ksapi12IApplicationE' "$F" || true
+            echo
+            echo "=== CREATEDOCUMENT3D DISASM HEAD ==="
+            objdump -d -C --disassemble='_ZN10KompasAppl16CreateDocument3DERKNSt3__112basic_stringIwNS0_11char_traitsIwEENS0_9allocatorIwEEEES8_S8_S8_bbb' "$F" | head -240 || true
+            echo
+            echo "=== RELOCATIONS / GLOBAL STORAGE NEAR GET/SET ==="
+            readelf -rW "$F" | grep -E 'KompasAppl|GetKompas|SetKompas' | head -300 || true
+          } | tee "$OUT/abi-disasm.txt"
+          echo "RESULT=KOMPASAPPL_ABI_DISASSEMBLED" | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-kompasappl-abi-disasm
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/stage4-kompasappl-abi/**
