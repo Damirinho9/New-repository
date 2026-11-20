@@ -57,6 +57,11 @@ jobs:
             "$DBUS_SESSION_BUS_ADDRESS" "$DBUS_SESSION_BUS_PID" \
             | tee runtime_evidence/dbus-session.txt
 
+          # Start the AT-SPI registry before KOMPAS so Qt can register on launch.
+          python3 -c 'import pyatspi; d=pyatspi.Registry.getDesktop(0); print("ATSPI_PREWARM_CHILDREN=", d.childCount)' \
+            | tee runtime_evidence/atspi-prewarm.txt
+          sleep 2
+
           kompas-v25 >runtime_evidence/kompas.out 2>runtime_evidence/kompas.err &
           KPID=$!
           echo "$KPID" > runtime_evidence/kompas.pid
