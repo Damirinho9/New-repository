@@ -1,0 +1,158 @@
+name: Ubuntu Hadoop preparation
+on:
+  push:
+    branches: [bigdata-7341730-native]
+    paths:
+      - '.github/workflows/bigdata-ubuntu-prep.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: Prepare evidence display
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p evidence/screenshots evidence/logs evidence/status
+          sudo apt-get update
+          sudo apt-get install -y xvfb xterm openbox imagemagick x11-utils
+          Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp >evidence/logs/xvfb.log 2>&1 &
+          export DISPLAY=:99
+          for i in {1..30}; do xdpyinfo >/dev/null 2>&1 && break; sleep 1; done
+          openbox >evidence/logs/openbox.log 2>&1 &
+          echo DISPLAY=:99 >> "$GITHUB_ENV"
+          echo "EVIDENCE=$PWD/evidence" >> "$GITHUB_ENV"
+          cat > /tmp/capture-stage <<'CAPTURE'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          name="$1"
+          script="$2"
+          log="$EVIDENCE/logs/$name.log"
+          status="$EVIDENCE/status/$name.code"
+          xterm -geometry 130x43+15+15 -fa 'DejaVu Sans Mono' -fs 13 -T "$name" -hold -e bash -c 'set -o pipefail; bash -x "$1" 2>&1 | tee "$2"; rc=${PIPESTATUS[0]}; printf "\nExit status: %s\n" "$rc"; echo "$rc" > "$3"; exit "$rc"' _ "$script" "$log" "$status" &
+          pid=$!
+          for i in {1..600}; do test -f "$status" && break; kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+          sleep 2
+          import -window root "$EVIDENCE/screenshots/$name.png"
+          kill "$pid" 2>/dev/null || true
+          cat "$log" || true
+          test -f "$status"
+          test "$(cat "$status")" = 0
+          CAPTURE
+          chmod +x /tmp/capture-stage
+      - name: Verify actual Ubuntu environment
+        shell: bash
+        run: |
+          cat > /tmp/environment.sh <<'SCRIPT'
+          set -euo pipefail
+          cat /etc/os-release
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 22.04
+          hostnamectl || hostname
+          uname -m
+          nproc
+          free -h
+          df -h /
+          systemd-detect-virt || true
+          ls -l /dev/kvm || true
+          command -v VBoxManage || true
+          SCRIPT
+          /tmp/capture-stage 01_ubuntu /tmp/environment.sh
+      - name: Install dependencies
+        shell: bash
+        run: |
+          cat > /tmp/install.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo apt update
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y openjdk-8-jdk openssh-server python3 nano wget
+          sudo update-alternatives --set java /usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java
+          sudo update-alternatives --set javac /usr/lib/jvm/java-8-openjdk-amd64/bin/javac
+          sudo systemctl enable --now ssh
+          SCRIPT
+          /tmp/capture-stage 02_install /tmp/install.sh
+          cat > /tmp/versions.sh <<'SCRIPT'
+          set -euo pipefail
+          java -version
+          java -version 2>&1 | grep 'version "1.8'
+          javac -version
+          python3 --version
+          systemctl status ssh --no-pager --full
+          systemctl is-active --quiet ssh
+          dpkg-query -W openjdk-8-jdk openssh-server python3 nano wget
+          SCRIPT
+          /tmp/capture-stage 03_versions /tmp/versions.sh
+      - name: Create isolated Hadoop user and workspace
+        shell: bash
+        run: |
+          cat > /tmp/user.sh <<'SCRIPT'
+          set -euo pipefail
+          getent group hadoop >/dev/null || sudo addgroup hadoop
+          id hduser >/dev/null 2>&1 || sudo adduser --disabled-password --gecos '' --ingroup hadoop hduser
+          id hduser
+          getent passwd hduser
+          sudo -iu hduser pwd
+          sudo install -d -m 2770 -o hduser -g hadoop /srv/hadoop-lab-share
+          sudo -u hduser sh -c 'printf "shared workspace test\n" > /srv/hadoop-lab-share/transfer.txt'
+          sudo cat /srv/hadoop-lab-share/transfer.txt
+          sudo -u hduser test -r /srv/hadoop-lab-share/transfer.txt
+          ls -ld /srv/hadoop-lab-share
+          echo 'Shared runner workspace only; not a VirtualBox shared folder.'
+          SCRIPT
+          /tmp/capture-stage 04_user_workspace /tmp/user.sh
+      - name: Configure and verify SSH localhost
+        shell: bash
+        run: |
+          cat > /tmp/ssh-hduser.sh <<'SCRIPT'
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          if [ ! -f ~/.ssh/id_rsa ]; then ssh-keygen -t rsa -b 3072 -P "" -f ~/.ssh/id_rsa; fi
+          touch ~/.ssh/authorized_keys
+          grep -qxF "$(cat ~/.ssh/id_rsa.pub)" ~/.ssh/authorized_keys || cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          stat -c '%a %U %n' ~/.ssh ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 localhost 'whoami; hostname; id'
+          test "$(ssh -o BatchMode=yes localhost whoami)" = hduser
+          SCRIPT
+          chmod 755 /tmp/ssh-hduser.sh
+          cat > /tmp/ssh-test.sh <<'SCRIPT'
+          set -euo pipefail
+          sudo -iu hduser bash /tmp/ssh-hduser.sh
+          SCRIPT
+          /tmp/capture-stage 05_ssh /tmp/ssh-test.sh
+      - name: Record network configuration
+        shell: bash
+        run: |
+          cat > /tmp/network.sh <<'SCRIPT'
+          set -euo pipefail
+          hostname
+          ip -brief address
+          ip route
+          getent hosts localhost
+          sysctl net.ipv6.conf.all.disable_ipv6 net.ipv6.conf.default.disable_ipv6
+          echo 'IPv6 settings recorded, not changed on hosted runner.'
+          SCRIPT
+          /tmp/capture-stage 06_network /tmp/network.sh
+      - name: Acceptance for hosted Ubuntu
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in 01_ubuntu 02_install 03_versions 04_user_workspace 05_ssh 06_network; do
+            test "$(cat evidence/status/$name.code)" = 0
+            test -s evidence/screenshots/$name.png
+            test -s evidence/logs/$name.log
+          done
+          printf '%s\n' 'UBUNTU_RUNNER_PREP_PASS' 'VIRTUALBOX_GUEST_ADDITIONS_NOT_TESTED' 'VIRTUALBOX_SHARED_FOLDER_NOT_TESTED' 'IPV6_UNCHANGED' | tee evidence/acceptance.txt
+      - name: Upload genuine execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-preparation-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 7
