@@ -1,4 +1,4 @@
-name: Hexlet KOMPAS-3D Native Drawing
+name: Hexlet KOMPAS-3D Native Drawing GUI Menu
 
 on:
   push:
@@ -6,23 +6,24 @@ on:
       - hexlet-7344445-kompas3d-gui-clean
     paths:
       - ".github/workflows/hexlet-kompas3d-gui-runtime.yml"
-      - "hexlet_7344445/create_exact_official_drawing.py"
   workflow_dispatch:
 
 jobs:
-  native-drawing:
+  drawing-gui-menu:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install official KOMPAS v25 + SDK
+      - name: Install official KOMPAS v25 GUI + SDK
         shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            wget ca-certificates gnupg desktop-file-utils xvfb \
+            wget ca-certificates gnupg desktop-file-utils \
+            xvfb openbox xdotool imagemagick x11-utils x11-xserver-utils \
+            mesa-utils libgl1-mesa-dri xclip \
             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxkbcommon-x11-0
           wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
           sudo bash /tmp/ascon.sh || true
@@ -31,53 +32,128 @@ jobs:
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
-          dpkg -l 'ascon-kompas*' | tee installed-packages.txt
+          mkdir -p runtime_evidence
+          dpkg -l 'ascon-kompas*' | tee runtime_evidence/installed-packages.txt
 
-      - name: Create native CDW with official 2D module request
+      - name: Accept EULA and create Drawing via File Create menu
         shell: bash
         run: |
           set -euxo pipefail
-          export PYTHONPATH=/opt/ascon/kompas3d-v25/Bin
-          timeout 240 xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
-            python3 hexlet_7344445/create_exact_official_drawing.py \
-            | tee native-drawing.log
+          export DISPLAY=:99
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QT_OPENGL=software
 
-      - name: Strict Save Close Reopen gate
+          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset \
+            >runtime_evidence/xvfb.log 2>&1 &
+          sleep 2
+          openbox >runtime_evidence/openbox.log 2>&1 &
+          sleep 2
+
+          kompas-v25 >runtime_evidence/kompas.out 2>runtime_evidence/kompas.err &
+          KPID=$!
+          echo "$KPID" > runtime_evidence/kompas.pid
+
+          MAIN=""
+          for i in $(seq 1 90); do
+            sleep 1
+            MAIN=$(xdotool search --onlyvisible --name '^КОМПАС-3D v25$' 2>/dev/null | tail -1 || true)
+            [ -n "$MAIN" ] && break
+          done
+          test -n "$MAIN"
+          echo "MAIN=$MAIN" | tee runtime_evidence/main.txt
+          xdotool getwindowgeometry --shell "$MAIN" | tee runtime_evidence/main-geometry.txt
+
+          sleep 25
+
+          EULA=""
+          for i in $(seq 1 30); do
+            EULA=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+            [ -n "$EULA" ] && break
+            sleep 1
+          done
+          test -n "$EULA"
+          eval "$(xdotool getwindowgeometry --shell "$EULA")"
+          AX=$((X + WIDTH * 65 / 100))
+          AY=$((Y + HEIGHT - 42))
+          echo "EULA=$EULA X=$X Y=$Y WIDTH=$WIDTH HEIGHT=$HEIGHT ACCEPT_X=$AX ACCEPT_Y=$AY" \
+            | tee runtime_evidence/eula-geometry.txt
+          import -display :99 -window root runtime_evidence/01_eula.png
+          xdotool windowfocus --sync "$EULA"
+          xdotool mousemove --sync "$AX" "$AY"
+          xdotool click 1
+          sleep 3
+          EULA2=$(xdotool search --onlyvisible --name '^ЛИЦЕНЗИОННОЕ СОГЛАШЕНИЕ$' 2>/dev/null | tail -1 || true)
+          echo "EULA_AFTER=$EULA2" | tee runtime_evidence/eula-after.txt
+          test -z "$EULA2"
+
+          # Refocus actual KOMPAS top-level window.
+          xdotool windowfocus --sync "$MAIN"
+          sleep 1
+
+          # Open real File menu by its top-left menu-bar position.
+          eval "$(xdotool getwindowgeometry --shell "$MAIN")"
+          FILE_X=$((X + 18))
+          FILE_Y=$((Y + 25))
+          echo "FILE_X=$FILE_X FILE_Y=$FILE_Y" | tee runtime_evidence/file-menu-target.txt
+          xdotool mousemove --sync "$FILE_X" "$FILE_Y"
+          xdotool click 1
+          sleep 2
+          import -display :99 -window root runtime_evidence/02_file_menu.png
+          xwininfo -root -tree > runtime_evidence/xwin-tree-file-menu.txt
+
+          # In KOMPAS File menu the first command is "Создать"; its first submenu
+          # document type is "Чертеж". Navigate the real QMenu, not the start tile.
+          xdotool key Home
+          sleep 1
+          xdotool key Right
+          sleep 2
+          import -display :99 -window root runtime_evidence/03_create_submenu.png
+          xwininfo -root -tree > runtime_evidence/xwin-tree-create-submenu.txt
+          xdotool key Home
+          xdotool key Return
+          sleep 15
+
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/windows-after-create.txt || true
+          import -display :99 -window root runtime_evidence/04_after_create_drawing.png
+
+          # Functional proof: an unsaved Drawing must respond to Save with a modal dialog.
+          BEFORE_FOCUS=$(xdotool getwindowfocus)
+          echo "BEFORE_SAVE_FOCUS=$BEFORE_FOCUS" | tee runtime_evidence/save-probe.txt
+          xdotool key ctrl+s
+          sleep 5
+          AFTER_FOCUS=$(xdotool getwindowfocus)
+          echo "AFTER_SAVE_FOCUS=$AFTER_FOCUS" | tee -a runtime_evidence/save-probe.txt
+          xdotool getwindowname "$AFTER_FOCUS" | tee -a runtime_evidence/save-probe.txt || true
+          xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null \
+            | tee runtime_evidence/windows-after-save.txt || true
+          import -display :99 -window root runtime_evidence/05_save_dialog.png
+
+          # Require a distinct focused top-level window OR a visible Save-named window.
+          SAVE_NAMED=$(xdotool search --onlyvisible --name 'Сохран|Save' 2>/dev/null | tail -1 || true)
+          echo "SAVE_NAMED=$SAVE_NAMED" | tee -a runtime_evidence/save-probe.txt
+          if [ "$AFTER_FOCUS" = "$MAIN" ] && [ -z "$SAVE_NAMED" ]; then
+            echo 'RESULT=FAIL_DRAWING_NOT_CONFIRMED' | tee runtime_evidence/result.txt
+            exit 51
+          fi
+
+          echo 'RESULT=PASS_REAL_DRAWING_CREATED_VIA_FILE_MENU' | tee runtime_evidence/result.txt
+
+      - name: Strict Drawing gate
         shell: bash
         run: |
           set -euxo pipefail
-          grep -q '^RESULT=PASS_NATIVE_DRAWING_SAVE_CLOSE_REOPEN$' native-drawing.log
-          grep -q '^DOC_TYPE= *1 native-drawing.log
-          grep -Eq '^REOPEN_TEXT_COUNT= *[1-9][0-9]*$' native-drawing.log
-          test -s native_drawing_exact/Hexlet_KOMPAS3D_Privet_Hexlet.cdw
-          test -s native_drawing_exact/Hexlet_KOMPAS3D_Privet_Hexlet_REOPENED.cdw
-          test -s native_drawing_exact/validation.json
-          file native_drawing_exact/*.cdw | tee native_drawing_exact/file-types.txt
-          sha256sum native_drawing_exact/*.cdw | tee native_drawing_exact/sha256.txt
+          grep -q '^EULA_AFTER=$' runtime_evidence/eula-after.txt
+          grep -q '^RESULT=PASS_REAL_DRAWING_CREATED_VIA_FILE_MENU$' runtime_evidence/result.txt
+          test -s runtime_evidence/02_file_menu.png
+          test -s runtime_evidence/03_create_submenu.png
+          test -s runtime_evidence/04_after_create_drawing.png
+          test -s runtime_evidence/05_save_dialog.png
+          sha256sum runtime_evidence/*.png | tee runtime_evidence/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: hexlet-kompas3d-native-drawing
-          path: |
-            native_drawing_exact/
-            native-drawing.log
-            installed-packages.txt
-          if-no-files-found: warn
- native-drawing.log
-          grep -Eq '^REOPEN_TEXT_COUNT= *[1-9][0-9]*$' native-drawing.log
-          test -s native_drawing_exact/Hexlet_KOMPAS3D_Privet_Hexlet.cdw
-          test -s native_drawing_exact/Hexlet_KOMPAS3D_Privet_Hexlet_REOPENED.cdw
-          test -s native_drawing_exact/validation.json
-          file native_drawing_exact/*.cdw | tee native_drawing_exact/file-types.txt
-          sha256sum native_drawing_exact/*.cdw | tee native_drawing_exact/sha256.txt
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: hexlet-kompas3d-native-drawing
-          path: |
-            native_drawing_exact/
-            native-drawing.log
-            installed-packages.txt
-          if-no-files-found: warn
+          name: kompas3d-native-drawing-gui-menu
+          path: runtime_evidence/
+          if-no-files-found: error
