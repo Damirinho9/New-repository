@@ -56,35 +56,45 @@ jobs:
           SDK=/opt/ascon/kompas3d-v25/SDK
           mkdir -p result/stage4-exported-createdocument
 
+          OUT=result/stage4-exported-createdocument/export-surface.txt
+          : > "$OUT"
           {
             echo "=== RUNTIME ==="
             readlink -f /opt/ascon/kompas3d-v25
             sha256sum "$BIN/ksinvisible" "$BIN/libksAPI.so"
+
             echo
-            echo "=== HEADER MATCHES ==="
-            grep -Rni -C 8 -E '\\b(CreateDocumentW?|TransferReference|OpenDocumentW?|SaveDocument|CloseDocument)\\b|struct[[:space:]]+DocumentParam(W)?\\b' "$SDK" 2>/dev/null | head -4000 || true
+            echo "=== SDK LITERAL MATCHES ==="
+            grep -Rni -C 6 -F 'CreateDocument' "$SDK" 2>/dev/null | head -2500 || true
+            grep -Rni -C 6 -F 'DocumentParam' "$SDK" 2>/dev/null | head -2500 || true
+            grep -Rni -C 6 -F 'TransferReference' "$SDK" 2>/dev/null | head -1200 || true
+
             echo
-            echo "=== HEADER FILES ==="
-            grep -RIl -E '\\bCreateDocumentW?[[:space:]]*\\(|struct[[:space:]]+DocumentParam(W)?\\b' "$SDK" 2>/dev/null | sort -u || true
-            echo
-            echo "=== DYNAMIC SYMBOLS ==="
+            echo "=== DYNAMIC SYMBOLS SIMPLE ==="
             while IFS= read -r f; do
-              hits="$(nm -D -C --defined-only "$f" 2>/dev/null | grep -E '(^|[[:space:]])(CreateDocumentW?|TransferReference|OpenDocumentW?|SaveDocument|CloseDocument)(\\(|$)' || true)"
+              hits="$(nm -D -C --defined-only "$f" 2>/dev/null | grep -E 'CreateDocument|TransferReference|OpenDocument|SaveDocument|CloseDocument' || true)"
               if [ -n "$hits" ]; then
                 echo "--- $f"
                 echo "$hits"
               fi
             done < <(find "$BIN" /opt/ascon/common -type f \( -name '*.so' -o -name '*.so.*' -o -perm -111 \) 2>/dev/null | sort -u)
-            echo
-            echo "=== RAW SYMBOL STRINGS ==="
-            grep -RIl -a -E 'CreateDocumentW?|TransferReference' "$BIN" /opt/ascon/common 2>/dev/null | sort -u || true
-            echo
-            echo "=== SDK SAMPLES ==="
-            grep -Rni -C 10 -E '\bCreateDocumentW?[[:space:]]*\\(' "$SDK" 2>/dev/null | head -2500 || true
-          } | tee result/stage4-exported-createdocument/export-surface.txt
 
-          grep -qE 'CreateDocumentW?' result/stage4-exported-createdocument/export-surface.txt
-          echo "RESULT=EXPORTED_CREATE_DOCUMENT_SURFACE_FOUND" | tee result/stage4-exported-createdocument/result.txt
+            echo
+            echo "=== RAW STRINGS SIMPLE ==="
+            while IFS= read -r f; do
+              hits="$(strings -a "$f" 2>/dev/null | grep -E 'CreateDocument|TransferReference' | head -50 || true)"
+              if [ -n "$hits" ]; then
+                echo "--- $f"
+                echo "$hits"
+              fi
+            done < <(find "$BIN" /opt/ascon/common -type f \( -name '*.so' -o -name '*.so.*' -o -perm -111 \) 2>/dev/null | sort -u)
+          } | tee -a "$OUT"
+
+          if grep -qE '^--- .*|CreateDocument|TransferReference' "$OUT"; then
+            echo "RESULT=PROBE_COMPLETE" | tee result/stage4-exported-createdocument/result.txt
+          else
+            echo "RESULT=NO_EXPORTED_DOCUMENT_SURFACE" | tee result/stage4-exported-createdocument/result.txt
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
