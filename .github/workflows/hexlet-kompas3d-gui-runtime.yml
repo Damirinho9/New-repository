@@ -89,17 +89,17 @@ jobs:
           xdotool windowfocus --sync "$MAIN"
           sleep 1
 
-          echo "FILE_REL_X=18 FILE_REL_Y=6" | tee runtime_evidence/file-menu-target.txt
+          echo "MENU_METHOD=F10_HOME_DOWN_HOME_RIGHT_HOME_ENTER" | tee runtime_evidence/file-menu-target.txt
           xdotool windowfocus --sync "$MAIN"
-          xdotool mousemove --window "$MAIN" --sync 18 6
-          xdotool getmouselocation --shell | tee runtime_evidence/file-menu-mouse.txt
-          xdotool click 1
+          xdotool key F10
+          sleep 1
+          xdotool key Home
+          xdotool key Down
           sleep 2
           import -display :99 -window root runtime_evidence/02_file_menu.png
           xwininfo -root -tree > runtime_evidence/xwin-tree-file-menu.txt
 
           xdotool key Home
-          sleep 1
           xdotool key Right
           sleep 2
           import -display :99 -window root runtime_evidence/03_create_submenu.png
