@@ -1,0 +1,185 @@
+name: KOMPAS Stage 4 config-only overlay probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-config-overlay-lite.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Restore exact frozen product runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then
+            sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+          fi
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          sha256sum "$BIN/ksinvisible" "$BIN/libksAPI.so" | tee "$RUNNER_TEMP/core-before.sha256"
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          echo "KOMPAS_SYS_LD=$SYS_LD" >> "$GITHUB_ENV"
+
+      - name: Download and inspect only official KOMPAS configuration package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wget ca-certificates gnupg xvfb xauth dbus procps \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-image0 libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh >/tmp/ascon-script.out 2>/tmp/ascon-script.err || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          cd "$RUNNER_TEMP"
+          apt-get download ascon-kompas-v25=25.0.5.2780
+          DEB=$(find . -maxdepth 1 -type f -name 'ascon-kompas-v25*.deb' -print -quit)
+          test -s "$DEB"
+          mkdir -p config-root
+          dpkg-deb -x "$DEB" config-root
+          mkdir -p "$GITHUB_WORKSPACE/result/config-overlay-lite"
+          {
+            echo "PACKAGE=$DEB"
+            dpkg-deb -f "$DEB" Package Version Depends
+            echo '=== FILES ==='
+            find config-root -type f -o -type l | sort
+          } | tee "$GITHUB_WORKSPACE/result/config-overlay-lite/package-files.txt"
+          du -sh "$DEB" config-root | tee "$GITHUB_WORKSPACE/result/config-overlay-lite/package-size.txt"
+
+      - name: Overlay config package only and preserve frozen core binaries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$RUNNER_TEMP/config-root"
+          # The package is officially documented as KOMPAS configuration files.
+          # Overlay exactly those files, including any product-root config files,
+          # but verify that core executables/libraries remain byte-identical.
+          sudo cp -a "$ROOT"/. /
+          sha256sum -c "$RUNNER_TEMP/core-before.sha256"
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          sha256sum "$BIN/ksinvisible" "$BIN/libksAPI.so" | tee result/config-overlay-lite/core-after.sha256
+          find /etc/ascon -maxdepth 6 -type f -print 2>/dev/null | sort | tee result/config-overlay-lite/etc-ascon-files.txt || true
+
+      - name: Probe editable 2D and 3D initialization through official KsAPI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          export PYTHONPATH="$BIN"
+          export LD_LIBRARY_PATH="$BIN:$KOMPAS_SYS_LD"
+          export HOME="$RUNNER_TEMP/overlay-lite-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25"
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+          cat >/tmp/config_overlay_probe.py <<'PY'
+          import pathlib, traceback, ksapi
+          from constants import constants as c
+
+          logp=pathlib.Path("result/config-overlay-lite/probe.log")
+          def log(s):
+              print(s,flush=True)
+              with logp.open("a",encoding="utf-8") as f:f.write(str(s)+"\n")
+          def req(v,m):
+              if not v: raise RuntimeError(m)
+              return v
+
+          try:
+              app=req(ksapi.OpenKompasInvisible(),"OpenKompasInvisible")
+              log("APP="+str(app.GetApplicationName(True)))
+              lm=req(app.GetApplicationLicenseManager(),"license manager")
+              l2=bool(lm.IsKompasModuleActive(c.ksKompasModule2D))
+              l3=bool(lm.IsKompasModuleActive(c.ksKompasModule3D))
+              log("LICENSE_2D_ACTIVE="+str(int(l2)))
+              log("LICENSE_3D_ACTIVE="+str(int(l3)))
+              req(l2 and l3,"licenses")
+              docs=req(app.GetDocuments(),"documents")
+
+              f=docs.AddWithDefaultSettings(c.ksDocumentFragment,True)
+              log("FRAGMENT_ADD_DEFAULT="+str(int(bool(f))))
+              if f:
+                  d2=ksapi.IKompasDocument2D(f)
+                  vm=d2.GetViewsAndLayersManager() if d2 else None
+                  views=vm.GetViews() if vm else None
+                  view=views.GetActiveView() if views else None
+                  dc=ksapi.IDrawingContainer(view) if view else None
+                  lines=dc.GetLineSegments() if dc else None
+                  log("FRAGMENT_STATE d2=%d views=%d count=%d view=%d lines=%d"%(
+                      bool(d2),bool(views),int(views.GetCount()) if views else -1,bool(view),bool(lines)))
+                  if lines:
+                      s=req(lines.Add(),"line add")
+                      s.SetX1(1);s.SetY1(2);s.SetX2(31);s.SetY2(2);s.SetStyle(c.ksCSNormal)
+                      req(s.Update(),"line update")
+                      log("FRAGMENT_LINE_MUTATION_PASS")
+                      req(f.SaveAs("/tmp/ConfigOverlay2D.frw"),"2D SaveAs")
+                      log("FRAGMENT_SAVE_PASS")
+              p=docs.AddWithDefaultSettings(c.ksDocumentPart,True)
+              log("PART_ADD_DEFAULT="+str(int(bool(p))))
+              if p:
+                  d3=ksapi.IKompasDocument3D(p)
+                  top=d3.GetTopPart() if d3 else None
+                  mc=top.GetModelContainer() if top else None
+                  log("PART_STATE d3=%d top=%d model=%d"%(bool(d3),bool(top),bool(mc)))
+                  if top and mc:
+                      req(p.SaveAs("/tmp/ConfigOverlay3D.m3d"),"3D SaveAs")
+                      log("PART_SAVE_PASS")
+              if f and p and lines and top and mc:
+                  log("RESULT=PASS_CONFIG_ONLY_OVERLAY_INITIALIZES_NATIVE_2D_3D")
+              else:
+                  log("RESULT=FAIL_CONFIG_ONLY_OVERLAY_INITIALIZATION")
+              try: app.Quit()
+              except: pass
+          except Exception as e:
+              log("EXCEPTION="+repr(e))
+              traceback.print_exc()
+              log("RESULT=FAIL_CONFIG_ONLY_OVERLAY_EXCEPTION")
+              raise
+          PY
+
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- python3 -u /tmp/config_overlay_probe.py 2>&1 | tee result/config-overlay-lite/stdout.txt
+          cp /tmp/ConfigOverlay2D.frw result/config-overlay-lite/ 2>/dev/null || true
+          cp /tmp/ConfigOverlay3D.m3d result/config-overlay-lite/ 2>/dev/null || true
+          grep -qx 'RESULT=PASS_CONFIG_ONLY_OVERLAY_INITIALIZES_NATIVE_2D_3D' result/config-overlay-lite/probe.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-config-overlay-lite
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/config-overlay-lite/**
