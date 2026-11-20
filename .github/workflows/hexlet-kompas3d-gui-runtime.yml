@@ -47,20 +47,37 @@ jobs:
         run: |
           set -euxo pipefail
           grep -q '^RESULT=PASS_NATIVE_DRAWING_SAVE_CLOSE_REOPEN$' native-drawing.log
-          grep -q '^DOC1_TYPE= *1$' native-drawing.log
+          grep -q '^DOC_TYPE= *1 native-drawing.log
           grep -Eq '^REOPEN_TEXT_COUNT= *[1-9][0-9]*$' native-drawing.log
-          test -s native_drawing_exact_exact/Hexlet_KOMPAS3D_Privet_Hexlet.cdw
-          test -s native_drawing_exact_exact/Hexlet_KOMPAS3D_Privet_Hexlet_REOPENED.cdw
-          test -s native_drawing_exact_exact/validation.json
-          file native_drawing_exact_exact/*.cdw | tee native_drawing_exact_exact/file-types.txt
-          sha256sum native_drawing_exact_exact/*.cdw | tee native_drawing_exact_exact/sha256.txt
+          test -s native_drawing_exact/Hexlet_KOMPAS3D_Privet_Hexlet.cdw
+          test -s native_drawing_exact/Hexlet_KOMPAS3D_Privet_Hexlet_REOPENED.cdw
+          test -s native_drawing_exact/validation.json
+          file native_drawing_exact/*.cdw | tee native_drawing_exact/file-types.txt
+          sha256sum native_drawing_exact/*.cdw | tee native_drawing_exact/sha256.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: hexlet-kompas3d-native-drawing
           path: |
-            native_drawing_exact_exact/
+            native_drawing_exact/
+            native-drawing.log
+            installed-packages.txt
+          if-no-files-found: warn
+ native-drawing.log
+          grep -Eq '^REOPEN_TEXT_COUNT= *[1-9][0-9]*$' native-drawing.log
+          test -s native_drawing_exact/Hexlet_KOMPAS3D_Privet_Hexlet.cdw
+          test -s native_drawing_exact/Hexlet_KOMPAS3D_Privet_Hexlet_REOPENED.cdw
+          test -s native_drawing_exact/validation.json
+          file native_drawing_exact/*.cdw | tee native_drawing_exact/file-types.txt
+          sha256sum native_drawing_exact/*.cdw | tee native_drawing_exact/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hexlet-kompas3d-native-drawing
+          path: |
+            native_drawing_exact/
             native-drawing.log
             installed-packages.txt
           if-no-files-found: warn
