@@ -33,7 +33,7 @@ jobs:
             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
           dpkg -l 'ascon-kompas*' | tee installed-packages.txt
 
-      - name: Create native CDW exactly through official OpenKompasInvisible pattern
+      - name: Create native CDW with official 2D module request
         shell: bash
         run: |
           set -euxo pipefail
