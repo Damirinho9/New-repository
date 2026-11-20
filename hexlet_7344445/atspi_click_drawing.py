@@ -63,19 +63,43 @@ def walk(obj, depth=0, rows=None, candidates=None):
     return rows,candidates
 
 desktop=pyatspi.Registry.getDesktop(0)
+
+def subtree_has_kompas(obj, depth=0):
+    if depth > 6:
+        return False
+    try:
+        nm=(obj.name or "")
+    except Exception:
+        nm=""
+    if "КОМПАС" in nm or "KOMPAS" in nm.upper():
+        return True
+    try:
+        n=obj.childCount
+    except Exception:
+        n=0
+    for i in range(n):
+        try:
+            ch=obj.getChildAtIndex(i)
+            if ch is not None and subtree_has_kompas(ch, depth+1):
+                return True
+        except Exception:
+            pass
+    return False
+
 app=None
-deadline=time.time()+40
+deadline=time.time()+45
 while time.time()<deadline and app is None:
+    print("ATSPI_DESKTOP_CHILDREN", desktop.childCount)
     for i in range(desktop.childCount):
         try:
             a=desktop.getChildAtIndex(i)
-            nm=(a.name or "")
-            if "КОМПАС" in nm or "KOMPAS" in nm.upper():
+            print("DESKTOP_CHILD",i,"name=",repr(a.name),"role=",a.getRoleName())
+            if subtree_has_kompas(a):
                 app=a; break
-        except Exception:
-            pass
+        except Exception as exc:
+            print("DESKTOP_CHILD_ERROR",i,repr(exc))
     if app is None:
-        time.sleep(1)
+        time.sleep(2)
 
 if app is None:
     print("ATSPI_APP_NOT_FOUND")
