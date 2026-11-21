@@ -164,7 +164,7 @@ foreach($rn in @("Транспортные компанииЗаказы","Маг
 $log.Add("");$log.Add("[LOOKUPS]")
 foreach($a in @(@("Сотрудники","Должность"),@("Магазины","Город"),@("Транспортные компании","Город"),@("Книги","Серия"),@("Заказы","Доставка"))){$f=Field $a[0] $a[1];$log.Add($a[0]+"."+$a[1]+" RowSourceType="+$f.Properties.Item("RowSourceType").Value+" RowSource="+$f.Properties.Item("RowSource").Value)}
 $log.Add("");$log.Add("[KEY_QUERIES]")
-foreach($qn in @("Стоимость книг в заказах","Стоимость заказов","Количество заказов, сделанных каждым магазином","Сводная стоимость книг в заказах","Работа сотрудников","Учет работы сотрудников по кварталам","Количество заказов по магазинам и годам")){$rs=$db.OpenRecordset("[$qn]");$cnt=0;if(-not $rs.EOF){$rs.MoveLast();$cnt=$rs.RecordCount};$rs.Close();$log.Add($qn+" rows="+$cnt);Write-Host $qn $cnt}
+foreach($qn in @("Стоимость книг в заказах","Стоимость заказов","Количество заказов, сделанных каждым магазином","Сводная стоимость книг в заказах","Работа сотрудников","Учет работы сотрудников по кварталам","Количество заказов по магазинам и годам")){$rs=$db.OpenRecordset($qn);$cnt=0;if(-not $rs.EOF){$rs.MoveLast();$cnt=$rs.RecordCount};$rs.Close();$log.Add($qn+" rows="+$cnt);Write-Host $qn $cnt}
 $db.BeginTrans()
 try{$db.Execute("INSERT INTO [Описание заказов] ([Код заказа],[Код книги],[Количество],[Скидка]) VALUES (999999,999999,1,0)");$log.Add("REFERENTIAL_INTEGRITY=FAIL_INSERT_ALLOWED")}catch{$log.Add("REFERENTIAL_INTEGRITY=PASS_ORPHAN_REJECTED")}
 $db.Rollback()
@@ -172,7 +172,7 @@ $log | Set-Content -Path (Join-Path $out "VALIDATION.txt") -Encoding UTF8
 
 $sample=New-Object System.Collections.Generic.List[string]
 foreach($qn in @("Стоимость книг в заказах","Стоимость заказов","Количество заказов, сделанных каждым магазином","Сводная стоимость книг в заказах","Работа сотрудников","Учет работы сотрудников по кварталам")){
- $sample.Add("===== "+$qn+" =====");$rs=$db.OpenRecordset("[$qn]");$heads=@();for($i=0;$i -lt $rs.Fields.Count;$i++){$heads += $rs.Fields.Item($i).Name};$sample.Add(($heads -join " | "));$n=0
+ $sample.Add("===== "+$qn+" =====");$rs=$db.OpenRecordset($qn);$heads=@();for($i=0;$i -lt $rs.Fields.Count;$i++){$heads += $rs.Fields.Item($i).Name};$sample.Add(($heads -join " | "));$n=0
  while(-not $rs.EOF -and $n -lt 8){$vals=@();for($i=0;$i -lt $rs.Fields.Count;$i++){$vals += [string]$rs.Fields.Item($i).Value};$sample.Add(($vals -join " | "));$rs.MoveNext();$n++};$rs.Close();$sample.Add("")
 }
 $sample | Set-Content -Path (Join-Path $out "QUERY_SAMPLES.txt") -Encoding UTF8
