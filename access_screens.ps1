@@ -2,8 +2,8 @@ $ErrorActionPreference="Stop"
 $root=$PSScriptRoot
 $out=Join-Path $root "access_screens"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
-$db=Join-Path $root "access_out\LR2-3_P поставки книг.accdb"
-if(!(Test-Path $db)){throw "Database not found: $db"}
+$db=(Get-ChildItem (Join-Path $root "access_out") -Filter *.accdb | Select-Object -First 1).FullName
+if(!$db -or !(Test-Path $db)){throw "Database not found"}
 
 Write-Host "Trying Access.Application..."
 $app=New-Object -ComObject Access.Application
