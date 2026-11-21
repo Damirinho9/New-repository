@@ -237,3 +237,5 @@ ping -n 4 mcesii.ru >>"%NET%" 2>&1
 
 echo Native CMD lab execution completed.
 endlocal
+
+rem trigger dedicated tree workflow
