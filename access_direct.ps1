@@ -26,12 +26,12 @@ public static class W {
 }
 "@
 
-function WindowInfo([int]$pid){
+function WindowInfo([int]$procId){
   $list=New-Object System.Collections.Generic.List[object]
   $cb=[W+EnumWindowsProc]{
     param($h,$l)
     [uint32]$wpid=0;[W]::GetWindowThreadProcessId($h,[ref]$wpid)|Out-Null
-    if($wpid -eq $pid){
+    if($wpid -eq $procId){
       $r=New-Object W+RECT;[W]::GetWindowRect($h,[ref]$r)|Out-Null
       $sb=New-Object Text.StringBuilder 512;[W]::GetWindowText($h,$sb,$sb.Capacity)|Out-Null
       $script:list.Add([pscustomobject]@{Handle=$h.ToInt64();Visible=[W]::IsWindowVisible($h);W=$r.Right-$r.Left;H=$r.Bottom-$r.Top;Title=$sb.ToString()})
