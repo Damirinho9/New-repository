@@ -9,33 +9,20 @@ on:
 jobs:
   native-cmd:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Execute full TREE C drive for task 9
-        shell: cmd
-        timeout-minutes: 4
-        continue-on-error: true
-        run: |
-          if not exist artifacts md artifacts
-          tree C:\ /A > artifacts\TASK09_TREE_C.txt 2>&1
-
-      - name: Execute remaining LR1 tasks in real Windows CMD
+      - name: Execute LR1 in real Windows CMD
         shell: cmd
         run: call lr1_7342835.cmd
-
       - name: Show evidence summary
         shell: powershell
         run: |
-          Write-Host "=== Artifact files ==="
           Get-ChildItem "$env:GITHUB_WORKSPACE\artifacts" | Format-Table Name,Length,LastWriteTime
-          Write-Host "=== Final tree ==="
+          Get-Content "$env:GITHUB_WORKSPACE\artifacts\TASK09_TREE_C_HEAD.txt" -First 30
           Get-Content "$env:GITHUB_WORKSPACE\artifacts\FINAL_TREE.txt"
-          Write-Host "=== Network tail ==="
-          Get-Content "$env:GITHUB_WORKSPACE\artifacts\LR1_NETWORK_TRANSCRIPT.txt" -Tail 80
-
+          Get-Content "$env:GITHUB_WORKSPACE\artifacts\LR1_NETWORK_TRANSCRIPT.txt" -Tail 40
       - name: Upload native evidence
         uses: actions/upload-artifact@v4
         with:
