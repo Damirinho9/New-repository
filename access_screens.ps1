@@ -64,3 +64,5 @@ $app.CloseCurrentDatabase()
 $app.Quit(2)
 [Runtime.InteropServices.Marshal]::ReleaseComObject($app) | Out-Null
 Write-Host "ACCESS_SCREENSHOTS_COMPLETE"
+
+# trigger native screenshots
