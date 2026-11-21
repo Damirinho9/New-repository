@@ -1,0 +1,13 @@
+name: Windows interactive session probe
+on:
+  push:
+    branches: [lr23-7342835-access-native]
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe Windows sessions
+        shell: powershell
+        run: .\session_probe.ps1
