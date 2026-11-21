@@ -183,3 +183,5 @@ Write-Host "BUILD_COMPLETE"
 # final native build trigger
 
 # choco trigger
+
+# utf8 pwsh trigger
