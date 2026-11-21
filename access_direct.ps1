@@ -73,7 +73,9 @@ WScript.Echo "OK " & mode & " " & name
 $vbsPath=Join-Path $root "access_control.vbs"
 Set-Content -Path $vbsPath -Value $vbs -Encoding Unicode
 
-$p=Start-Process -FilePath $exe -ArgumentList @($db,"/runtime") -PassThru
+$argLine='"' + $db + '" /runtime'
+Write-Host "ACCESS_ARGS=$argLine"
+$p=Start-Process -FilePath $exe -ArgumentList $argLine -PassThru
 Start-Sleep -Seconds 15
 $p.Refresh()
 $hw=[IntPtr]$p.MainWindowHandle
