@@ -1,0 +1,33 @@
+name: Access direct GUI probe
+on:
+  push:
+    branches: [lr23-7342835-access-native]
+  workflow_dispatch:
+jobs:
+  gui:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Access Runtime
+        shell: powershell
+        run: choco install access2016runtime -y --no-progress
+      - name: Install build deps
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module ImportExcel -Scope CurrentUser -Force -AllowClobber
+      - name: Build DB
+        shell: pwsh
+        run: .\build_access_lr23.ps1
+      - name: Direct launch Access GUI
+        shell: pwsh
+        run: .\access_direct.ps1
+      - name: Upload probe
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ACCESS_DIRECT_GUI_PROBE
+          path: access_direct
+          if-no-files-found: warn
+          retention-days: 7
