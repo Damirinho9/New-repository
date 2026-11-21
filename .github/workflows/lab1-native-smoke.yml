@@ -1,0 +1,64 @@
+name: Lab1 Native WinForms Smoke
+
+on:
+  push:
+    branches:
+      - lab1-native-smoke
+  workflow_dispatch:
+
+jobs:
+  native-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore source payload
+        shell: pwsh
+        run: |
+          $b64 = (Get-Content 'native-smoke/lab1_source.b64' -Raw).Trim()
+          [IO.File]::WriteAllBytes('native-smoke/lab1_source.zip', [Convert]::FromBase64String($b64))
+          Expand-Archive -Path 'native-smoke/lab1_source.zip' -DestinationPath 'native-smoke' -Force
+          Get-ChildItem native-smoke -Recurse | Select-Object FullName
+
+      - name: Native build Lab1
+        shell: pwsh
+        run: |
+          dotnet restore native-smoke/Lab1/Lab1.csproj
+          dotnet build native-smoke/Lab1/Lab1.csproj -c Release --no-restore
+
+      - name: Build smoke runner
+        shell: pwsh
+        run: |
+          dotnet restore native-smoke/SmokeRunner/SmokeRunner.csproj
+          dotnet build native-smoke/SmokeRunner/SmokeRunner.csproj -c Release --no-restore
+
+      - name: Run native WinForms smoke tests
+        shell: pwsh
+        run: |
+          Push-Location native-smoke
+          dotnet run --project SmokeRunner/SmokeRunner.csproj -c Release --no-build
+          Pop-Location
+
+      - name: Verify native evidence
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'native-smoke/NativeResults/SMOKE_PASS.txt')) { throw 'SMOKE_PASS.txt missing' }
+          $pngs = Get-ChildItem 'native-smoke/NativeResults/*.png'
+          if ($pngs.Count -lt 9) { throw "Expected at least 9 native PNG screenshots, got $($pngs.Count)" }
+          Get-Content 'native-smoke/NativeResults/SMOKE_PASS.txt'
+          Get-ChildItem 'native-smoke/NativeResults' | Select-Object Name,Length
+
+      - name: Upload native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lab1-native-windows-evidence
+          path: native-smoke/NativeResults
+          if-no-files-found: error
