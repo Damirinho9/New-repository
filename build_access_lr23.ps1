@@ -161,14 +161,19 @@ $log.Add("[TABLE_COUNTS]")
 foreach($t in @("Сотрудники","Магазины","Транспортные компании","Книги","Заказы","Описание заказов")){$rs=$db.OpenRecordset("SELECT Count(*) AS C FROM [$t]");$c=$rs.Fields.Item("C").Value;$rs.Close();$log.Add($t+"="+$c);Write-Host $t $c}
 $log.Add("");$log.Add("[RELATIONS]")
 foreach($rn in @("Транспортные компанииЗаказы","МагазиныЗаказы","СотрудникиЗаказы","КнигиОписание заказов","ЗаказыОписание заказов")){$r=$db.Relations.Item($rn);$log.Add($rn+" : "+$r.Table+" -> "+$r.ForeignTable+" Attributes="+$r.Attributes)}
+$log.Add("");$log.Add("[PRIMARY_KEYS]")
+foreach($t in @("Сотрудники","Магазины","Транспортные компании","Книги","Заказы","Описание заказов")){$pk=@();foreach($ix in $db.TableDefs.Item($t).Indexes){if($ix.Primary){$pk += $ix.Name}};$log.Add($t+"="+($(if($pk.Count){$pk -join ","}else{"NO_PRIMARY_KEY"})))}
+$log.Add("");$log.Add("[SUBDATASHEETS]")
+foreach($t in @("Магазины","Сотрудники","Транспортные компании","Книги","Заказы")){$td=$db.TableDefs.Item($t);$log.Add($t+" -> "+$td.Properties.Item("SubdatasheetName").Value+" master="+$td.Properties.Item("LinkMasterFields").Value+" child="+$td.Properties.Item("LinkChildFields").Value)}
 $log.Add("");$log.Add("[LOOKUPS]")
 foreach($a in @(@("Сотрудники","Должность"),@("Магазины","Город"),@("Транспортные компании","Город"),@("Книги","Серия"),@("Заказы","Доставка"))){$f=Field $a[0] $a[1];$log.Add($a[0]+"."+$a[1]+" RowSourceType="+$f.Properties.Item("RowSourceType").Value+" RowSource="+$f.Properties.Item("RowSource").Value)}
 $log.Add("");$log.Add("[KEY_QUERIES]")
 foreach($qn in @("Стоимость книг в заказах","Стоимость заказов","Количество заказов, сделанных каждым магазином","Сводная стоимость книг в заказах","Работа сотрудников","Учет работы сотрудников по кварталам","Количество заказов по магазинам и годам")){$rs=$db.OpenRecordset($qn);$cnt=0;if(-not $rs.EOF){$rs.MoveLast();$cnt=$rs.RecordCount};$rs.Close();$log.Add($qn+" rows="+$cnt);Write-Host $qn $cnt}
 try{
-  $db.Execute("INSERT INTO [Описание заказов] ([Код заказа],[Код книги],[Количество],[Скидка]) VALUES (999999,999999,1,0)")
-  $log.Add("REFERENTIAL_INTEGRITY=FAIL_INSERT_ALLOWED")
-  $db.Execute("DELETE FROM [Описание заказов] WHERE [Код заказа]=999999 AND [Код книги]=999999")
+  $db.Execute("INSERT INTO [Описание заказов] ([Код заказа],[Код книги],[Количество],[Скидка]) VALUES (999999,999999,1,0)",128)
+  $rs=$db.OpenRecordset("SELECT Count(*) AS C FROM [Описание заказов] WHERE [Код заказа]=999999 OR [Код книги]=999999")
+  $bad=$rs.Fields.Item("C").Value;$rs.Close()
+  if($bad -eq 0){$log.Add("REFERENTIAL_INTEGRITY=PASS_ORPHAN_REJECTED")}else{$log.Add("REFERENTIAL_INTEGRITY=FAIL_ORPHAN_PRESENT");$db.Execute("DELETE FROM [Описание заказов] WHERE [Код заказа]=999999 OR [Код книги]=999999",128)}
 }catch{
   $log.Add("REFERENTIAL_INTEGRITY=PASS_ORPHAN_REJECTED")
 }
@@ -181,6 +186,11 @@ foreach($qn in @("Стоимость книг в заказах","Стоимос
 }
 $sample | Set-Content -Path (Join-Path $out "QUERY_SAMPLES.txt") -Encoding UTF8
 $db.Close()
+[Runtime.InteropServices.Marshal]::ReleaseComObject($db) | Out-Null
+[Runtime.InteropServices.Marshal]::ReleaseComObject($dao) | Out-Null
+[GC]::Collect();[GC]::WaitForPendingFinalizers()
+Start-Sleep -Seconds 1
+$lock=[IO.Path]::ChangeExtension($dbPath,"laccdb");if(Test-Path $lock){Remove-Item $lock -Force -ErrorAction SilentlyContinue}
 Write-Host "ACCDB_CREATED" (Get-Item $dbPath).Length
 Write-Host "BUILD_COMPLETE"
 
