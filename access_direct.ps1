@@ -34,9 +34,9 @@ function DeskShot([string]$name){
 
 $vbs=@'
 On Error Resume Next
-mode = WScript.Arguments(0)
-name = ""
-If WScript.Arguments.Count > 1 Then name = WScript.Arguments(1)
+Set sh = CreateObject("WScript.Shell")
+mode = sh.ExpandEnvironmentStrings("%ACCESS_MODE%")
+name = sh.ExpandEnvironmentStrings("%ACCESS_NAME%")
 Set app = GetObject(, "Access.Application")
 If Err.Number <> 0 Then
   WScript.Echo "GETOBJECT_FAIL " & Hex(Err.Number) & " " & Err.Description
@@ -53,8 +53,6 @@ ElseIf mode = "closeQuery" Then
   app.DoCmd.Close 1, name, 2
 ElseIf mode = "relations" Then
   app.DoCmd.RunCommand 133
-ElseIf mode = "maximize" Then
-  app.DoCmd.Maximize
 ElseIf mode = "quit" Then
   app.CloseCurrentDatabase
   app.Quit 2
@@ -64,7 +62,6 @@ If Err.Number <> 0 Then
   WScript.Quit 21
 End If
 If mode <> "quit" Then
-  app.DoCmd.Maximize
   WScript.Sleep 2200
 End If
 WScript.Echo "OK " & mode & " " & name
@@ -162,38 +159,46 @@ if($hw -ne [IntPtr]::Zero){[W]::ShowWindow($hw,9)|Out-Null;[W]::ShowWindow($hw,3
 DeskShot "02_Access_после_SecurityOpen"
 
 function AccessCmd([string]$mode,[string]$name=""){
-  $args=@("//nologo",$vbsPath,$mode)
-  if($name){$args += $name}
-  $o=& cscript.exe @args
-  $ec=$LASTEXITCODE
-  Write-Host ($o -join [Environment]::NewLine)
-  Write-Host "CSCRIPT_EXIT=$ec"
-  if($ec -ne 0){throw "Access VBScript command failed: $mode $name"}
-  [W]::ShowWindow($hw,3)|Out-Null;[W]::SetForegroundWindow($hw)|Out-Null
+  $env:ACCESS_MODE=$mode
+  $env:ACCESS_NAME=$name
+  $proc=Start-Process -FilePath "cscript.exe" -ArgumentList @("//nologo",$vbsPath) -PassThru
+  if(-not $proc.WaitForExit(15000)){
+    Write-Host "CSCRIPT_TIMEOUT mode=$mode name=$name"
+    DeskShot ("98_TIMEOUT_"+($mode -replace '[^A-Za-z0-9]','_'))
+    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    throw "Access VBScript timeout: $mode $name"
+  }
+  $ec=$proc.ExitCode
+  Write-Host "CSCRIPT_EXIT=$ec mode=$mode name=$name"
+  if($ec -ne 0){
+    DeskShot ("97_ERROR_"+($mode -replace '[^A-Za-z0-9]','_'))
+    throw "Access VBScript command failed: $mode $name"
+  }
+  $p.Refresh();$script:hw=[IntPtr]$p.MainWindowHandle
+  if($script:hw -ne [IntPtr]::Zero){[W]::ShowWindow($script:hw,9)|Out-Null;[W]::ShowWindow($script:hw,3)|Out-Null;[W]::SetForegroundWindow($script:hw)|Out-Null}
   Start-Sleep -Seconds 1
 }
 
-AccessCmd "maximize"
-DeskShot "01_Access_главное_окно"
+DeskShot "03_Access_база_загружена"
 
 foreach($x in @(
- @("Книги","02_Таблица_Книги"),
- @("Магазины","03_Таблица_Магазины"),
- @("Сотрудники","04_Таблица_Сотрудники"),
- @("Транспортные компании","05_Таблица_Транспортные_компании"),
- @("Заказы","06_Таблица_Заказы"),
- @("Описание заказов","07_Таблица_Описание_заказов")
+ @("Книги","10_Таблица_Книги"),
+ @("Магазины","11_Таблица_Магазины"),
+ @("Сотрудники","12_Таблица_Сотрудники"),
+ @("Транспортные компании","13_Таблица_Транспортные_компании"),
+ @("Заказы","14_Таблица_Заказы"),
+ @("Описание заказов","15_Таблица_Описание_заказов")
 )){
  AccessCmd "table" $x[0];DeskShot $x[1];AccessCmd "closeTable" $x[0]
 }
 
 foreach($x in @(
- @("Стоимость книг в заказах","10_Запрос_Стоимость_книг_в_заказах"),
- @("Стоимость заказов","11_Запрос_Стоимость_заказов"),
- @("Количество заказов, сделанных каждым магазином","12_Запрос_Количество_заказов"),
- @("Сводная стоимость книг в заказах","13_Запрос_Сводная_стоимость"),
- @("Работа сотрудников","14_Запрос_Работа_сотрудников"),
- @("Учет работы сотрудников по кварталам","15_Запрос_Учет_по_кварталам")
+ @("Стоимость книг в заказах","20_Запрос_Стоимость_книг_в_заказах"),
+ @("Стоимость заказов","21_Запрос_Стоимость_заказов"),
+ @("Количество заказов, сделанных каждым магазином","22_Запрос_Количество_заказов"),
+ @("Сводная стоимость книг в заказах","23_Запрос_Сводная_стоимость"),
+ @("Работа сотрудников","24_Запрос_Работа_сотрудников"),
+ @("Учет работы сотрудников по кварталам","25_Запрос_Учет_по_кварталам")
 )){
  AccessCmd "query" $x[0];DeskShot $x[1];AccessCmd "closeQuery" $x[0]
 }
