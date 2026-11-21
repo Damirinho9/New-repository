@@ -8,3 +8,5 @@ Write-Host "QUERY SESSION"
 query session
 Write-Host "PROCESSES"
 Get-Process explorer,dwm,LogonUI,winlogon -ErrorAction SilentlyContinue | Format-Table Name,Id,SessionId,MainWindowHandle
+
+# trigger session probe
