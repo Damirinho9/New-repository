@@ -10,8 +10,7 @@ set "OTCH=OTCHESTVO_NE_UKAZANO"
 
 if exist "%WORK%" rd /s /q "%WORK%"
 md "%WORK%"
-if exist "%OUT%" rd /s /q "%OUT%"
-md "%OUT%"
+if not exist "%OUT%" md "%OUT%"
 
 > "%LOG%" echo LAB 1 PART 1 - NATIVE WINDOWS CMD
 >>"%LOG%" echo Runner: %COMPUTERNAME%
