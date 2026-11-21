@@ -128,6 +128,40 @@ $hw=[IntPtr]$p.MainWindowHandle
 if($hw -ne [IntPtr]::Zero){[W]::ShowWindow($hw,9)|Out-Null;[W]::ShowWindow($hw,3)|Out-Null;[W]::SetForegroundWindow($hw)|Out-Null}
 DeskShot "01_Access_после_FirstThingsFirst"
 
+# Handle Microsoft Access Security Notice -> Open
+$opened=$false
+try{
+  Add-Type -AssemblyName UIAutomationClient -ErrorAction SilentlyContinue
+  Add-Type -AssemblyName UIAutomationTypes -ErrorAction SilentlyContinue
+  $rootEl=[Windows.Automation.AutomationElement]::RootElement
+  $nameCond=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,"Open")
+  $typeCond=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Button)
+  $andCond=New-Object Windows.Automation.AndCondition($nameCond,$typeCond)
+  $openBtn=$rootEl.FindFirst([Windows.Automation.TreeScope]::Subtree,$andCond)
+  if($openBtn){
+    $inv=$openBtn.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)
+    $inv.Invoke();$opened=$true;Write-Host "SECURITY_NOTICE_OPEN=UIA"
+  }
+}catch{Write-Host "UIA_SECURITY_OPEN_FAIL=$($_.Exception.Message)"}
+if(-not $opened){
+  if(-not ("MouseX" -as [type])){
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class MouseX {
+ [DllImport("user32.dll")] public static extern bool SetCursorPos(int X,int Y);
+ [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint data,UIntPtr extra);
+ public static void Click(int x,int y){SetCursorPos(x,y);mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);}
+}
+"@
+  }
+  [MouseX]::Click(541,485);Write-Host "SECURITY_NOTICE_OPEN=MOUSE_FALLBACK"
+}
+Start-Sleep -Seconds 10
+$p.Refresh();$hw=[IntPtr]$p.MainWindowHandle
+if($hw -ne [IntPtr]::Zero){[W]::ShowWindow($hw,9)|Out-Null;[W]::ShowWindow($hw,3)|Out-Null;[W]::SetForegroundWindow($hw)|Out-Null}
+DeskShot "02_Access_после_SecurityOpen"
+
 function AccessCmd([string]$mode,[string]$name=""){
   $args=@("//nologo",$vbsPath,$mode)
   if($name){$args += $name}
