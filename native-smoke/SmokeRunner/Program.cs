@@ -22,6 +22,9 @@ internal static class Program
             form.Size = new Size(1220, 780);
             form.CreateControl();
             form.PerformLayout();
+            form.Show();
+            Application.DoEvents();
+            Thread.Sleep(250);
 
             var source = Get<RichTextBox>(form, "sourceTextBox");
             var s1 = Get<ListBox>(form, "section1ListBox");
@@ -91,7 +94,11 @@ internal static class Program
             add.CreateControl();
             add.PerformLayout();
             Get<TextBox>(add, "wordTextBox").Text = "новое_слово";
+            add.Show();
+            Application.DoEvents();
+            Thread.Sleep(150);
             Save(add, "09_add_form.png");
+            add.Hide();
 
             var bubble = WordProcessor.BubbleSort(new[] { "bbb", "a", "cc" }, SortMode.LengthAscending);
             Assert(bubble.SequenceEqual(new[] { "a", "cc", "bbb" }), "Bubble sort direct");
@@ -154,6 +161,8 @@ internal static class Program
 
     static void Save(Control control, string fileName)
     {
+        Application.DoEvents();
+        Thread.Sleep(80);
         control.PerformLayout();
         foreach (Control c in control.Controls) c.CreateControl();
         using Bitmap bmp = new Bitmap(Math.Max(1, control.Width), Math.Max(1, control.Height));
