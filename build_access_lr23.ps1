@@ -179,3 +179,5 @@ $sample | Set-Content -Path (Join-Path $out "QUERY_SAMPLES.txt") -Encoding UTF8
 $db.Close()
 Write-Host "ACCDB_CREATED" (Get-Item $dbPath).Length
 Write-Host "BUILD_COMPLETE"
+
+# final native build trigger
