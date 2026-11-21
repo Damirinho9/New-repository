@@ -1,0 +1,33 @@
+name: LR23 Access interactive RDP capture
+on:
+  push:
+    branches: [lr23-7342835-access-native]
+  workflow_dispatch:
+jobs:
+  capture:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Access Runtime and build deps
+        shell: powershell
+        run: choco install access2016runtime -y --no-progress
+      - name: Install ImportExcel
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module ImportExcel -Scope CurrentUser -Force -AllowClobber
+      - name: Build native ACCDB
+        shell: pwsh
+        run: .\build_access_lr23.ps1
+      - name: Create interactive desktop and capture Access
+        shell: powershell
+        run: .\access_rdp_outer.ps1
+      - name: Upload native Access screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: LR23_NATIVE_ACCESS_GUI_SCREENSHOTS
+          path: access_rdp_screens
+          if-no-files-found: warn
+          retention-days: 7
