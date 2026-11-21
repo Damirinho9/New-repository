@@ -8,87 +8,119 @@ $exe=(Get-ChildItem "C:\Program Files\Microsoft Office" -Filter MSACCESS.EXE -Re
 if(!$exe){throw "MSACCESS.EXE not found"}
 
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public static class W {
  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left,Top,Right,Bottom; }
  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
- [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
 }
 "@
-function Rect([IntPtr]$h){
- $r=New-Object W+RECT;[W]::GetWindowRect($h,[ref]$r)|Out-Null
- return [pscustomobject]@{W=$r.Right-$r.Left;H=$r.Bottom-$r.Top;L=$r.Left;T=$r.Top}
+function GetRect([IntPtr]$h){$r=New-Object W+RECT;[W]::GetWindowRect($h,[ref]$r)|Out-Null;return [pscustomobject]@{W=$r.Right-$r.Left;H=$r.Bottom-$r.Top}}
+function DeskShot([string]$name){
+  Start-Sleep -Seconds 1
+  $b=[Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $bmp=New-Object Drawing.Bitmap($b.Width,$b.Height)
+  $g=[Drawing.Graphics]::FromImage($bmp)
+  $g.CopyFromScreen($b.Location,[Drawing.Point]::Empty,$b.Size)
+  $g.Dispose()
+  $path=Join-Path $out ($name+".png")
+  $bmp.Save($path,[Drawing.Imaging.ImageFormat]::Png);$bmp.Dispose()
+  Write-Host "SHOT=$path $($b.Width)x$($b.Height)"
 }
-function Shot([IntPtr]$h,[string]$name){
- [W]::ShowWindow($h,9)|Out-Null;Start-Sleep -Milliseconds 500
- [W]::ShowWindow($h,3)|Out-Null;[W]::SetForegroundWindow($h)|Out-Null;Start-Sleep -Seconds 2
- $r=Rect $h;Write-Host "CAPTURE $name RECT=$($r.W)x$($r.H)"
- if($r.W -lt 600 -or $r.H -lt 400){throw "Bad dimensions $($r.W)x$($r.H)"}
- $bmp=New-Object Drawing.Bitmap($r.W,$r.H)
- $g=[Drawing.Graphics]::FromImage($bmp);$dc=$g.GetHdc();[W]::PrintWindow($h,$dc,2)|Out-Null;$g.ReleaseHdc($dc);$g.Dispose()
- $path=Join-Path $out ($name+".png");$bmp.Save($path,[Drawing.Imaging.ImageFormat]::Png);$bmp.Dispose()
- Write-Host "SHOT=$path"
-}
+
+$vbs=@'
+On Error Resume Next
+mode = WScript.Arguments(0)
+name = ""
+If WScript.Arguments.Count > 1 Then name = WScript.Arguments(1)
+Set app = GetObject(, "Access.Application")
+If Err.Number <> 0 Then
+  WScript.Echo "GETOBJECT_FAIL " & Hex(Err.Number) & " " & Err.Description
+  WScript.Quit 20
+End If
+Err.Clear
+app.Visible = True
+If mode = "table" Then
+  app.DoCmd.OpenTable name, 0, 0
+ElseIf mode = "query" Then
+  app.DoCmd.OpenQuery name, 0, 0
+ElseIf mode = "closeTable" Then
+  app.DoCmd.Close 0, name, 2
+ElseIf mode = "closeQuery" Then
+  app.DoCmd.Close 1, name, 2
+ElseIf mode = "relations" Then
+  app.DoCmd.RunCommand 133
+ElseIf mode = "maximize" Then
+  app.DoCmd.Maximize
+ElseIf mode = "quit" Then
+  app.CloseCurrentDatabase
+  app.Quit 2
+End If
+If Err.Number <> 0 Then
+  WScript.Echo "ACCESS_CMD_FAIL " & mode & " " & name & " " & Hex(Err.Number) & " " & Err.Description
+  WScript.Quit 21
+End If
+If mode <> "quit" Then
+  app.DoCmd.Maximize
+  WScript.Sleep 2200
+End If
+WScript.Echo "OK " & mode & " " & name
+'@
+$vbsPath=Join-Path $root "access_control.vbs"
+Set-Content -Path $vbsPath -Value $vbs -Encoding Unicode
 
 $p=Start-Process -FilePath $exe -ArgumentList @($db,"/runtime") -PassThru
 Start-Sleep -Seconds 15
 $p.Refresh()
 $hw=[IntPtr]$p.MainWindowHandle
-Write-Host "PID=$($p.Id) SESSION=$($p.SessionId) HWND=$hw BEFORE=$((Rect $hw).W)x$((Rect $hw).H)"
-[W]::ShowWindow($hw,9)|Out-Null;Start-Sleep -Seconds 1
+Write-Host "PID=$($p.Id) SESSION=$($p.SessionId) HWND=$hw"
+$r=GetRect $hw;Write-Host "BEFORE=$($r.W)x$($r.H)"
+[W]::ShowWindow($hw,9)|Out-Null;Start-Sleep -Milliseconds 800
 [W]::ShowWindow($hw,3)|Out-Null;[W]::SetForegroundWindow($hw)|Out-Null;Start-Sleep -Seconds 3
-$r=Rect $hw;Write-Host "AFTER_RESTORE=$($r.W)x$($r.H)"
-Shot $hw "00_Access_главное_окно"
+$r=GetRect $hw;Write-Host "AFTER=$($r.W)x$($r.H)"
+DeskShot "00_Access_после_запуска"
 
-$app=$null
-try{
-  $method=[Runtime.InteropServices.Marshal].GetMethod("GetActiveObject",[Reflection.BindingFlags]"Public,Static")
-  if($method){$app=$method.Invoke($null,@("Access.Application"));Write-Host "ATTACH=Marshal.GetActiveObject"}
-}catch{Write-Host "MARSHAL_ATTACH_FAIL=$($_.Exception.GetBaseException().Message)"}
-if(!$app){
- try{
-  Add-Type -AssemblyName Microsoft.VisualBasic
-  $app=[Microsoft.VisualBasic.Interaction]::GetObject($null,"Access.Application")
-  Write-Host "ATTACH=VB.GetObject"
- }catch{Write-Host "VB_ATTACH_FAIL=$($_.Exception.GetBaseException().Message)"}
+function AccessCmd([string]$mode,[string]$name=""){
+  $args=@("//nologo",$vbsPath,$mode)
+  if($name){$args += $name}
+  $o=& cscript.exe @args
+  $ec=$LASTEXITCODE
+  Write-Host ($o -join [Environment]::NewLine)
+  Write-Host "CSCRIPT_EXIT=$ec"
+  if($ec -ne 0){throw "Access VBScript command failed: $mode $name"}
+  [W]::ShowWindow($hw,3)|Out-Null;[W]::SetForegroundWindow($hw)|Out-Null
+  Start-Sleep -Seconds 1
 }
-if(!$app){
- try{$app=New-Object -ComObject Access.Application;Write-Host "ATTACH=New-ComObject"}catch{Write-Host "NEW_COM_FAIL=$($_.Exception.GetBaseException().Message)"}
-}
-if(!$app){throw "Could not attach/create Access automation object"}
 
-try{
- if(-not $app.CurrentProject.FullName){$app.OpenCurrentDatabase($db)}
-}catch{try{$app.OpenCurrentDatabase($db)}catch{}}
-$app.Visible=$true
-try{$app.DoCmd.Maximize()}catch{}
-$hw=[IntPtr]$app.hWndAccessApp
-Write-Host "ACCESS_VERSION=$($app.Version) APP_HWND=$hw"
-Shot $hw "01_Access_база"
+AccessCmd "maximize"
+DeskShot "01_Access_главное_окно"
 
 foreach($x in @(
  @("Книги","02_Таблица_Книги"),
  @("Магазины","03_Таблица_Магазины"),
- @("Заказы","04_Таблица_Заказы"),
- @("Описание заказов","05_Таблица_Описание_заказов")
+ @("Сотрудники","04_Таблица_Сотрудники"),
+ @("Транспортные компании","05_Таблица_Транспортные_компании"),
+ @("Заказы","06_Таблица_Заказы"),
+ @("Описание заказов","07_Таблица_Описание_заказов")
 )){
- $app.DoCmd.OpenTable($x[0],0,0);try{$app.DoCmd.Maximize()}catch{};Start-Sleep -Seconds 2;Shot $hw $x[1];$app.DoCmd.Close(0,$x[0],2)
+ AccessCmd "table" $x[0];DeskShot $x[1];AccessCmd "closeTable" $x[0]
 }
+
 foreach($x in @(
- @("Стоимость книг в заказах","10_Запрос_Стоимость_книг"),
+ @("Стоимость книг в заказах","10_Запрос_Стоимость_книг_в_заказах"),
  @("Стоимость заказов","11_Запрос_Стоимость_заказов"),
  @("Количество заказов, сделанных каждым магазином","12_Запрос_Количество_заказов"),
  @("Сводная стоимость книг в заказах","13_Запрос_Сводная_стоимость"),
  @("Работа сотрудников","14_Запрос_Работа_сотрудников"),
  @("Учет работы сотрудников по кварталам","15_Запрос_Учет_по_кварталам")
 )){
- $app.DoCmd.OpenQuery($x[0],0,0);try{$app.DoCmd.Maximize()}catch{};Start-Sleep -Seconds 2;Shot $hw $x[1];$app.DoCmd.Close(1,$x[0],2)
+ AccessCmd "query" $x[0];DeskShot $x[1];AccessCmd "closeQuery" $x[0]
 }
-try{$app.DoCmd.RunCommand(133);Start-Sleep -Seconds 3;Shot $hw "20_Схема_данных"}catch{Write-Host "RELATIONSHIPS_FAIL=$($_.Exception.GetBaseException().Message)"}
-try{$app.CloseCurrentDatabase()}catch{}
-try{$app.Quit(2)}catch{}
+
+try{AccessCmd "relations";DeskShot "20_Схема_данных_Access"}catch{Write-Host "RELATIONSHIPS_UI_FAIL=$($_.Exception.Message)"}
+try{AccessCmd "quit"}catch{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}
 Write-Host "NATIVE_ACCESS_GUI_CAPTURE_COMPLETE"
