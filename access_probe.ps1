@@ -22,3 +22,5 @@ try {
   $dao = New-Object -ComObject DAO.DBEngine.120
   Write-Host "DAO_OK" $dao.Version
 } catch { Write-Host "DAO_FAIL" $_.Exception.Message }
+
+# trigger
