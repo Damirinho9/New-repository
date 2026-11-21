@@ -1,0 +1,37 @@
+name: LR1 7342835 Native Windows CMD
+
+on:
+  push:
+    branches:
+      - lr1-7342835-native-cmd
+  workflow_dispatch:
+
+jobs:
+  native-cmd:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Execute LR1 in real Windows CMD
+        shell: cmd
+        run: call lr1_7342835.cmd
+
+      - name: Show evidence summary
+        shell: powershell
+        run: |
+          Write-Host "=== Artifact files ==="
+          Get-ChildItem "$env:GITHUB_WORKSPACE\artifacts" | Format-Table Name,Length,LastWriteTime
+          Write-Host "=== Final tree ==="
+          Get-Content "$env:GITHUB_WORKSPACE\artifacts\FINAL_TREE.txt"
+          Write-Host "=== Network tail ==="
+          Get-Content "$env:GITHUB_WORKSPACE\artifacts\LR1_NETWORK_TRANSCRIPT.txt" -Tail 80
+
+      - name: Upload native evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: LR1_7342835_NATIVE_CMD_EVIDENCE
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 7
