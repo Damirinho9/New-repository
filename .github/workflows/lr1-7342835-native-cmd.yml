@@ -14,7 +14,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Execute LR1 in real Windows CMD
+      - name: Execute full TREE C drive for task 9
+        shell: cmd
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          if not exist artifacts md artifacts
+          tree C:\ /A > artifacts\TASK09_TREE_C.txt 2>&1
+
+      - name: Execute remaining LR1 tasks in real Windows CMD
         shell: cmd
         run: call lr1_7342835.cmd
 
