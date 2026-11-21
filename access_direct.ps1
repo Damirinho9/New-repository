@@ -86,6 +86,48 @@ $r=GetRect $hw;Write-Host "BEFORE=$($r.W)x$($r.H)"
 $r=GetRect $hw;Write-Host "AFTER=$($r.W)x$($r.H)"
 DeskShot "00_Access_после_запуска"
 
+# Handle Office first-run dialog "First things first"
+$handled=$false
+try{
+  Add-Type -AssemblyName UIAutomationClient
+  Add-Type -AssemblyName UIAutomationTypes
+  $rootEl=[Windows.Automation.AutomationElement]::RootElement
+  $askCond=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,"Ask me later")
+  $ask=$rootEl.FindFirst([Windows.Automation.TreeScope]::Subtree,$askCond)
+  if($ask){
+    $sel=$ask.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
+    $sel.Select()
+    Start-Sleep -Milliseconds 500
+    $accCond=New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,"Accept")
+    $acc=$rootEl.FindFirst([Windows.Automation.TreeScope]::Subtree,$accCond)
+    if($acc){
+      $inv=$acc.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)
+      $inv.Invoke()
+      $handled=$true
+      Write-Host "FIRST_RUN_HANDLED=UIA"
+    }
+  }
+}catch{Write-Host "UIA_FIRST_RUN_FAIL=$($_.Exception.Message)"}
+if(-not $handled){
+  Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class MouseX {
+ [DllImport("user32.dll")] public static extern bool SetCursorPos(int X,int Y);
+ [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint data,UIntPtr extra);
+ public static void Click(int x,int y){SetCursorPos(x,y);mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);}
+}
+"@
+  [MouseX]::Click(262,330);Start-Sleep -Milliseconds 600
+  [MouseX]::Click(654,486);Start-Sleep -Seconds 2
+  Write-Host "FIRST_RUN_HANDLED=MOUSE_FALLBACK"
+}
+Start-Sleep -Seconds 8
+$p.Refresh()
+$hw=[IntPtr]$p.MainWindowHandle
+if($hw -ne [IntPtr]::Zero){[W]::ShowWindow($hw,9)|Out-Null;[W]::ShowWindow($hw,3)|Out-Null;[W]::SetForegroundWindow($hw)|Out-Null}
+DeskShot "01_Access_после_FirstThingsFirst"
+
 function AccessCmd([string]$mode,[string]$name=""){
   $args=@("//nologo",$vbsPath,$mode)
   if($name){$args += $name}
