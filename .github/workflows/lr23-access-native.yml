@@ -1,13 +1,38 @@
-name: LR23 Access native probe
+name: LR23 7342835 Native Microsoft Access DB
 on:
   push:
     branches: [lr23-7342835-access-native]
   workflow_dispatch:
 jobs:
-  probe:
+  build:
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Probe ACE and DAO
+      - name: Install Microsoft Access Database Engine 2016 x64
         shell: powershell
-        run: .\access_probe.ps1
+        run: |
+          $ErrorActionPreference="Stop"
+          $url="https://download.microsoft.com/download/3/5/C/35C84C36-661A-44E6-9324-8786B8DBE231/accessdatabaseengine_X64.exe"
+          $exe="$env:RUNNER_TEMP\accessdatabaseengine_X64.exe"
+          Invoke-WebRequest -Uri $url -OutFile $exe
+          Write-Host "Downloaded" (Get-Item $exe).Length
+          $p=Start-Process -FilePath $exe -ArgumentList "/quiet","/norestart" -Wait -PassThru
+          Write-Host "Installer exit" $p.ExitCode
+          if($p.ExitCode -notin 0,3010){exit $p.ExitCode}
+      - name: Build ACCDB and native Access objects
+        shell: powershell
+        run: .\build_access_lr23.ps1
+      - name: Verify
+        shell: powershell
+        run: |
+          Get-ChildItem .\access_out | Format-Table Name,Length,LastWriteTime
+          Get-Content .\access_out\VALIDATION.txt
+          Get-Content .\access_out\QUERY_SAMPLES.txt -TotalCount 100
+      - name: Upload Access deliverable
+        uses: actions/upload-artifact@v4
+        with:
+          name: LR23_7342835_ACCESS_NATIVE
+          path: access_out
+          if-no-files-found: error
+          retention-days: 7
