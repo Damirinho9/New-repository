@@ -44,3 +44,5 @@ if($gp){
  }
 }
 tasklist /v /fi "imagename eq msaccess.exe"
+
+# trigger direct gui
