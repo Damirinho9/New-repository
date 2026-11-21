@@ -47,7 +47,9 @@ dir C:\Windows /A:H >>"%LOG%" 2>&1
 tree /? >>"%LOG%" 2>&1
 
 >>"%LOG%" echo ===== TASK 9 TREE C: =====
->>"%LOG%" echo Full TREE C:\ is executed in a dedicated workflow step and saved as TASK09_TREE_C.txt.
+tree C:\ /A | "C:\Program Files\Git\usr\bin\head.exe" -n 120 > "%OUT%\TASK09_TREE_C_HEAD.txt" 2>&1
+>>"%LOG%" echo Executed native TREE C:\ /A; first 120 output lines saved to TASK09_TREE_C_HEAD.txt for report evidence.
+type "%OUT%\TASK09_TREE_C_HEAD.txt" >>"%LOG%" 2>&1
 
 >>"%LOG%" echo ===== TASK 10 ROOT SORTED BY SIZE =====
 dir C:\ /O:S >>"%LOG%" 2>&1
