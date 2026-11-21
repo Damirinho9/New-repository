@@ -165,9 +165,13 @@ $log.Add("");$log.Add("[LOOKUPS]")
 foreach($a in @(@("Сотрудники","Должность"),@("Магазины","Город"),@("Транспортные компании","Город"),@("Книги","Серия"),@("Заказы","Доставка"))){$f=Field $a[0] $a[1];$log.Add($a[0]+"."+$a[1]+" RowSourceType="+$f.Properties.Item("RowSourceType").Value+" RowSource="+$f.Properties.Item("RowSource").Value)}
 $log.Add("");$log.Add("[KEY_QUERIES]")
 foreach($qn in @("Стоимость книг в заказах","Стоимость заказов","Количество заказов, сделанных каждым магазином","Сводная стоимость книг в заказах","Работа сотрудников","Учет работы сотрудников по кварталам","Количество заказов по магазинам и годам")){$rs=$db.OpenRecordset($qn);$cnt=0;if(-not $rs.EOF){$rs.MoveLast();$cnt=$rs.RecordCount};$rs.Close();$log.Add($qn+" rows="+$cnt);Write-Host $qn $cnt}
-$db.BeginTrans()
-try{$db.Execute("INSERT INTO [Описание заказов] ([Код заказа],[Код книги],[Количество],[Скидка]) VALUES (999999,999999,1,0)");$log.Add("REFERENTIAL_INTEGRITY=FAIL_INSERT_ALLOWED")}catch{$log.Add("REFERENTIAL_INTEGRITY=PASS_ORPHAN_REJECTED")}
-$db.Rollback()
+try{
+  $db.Execute("INSERT INTO [Описание заказов] ([Код заказа],[Код книги],[Количество],[Скидка]) VALUES (999999,999999,1,0)")
+  $log.Add("REFERENTIAL_INTEGRITY=FAIL_INSERT_ALLOWED")
+  $db.Execute("DELETE FROM [Описание заказов] WHERE [Код заказа]=999999 AND [Код книги]=999999")
+}catch{
+  $log.Add("REFERENTIAL_INTEGRITY=PASS_ORPHAN_REJECTED")
+}
 $log | Set-Content -Path (Join-Path $out "VALIDATION.txt") -Encoding UTF8
 
 $sample=New-Object System.Collections.Generic.List[string]
