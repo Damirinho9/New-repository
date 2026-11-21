@@ -9,17 +9,11 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Install Microsoft Access Database Engine 2016 x64
+      - name: Install Microsoft Access Database Engine
         shell: powershell
         run: |
-          $ErrorActionPreference="Stop"
-          $url="https://download.microsoft.com/download/3/5/C/35C84C36-661A-44E6-9324-8786B8DBE231/accessdatabaseengine_X64.exe"
-          $exe="$env:RUNNER_TEMP\accessdatabaseengine_X64.exe"
-          Invoke-WebRequest -Uri $url -OutFile $exe
-          Write-Host "Downloaded" (Get-Item $exe).Length
-          $p=Start-Process -FilePath $exe -ArgumentList "/quiet","/norestart" -Wait -PassThru
-          Write-Host "Installer exit" $p.ExitCode
-          if($p.ExitCode -notin 0,3010){exit $p.ExitCode}
+          choco install made-2016 -y --no-progress
+          if($LASTEXITCODE -notin 0,3010){exit $LASTEXITCODE}
       - name: Build ACCDB and native Access objects
         shell: powershell
         run: .\build_access_lr23.ps1
