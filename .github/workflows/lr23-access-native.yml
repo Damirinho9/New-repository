@@ -1,0 +1,13 @@
+name: LR23 Access native probe
+on:
+  push:
+    branches: [lr23-7342835-access-native]
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe ACE and DAO
+        shell: powershell
+        run: .\access_probe.ps1
