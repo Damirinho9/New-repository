@@ -1,0 +1,34 @@
+name: LR23 Access native screenshots
+on:
+  push:
+    branches: [lr23-7342835-access-native]
+  workflow_dispatch:
+jobs:
+  screens:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Access 2016 Runtime
+        shell: powershell
+        run: |
+          choco install access2016runtime -y --no-progress
+          if($LASTEXITCODE -notin 0,3010){exit $LASTEXITCODE}
+      - name: Install ImportExcel
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module ImportExcel -Scope CurrentUser -Force -AllowClobber
+      - name: Build database
+        shell: pwsh
+        run: .\build_access_lr23.ps1
+      - name: Capture real Access windows
+        shell: powershell
+        run: .\access_screens.ps1
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: LR23_ACCESS_NATIVE_SCREENSHOTS
+          path: access_screens
+          if-no-files-found: error
+          retention-days: 7
