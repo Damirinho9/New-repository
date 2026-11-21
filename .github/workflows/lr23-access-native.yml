@@ -15,10 +15,10 @@ jobs:
           choco install made-2016 -y --no-progress
           if($LASTEXITCODE -notin 0,3010){exit $LASTEXITCODE}
       - name: Build ACCDB and native Access objects
-        shell: powershell
+        shell: pwsh
         run: .\build_access_lr23.ps1
       - name: Verify
-        shell: powershell
+        shell: pwsh
         run: |
           Get-ChildItem .\access_out | Format-Table Name,Length,LastWriteTime
           Get-Content .\access_out\VALIDATION.txt
