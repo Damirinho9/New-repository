@@ -44,9 +44,9 @@ If Err.Number <> 0 Then
 End If
 Err.Clear
 If mode = "table" Then
-  app.DoCmd.OpenTable name, 0, 0
+  app.DoCmd.OpenTable name, 0, 2
 ElseIf mode = "query" Then
-  app.DoCmd.OpenQuery name, 0, 0
+  app.DoCmd.OpenQuery name, 0, 2
 ElseIf mode = "closeTable" Then
   app.DoCmd.Close 0, name, 2
 ElseIf mode = "closeQuery" Then
@@ -203,6 +203,5 @@ foreach($x in @(
  AccessCmd "query" $x[0];DeskShot $x[1];AccessCmd "closeQuery" $x[0]
 }
 
-try{AccessCmd "relations";DeskShot "20_Схема_данных_Access"}catch{Write-Host "RELATIONSHIPS_UI_FAIL=$($_.Exception.Message)"}
 try{AccessCmd "quit"}catch{Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue}
 Write-Host "NATIVE_ACCESS_GUI_CAPTURE_COMPLETE"
