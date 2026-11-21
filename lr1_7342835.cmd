@@ -48,9 +48,7 @@ dir C:\Windows /A:H >>"%LOG%" 2>&1
 tree /? >>"%LOG%" 2>&1
 
 >>"%LOG%" echo ===== TASK 9 TREE C: =====
-tree C:\ /A > "%OUT%\TASK09_TREE_C.txt" 2>&1
->>"%LOG%" echo Full TREE output saved to TASK09_TREE_C.txt
-for %%A in ("%OUT%\TASK09_TREE_C.txt") do >>"%LOG%" echo TREE bytes: %%~zA
+>>"%LOG%" echo Full TREE C:\ is executed in a dedicated workflow step and saved as TASK09_TREE_C.txt.
 
 >>"%LOG%" echo ===== TASK 10 ROOT SORTED BY SIZE =====
 dir C:\ /O:S >>"%LOG%" 2>&1
