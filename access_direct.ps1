@@ -43,7 +43,6 @@ If Err.Number <> 0 Then
   WScript.Quit 20
 End If
 Err.Clear
-app.Visible = True
 If mode = "table" Then
   app.DoCmd.OpenTable name, 0, 0
 ElseIf mode = "query" Then
