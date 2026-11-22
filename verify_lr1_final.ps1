@@ -59,9 +59,11 @@ Check (($attr -band [IO.FileAttributes]::ReadOnly) -eq 0) "read-only attribute r
 $find=RunCmd ('find /I "{0}" "{1}\{0}\fam.txt" "{1}\{0}\fio.docx" "{1}\FIO\myfio.txt"' -f $fam,$work)
 Check (($find -join [Environment]::NewLine) -match [regex]::Escape($fam)) "FIND locates expected text"
 
-$promptCheck=& cmd.exe /d /u /c 'chcp 65001>nul & prompt Привет. Введите команду$G & echo %PROMPT%' 2>&1
-Add-Content $log ("PROMPT_CHECK="+($promptCheck -join " "))
-Check (($promptCheck -join " ") -match "Привет") "exact Russian prompt can be set natively"
+$promptFile=Join-Path $work "prompt_check.txt"
+& cmd.exe /d /c ('chcp 65001>nul & prompt Привет. Введите команду$G & set PROMPT > "'+$promptFile+'"') | Out-Null
+$promptCheck=Get-Content $promptFile -Raw -Encoding UTF8
+Add-Content $log ("PROMPT_CHECK="+$promptCheck.Trim())
+Check ($promptCheck -match "Привет") "exact Russian prompt can be set natively"
 
 $ver=RunCmd "ver"
 Check (($ver -join " ") -match "Windows") "VER returns Windows version"
