@@ -44,7 +44,7 @@ $tables=@("Сотрудники","Магазины","Транспортные к
 $vbs=@'
 Option Explicit
 On Error Resume Next
-Dim sh, app, db, fso, logPath, out, tables, queries, i, name, rs, qd, p, cnt, sql
+Dim sh, app, db, fso, logPath, out, tables, queries, i, name, rs, qd, p, pn, cnt, sql
 Set sh=CreateObject("WScript.Shell")
 logPath=sh.ExpandEnvironmentStrings("%ACCEPT_LOG%")
 Set fso=CreateObject("Scripting.FileSystemObject")
@@ -108,7 +108,9 @@ For i=0 To UBound(queries)
     app.DoCmd.Close 1, name, 2
   Else
     For Each p In qd.Parameters
-      Select Case p.Name
+      pn=p.Name
+      If Left(pn,1)="[" And Right(pn,1)="]" Then pn=Mid(pn,2,Len(pn)-2)
+      Select Case pn
         Case "Введите город": p.Value="Москва"
         Case "Введите фамилию:": p.Value="Юрьева"
         Case "Введите начало интервала": p.Value=CDate("01/01/2009")
