@@ -37,3 +37,5 @@ Start-Sleep -Milliseconds 500
 $ws.SendKeys("exit{ENTER}")
 $p.WaitForExit(10000) | Out-Null
 Write-Host "DONE"
+
+# trigger prompt capture
