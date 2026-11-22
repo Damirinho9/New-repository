@@ -20,6 +20,9 @@ jobs:
       - name: Rebuild native ACCDB from source data
         shell: pwsh
         run: .\build_access_lr23.ps1
+      - name: Initialize Access Runtime GUI and open representative native objects
+        shell: pwsh
+        run: .\access_direct.ps1
       - name: Open every table and validate every saved query in Access
         shell: pwsh
         run: .\access_final_acceptance.ps1
