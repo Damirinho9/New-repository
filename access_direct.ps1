@@ -53,6 +53,8 @@ ElseIf mode = "closeQuery" Then
   app.DoCmd.Close 1, name, 2
 ElseIf mode = "relations" Then
   app.DoCmd.RunCommand 133
+ElseIf mode = "closeRelations" Then
+  app.DoCmd.Close 8
 ElseIf mode = "quit" Then
   app.CloseCurrentDatabase
   app.Quit 2
@@ -191,6 +193,12 @@ foreach($x in @(
 )){
  AccessCmd "table" $x[0];DeskShot $x[1];AccessCmd "closeTable" $x[0]
 }
+
+try{
+ AccessCmd "relations"
+ DeskShot "16_Схема_данных_Access"
+ AccessCmd "closeRelations"
+}catch{Write-Host "RELATIONS_CAPTURE_FAIL=$($_.Exception.Message)"}
 
 foreach($x in @(
  @("Стоимость книг в заказах","20_Запрос_Стоимость_книг_в_заказах"),
