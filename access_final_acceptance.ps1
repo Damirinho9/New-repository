@@ -71,7 +71,7 @@ For i=0 To UBound(tables)
     out.Close
     WScript.Quit 21
   End If
-  Set rs=db.OpenRecordset("[" & name & "]")
+  Set rs=db.OpenRecordset(name)
   If Err.Number<>0 Then
     out.WriteLine "FAIL TABLE DATA " & name & " " & Hex(Err.Number) & " " & Err.Description
     out.Close
