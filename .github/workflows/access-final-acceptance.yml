@@ -1,0 +1,34 @@
+name: LR23 7342835 final Access acceptance
+on:
+  push:
+    branches: [lr23-7342835-access-native]
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Microsoft Access Runtime
+        shell: powershell
+        run: choco install access2016runtime -y --no-progress
+      - name: Install ImportExcel
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module ImportExcel -Scope CurrentUser -Force -AllowClobber
+      - name: Rebuild native ACCDB from source data
+        shell: pwsh
+        run: .\build_access_lr23.ps1
+      - name: Open every table and validate every saved query in Access
+        shell: pwsh
+        run: .\access_final_acceptance.ps1
+      - name: Upload final Access acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: LR23_FINAL_ACCESS_ACCEPTANCE
+          path: |
+            ACCESS_FINAL_ACCEPTANCE.txt
+            access_out/*.accdb
+          if-no-files-found: error
+          retention-days: 7
