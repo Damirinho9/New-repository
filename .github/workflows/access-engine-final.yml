@@ -1,0 +1,34 @@
+name: LR23 fast engine final acceptance
+on:
+  push:
+    branches: [lr23-7342835-access-native]
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Microsoft Access Database Engine
+        shell: powershell
+        run: choco install made-2016 -y --no-progress
+      - name: Install ImportExcel
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module ImportExcel -Scope CurrentUser -Force -AllowClobber
+      - name: Rebuild ACCDB
+        shell: pwsh
+        run: .\build_access_lr23.ps1
+      - name: Validate all tables, queries, relations and formula
+        shell: pwsh
+        run: .\access_engine_final.ps1
+      - name: Upload validated ACCDB
+        uses: actions/upload-artifact@v4
+        with:
+          name: LR23_FAST_FINAL_VALIDATED
+          path: |
+            ACCESS_ENGINE_FINAL.txt
+            access_out/*.accdb
+          if-no-files-found: error
+          retention-days: 7
