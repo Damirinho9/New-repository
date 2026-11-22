@@ -1,0 +1,21 @@
+name: LR1 Leonov prompt screenshot
+on:
+  push:
+    branches: [lr1-7342835-native-cmd]
+  workflow_dispatch:
+jobs:
+  shot:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Capture tasks 44-48 with Leonov and Russian prompt
+        shell: pwsh
+        run: .\capture_lr1_leonov_prompt.ps1
+      - name: Upload screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: LR1_LEONOV_PROMPT_SHOT
+          path: lr1_leonov_prompt_shot
+          if-no-files-found: error
+          retention-days: 7
