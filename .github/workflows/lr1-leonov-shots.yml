@@ -1,0 +1,21 @@
+name: LR1 Leonov native screenshots
+on:
+  push:
+    branches: [lr1-7342835-native-cmd]
+  workflow_dispatch:
+jobs:
+  shots:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run native CMD with Leonov and capture screenshots
+        shell: pwsh
+        run: .\capture_lr1_leonov.ps1
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: LR1_LEONOV_NATIVE_SHOTS
+          path: lr1_leonov_shots
+          if-no-files-found: error
+          retention-days: 7
