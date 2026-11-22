@@ -1,0 +1,21 @@
+name: LR1 7342835 final acceptance
+on:
+  push:
+    branches: [lr1-7342835-native-cmd]
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repeat critical native CMD operations and assert final state
+        shell: pwsh
+        run: .\verify_lr1_final.ps1
+      - name: Upload acceptance log
+        uses: actions/upload-artifact@v4
+        with:
+          name: LR1_FINAL_ACCEPTANCE
+          path: LR1_FINAL_ACCEPTANCE.txt
+          if-no-files-found: error
+          retention-days: 7
