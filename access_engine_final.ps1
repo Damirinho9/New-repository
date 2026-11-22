@@ -23,7 +23,8 @@ $queries=@(
 foreach($qname in $queries){
   $qd=$db.QueryDefs.Item($qname)
   foreach($p in $qd.Parameters){
-    switch($p.Name){
+     $pn=($p.Name -replace "^\[|\]$","")
+    switch($pn){
       "Введите город" {$p.Value="Москва"}
       "Введите фамилию:" {$p.Value="Юрьева"}
       "Введите начало интервала" {$p.Value=[datetime]"2009-01-01"}
