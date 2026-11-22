@@ -114,3 +114,5 @@ for($i=1;$i -le 5;$i++){
 $p.WaitForExit()
 Write-Host "EXIT=$($p.ExitCode)"
 if($p.ExitCode -ne 0){throw "CMD failed"}
+
+# trigger Leonov capture
