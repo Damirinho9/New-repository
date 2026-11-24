@@ -1,0 +1,4 @@
+# 7335493 resume: corrected Windows COM candidate
+This folder is separate from the previous example-dimension generator.
+geometry.py is the numerical oracle for variant 06. build_frw_windows.py is an untested native COM candidate: it must run in licensed KOMPAS and must pass independent Save/Close/Reopen/Rebuild acceptance. recover.py recovers the original FRW only; static ZIP checks do not establish editability. The recovery workflow does not require or simulate a KOMPAS license.
+Work 3's historical fixed Work 2 SHA remains in its old workflow. For any new native pipeline, take the verified Work 2 artifacts from the same source commit, verify their manifest and hashes with gate_work2_input.py, then run build_work3_native.py and verify_work3_native.py. Do not manufacture acceptance markers.
