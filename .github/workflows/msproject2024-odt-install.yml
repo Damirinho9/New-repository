@@ -63,19 +63,20 @@ jobs:
             $a.Duration=480; $b.Duration=960; $c.Duration=480
             $b.Predecessors='1';$c.Predecessors='2'
             $r=$p.Resources.Add('Analyst')
-            $r.StandardRate='100/h'
+            $r.StandardRate=100
+            "Standard rate: $($r.StandardRate)" | Tee-Object -Append evidence/com.txt
             $p.Assignments.Add($a.ID,$r.ID,1) | Out-Null
             $app.BaselineSave() | Out-Null
             $a.PercentComplete=100
             $dest=Join-Path (Resolve-Path evidence) 'Native_Test.mpp'
             $app.FileSaveAs($dest) | Out-Null
             if (!(Test-Path $dest)) {throw 'MPP not saved'}
-            $app.FileClose() | Out-Null
+            $app.FileCloseEx(0) | Out-Null
             $app.FileOpenEx($dest) | Out-Null
             if ($app.ActiveProject.Tasks.Count -ne 3 -or $app.ActiveProject.Tasks.Item(1).PercentComplete -ne 100) {throw 'Roundtrip mismatch'}
             'PASS: native MPP roundtrip' | Tee-Object -Append evidence/com.txt
             Get-FileHash $dest | Format-List | Out-File evidence/mpp-hash.txt
-            $app.FileClose() | Out-Null
+            $app.FileCloseEx(0) | Out-Null
             $app.Quit() | Out-Null
           } catch {
             "BLOCKED: $($_.Exception.Message)" | Tee-Object -Append evidence/com.txt
