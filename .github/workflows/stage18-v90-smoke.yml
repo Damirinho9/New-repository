@@ -1,0 +1,25 @@
+name: Stage 18 independent V90 smoke
+on:
+  push:
+    branches: [kompas-7335493-final-engineering]
+    paths:
+      - 'stage18/**'
+      - '.github/workflows/stage18-v90-smoke.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  independent:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install cadquery==2.8.0 ezdxf==1.4.4
+      - run: python stage18/v90_smoke.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage18-v90-independent
+          path: stage18-output/
