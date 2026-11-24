@@ -1,0 +1,57 @@
+name: Desktop project management compatibility probe
+on:
+  push:
+    branches: [project-desktop-native-probe]
+    paths: ['.github/workflows/project-desktop-native-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [openproj, projectlibre]
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+      - name: Obtain official distribution
+        shell: bash
+        run: |
+          mkdir -p evidence app
+          if [ "${{ matrix.app }}" = openproj ]; then
+            url='https://downloads.sourceforge.net/project/openproj/OpenProj%20Binaries/1.4/openproj-1.4.tar.gz'
+          else
+            url='https://downloads.sourceforge.net/project/projectlibre/ProjectLibre/1.9.8/projectlibre-1.9.8.tar.gz'
+          fi
+          curl -fL --retry 1 --connect-timeout 15 --max-time 90 "$url" -o app.tar.gz
+          sha256sum app.tar.gz | tee evidence/distribution.sha256
+          tar -tzf app.tar.gz > evidence/file-list.txt
+          tar -xzf app.tar.gz -C app
+          java -version 2> evidence/java-version.txt
+      - name: Launch real desktop
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb xdotool imagemagick
+          Xvfb :99 -screen 0 1600x1000x24 > evidence/xvfb.log 2>&1 &
+          export DISPLAY=:99
+          jar=$(find app -name 'openproj.jar' -o -name 'projectlibre.jar' | head -1)
+          test -n "$jar"
+          cd "$(dirname "$jar")"
+          java -jar "$(basename "$jar")" > "$GITHUB_WORKSPACE/evidence/app.log" 2>&1 &
+          pid=$!
+          sleep 20
+          kill -0 "$pid"
+          xdotool search --onlyvisible --name '.*' getwindowname %@ | tee "$GITHUB_WORKSPACE/evidence/windows.txt"
+          import -window root "$GITHUB_WORKSPACE/evidence/desktop.png"
+          grep -iE 'OpenProj|ProjectLibre' "$GITHUB_WORKSPACE/evidence/windows.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-probe-${{ matrix.app }}
+          path: evidence/
