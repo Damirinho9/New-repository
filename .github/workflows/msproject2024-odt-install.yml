@@ -65,11 +65,13 @@ jobs:
             $r=$p.Resources.Add('Analyst')
             $r.StandardRate=100
             "Standard rate: $($r.StandardRate)" | Tee-Object -Append evidence/com.txt
-            $p.Assignments.Add($a.ID,$r.ID,1) | Out-Null
+            $a.Assignments.Add($a.ID,$r.ID,1) | Out-Null
             $app.BaselineSave() | Out-Null
+            'Baseline saved' | Tee-Object -Append evidence/com.txt
             $a.PercentComplete=100
             $dest=Join-Path (Resolve-Path evidence) 'Native_Test.mpp'
             $app.FileSaveAs($dest) | Out-Null
+            'Save returned' | Tee-Object -Append evidence/com.txt
             if (!(Test-Path $dest)) {throw 'MPP not saved'}
             $app.FileCloseEx(0) | Out-Null
             $app.FileOpenEx($dest) | Out-Null
