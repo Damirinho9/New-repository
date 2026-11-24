@@ -1,0 +1,30 @@
+name: Stage 23 full parameterized independent acceptance
+on:
+  push:
+    branches: [kompas-7335493-final-engineering]
+    paths: ['stage23/**', '.github/workflows/stage23-independent.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r stage23/requirements.txt
+      - run: python stage23/validate_all.py
+      - run: python stage23/native_build.py --mode independent --out stage23-independent
+      - name: Upload complete reproducible code and independent result
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage23-native-build-kit-code
+          path: |
+            stage23/
+            stage23-independent/
+            .github/workflows/stage23-independent.yml
+            .github/workflows/stage23-native-candidate.yml
+          if-no-files-found: error
