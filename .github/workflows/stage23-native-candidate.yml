@@ -23,7 +23,7 @@ jobs:
         run: |
           python -m pip install -r stage23/requirements.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python stage23/native_build.py --mode native --candidate --out "$env:RUNNER_TEMP\kompas-${{ github.run_id }}-${{ github.run_attempt }}"
+          python stage23/native_build.py --mode native --work 1 --candidate --out "$env:RUNNER_TEMP\kompas-${{ github.run_id }}-${{ github.run_attempt }}"
           exit $LASTEXITCODE
       - name: Upload non-final evidence
         if: always()

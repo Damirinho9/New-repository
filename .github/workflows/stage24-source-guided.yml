@@ -18,8 +18,8 @@ jobs:
       - name: Recover existing FRW seed without modifying it
         run: |
           mkdir -p seed
-          cat kompas-input/v6.b64.part* | base64 -d > seed/01_Mekhanizm_Variant_06_ORIGINAL.frw
-          python -c "from pathlib import Path; import zipfile; p=Path('seed/01_Mekhanizm_Variant_06_ORIGINAL.frw'); assert p.stat().st_size==71953; print(p.stat().st_size,zipfile.is_zipfile(p))"
+          cat kompas-input/v6.b64.part* | base64 -d > seed/wrapped.gz
+          python -c "from pathlib import Path; import zlib,hashlib,zipfile,io; p=Path('seed/wrapped.gz'); d=zlib.decompressobj(31); b=d.decompress(p.read_bytes()); assert d.eof and len(b)==71953 and hashlib.sha256(b).hexdigest()=='599bc2dc4962a85ec656f6977f3d82311e0a0a04f0cc7862a12f1221ac216d82'; z=zipfile.ZipFile(io.BytesIO(b)); assert z.testzip() is None and {'Contents','FileInfo'}<=set(z.namelist()); Path('seed/01_Mekhanizm_Variant_06_ORIGINAL.frw').write_bytes(b); print('Recovered FRW',len(b),'trailer',len(d.unused_data)); p.unlink()"
           sha256sum seed/*.frw > seed/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         if: always()
