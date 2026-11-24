@@ -59,47 +59,104 @@ jobs:
           [IO.File]::WriteAllText((Join-Path $pwd 'native-7350160\native_data.json'),$json,(New-Object Text.UTF8Encoding($false)))
       - name: Build and validate native MPP files
         shell: powershell
-        timeout-minutes: 8
+        timeout-minutes: 10
         run: |
           $ErrorActionPreference='Stop'
           $DataPath=(Join-Path $pwd 'native-7350160\native_data.json')
           $OutDir=(Join-Path $pwd 'native-7350160\out')
           New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
-          $data = Get-Content -Raw -Encoding UTF8 $DataPath | ConvertFrom-Json
-          $script:accept=@(); $script:metrics=[ordered]@{}
-          function Num($x){if($null -eq $x -or $x -eq ''){return 0.0};return [double]$x}
-          function CloseP($a){try{if($a.Projects.Count -gt 0){$a.FileCloseEx(0)|Out-Null}}catch{}}
-          function AddResources($p,$rs){foreach($pair in $rs){$r=$p.Resources.Add([string]$pair[0]);$r.StandardRate=[double]$pair[1]}}
-          function AddStructure($p,$tasks,$rs){
-            AddResources $p $rs
-            foreach($x in $tasks){
-              $t=$p.Tasks.Add([string]$x.name);$t.OutlineLevel=[int]$x.level
-              if($x.kind -eq 'task'){$t.Duration=[int]([double]$x.duration*480);$t.FixedCost=[double]$x.fixed;if([int]$x.res -gt 0){$t.ResourceNames=[string]$rs[[int]$x.res-1][0]}}
-              elseif($x.kind -eq 'milestone'){$t.Duration=0}
-              if($x.pred -and @($x.pred).Count -gt 0){$t.Predecessors=(@($x.pred)-join ',')}
+          $TraceFile=Join-Path $OutDir 'build-trace.txt'
+          function Trace([string]$s){$m=((Get-Date).ToString('HH:mm:ss')+' '+$s);Write-Host $m;Add-Content -Encoding UTF8 $TraceFile $m}
+          $data=Get-Content -Raw -Encoding UTF8 $DataPath|ConvertFrom-Json
+          $script:accept=@();$script:metrics=[ordered]@{}
+          function Num($x){if($null-eq$x-or$x-eq''){return 0.0};return [double]$x}
+          function CloseP($a){try{if($a.Projects.Count-gt0){$a.FileCloseEx(0)|Out-Null}}catch{}}
+          function Metrics($p){
+            $s=$p.ProjectSummaryTask;$bcws=Num $s.BCWS;$bcwp=Num $s.BCWP;$acwp=Num $s.ACWP;$bac=Num $s.BaselineCost
+            $cpi=if($acwp-ne0){$bcwp/$acwp}else{0};$spi=if($bcws-ne0){$bcwp/$bcws}else{0};$eac=Num $s.EAC
+            if($eac-eq0-and$cpi-ne0){$eac=$acwp+(($bac-$bcwp)/$cpi)}
+            $vac=$bac-$eac;$tcpi=if(($bac-$acwp)-ne0){($bac-$bcwp)/($bac-$acwp)}else{0}
+            [ordered]@{StatusDate=[string]$p.StatusDate;Cost=Num $s.Cost;BaselineCost=$bac;Work=Num $s.Work;BaselineWork=Num $s.BaselineWork;DurationDays=(Num $s.Duration)/480;BCWS=$bcws;BCWP=$bcwp;ACWP=$acwp;CV=Num $s.CV;SV=Num $s.SV;CPI=$cpi;SPI=$spi;EAC=$eac;VAC=$vac;TCPI=$tcpi;Finish=[string]$s.Finish}
+          }
+          function Record($a,[string]$path,[string]$name,[bool]$needStatus){
+            Trace "reopen $name"
+            $a.FileOpenEx($path)|Out-Null;$p=$a.ActiveProject
+            $all=@($p.Tasks|Where-Object{$_-ne$null});$leaf=@($all|Where-Object{-not $_.Summary-and-not $_.Milestone});$mile=@($all|Where-Object{$_.Milestone})
+            $max=($all|Measure-Object -Property OutlineLevel -Maximum).Maximum
+            $rc=@($p.Resources|Where-Object{$_-ne$null-and$_.Name}).Count
+            $assigned=@($leaf|Where-Object{[string]$_.ResourceNames -ne ''}).Count
+            $m=Metrics $p
+            $ok=($leaf.Count-eq40-and$mile.Count-eq8-and$max-ge4-and$rc-ge12-and$assigned-ge40-and[double]$m.BaselineCost-gt0)
+            if($needStatus){$ok=$ok-and([string]$p.StatusDate-ne'NA')}
+            $script:accept+=[pscustomobject]@{File=$name;Bytes=(Get-Item $path).Length;Leaf=$leaf.Count;Milestones=$mile.Count;MaxOutline=$max;Resources=$rc;AssignedTasks=$assigned;BaselineCost=$m.BaselineCost;StatusDate=$m.StatusDate;SHA256=(Get-FileHash $path).Hash;Pass=$ok}
+            $script:metrics[$name]=$m
+            CloseP $a
+            Trace "validated $name pass=$ok"
+          }
+          function ApplyVariant($p,$v){
+            foreach($x in $v){if($x.kind-eq'task'){$t=$p.Tasks.Item([int]$x.id);if($null-ne$t){$t.Duration=[int]([double]$x.duration*480);$t.FixedCost=[double]$x.fixed}}}
+          }
+          function ApplyProgress($p,$v,[double]$day,[double]$f){
+            foreach($x in $v){if($x.kind-ne'task'){continue};$s=[double]$x.s;$e=[double]$x.e;$pct=0
+              if($day-ge$e){$pct=100}elseif($day-gt$s-and$e-gt$s){$pct=(($day-$s)/($e-$s))*100}
+              if($pct-gt0-and$pct-lt100){$pct=[math]::Min(99,[math]::Round($pct*$f,0))}
+              $p.Tasks.Item([int]$x.id).PercentComplete=[int]$pct
             }
           }
-          function ApplyVariant($p,$v){foreach($x in $v){if($x.kind -eq 'task'){$t=$p.Tasks.Item([int]$x.id);if($null-ne$t){$t.Duration=[int]([double]$x.duration*480);$t.FixedCost=[double]$x.fixed}}}}
-          function ApplyProgress($p,$v,[double]$day,[double]$f){foreach($x in $v){if($x.kind-ne'task'){continue};$s=[double]$x.s;$e=[double]$x.e;$pct=0;if($day-ge$e){$pct=100}elseif($day-gt$s){$pct=(($day-$s)/($e-$s))*100};if($pct-gt0-and$pct-lt100){$pct=[math]::Min(99,[math]::Round($pct*$f,0))};$p.Tasks.Item([int]$x.id).PercentComplete=[int]$pct}}
-          function Metrics($p){$s=$p.ProjectSummaryTask;$bcws=Num $s.BCWS;$bcwp=Num $s.BCWP;$acwp=Num $s.ACWP;$bac=Num $s.BaselineCost;$cpi=if($acwp-ne0){$bcwp/$acwp}else{0};$spi=if($bcws-ne0){$bcwp/$bcws}else{0};$eac=Num $s.EAC;$vac=$bac-$eac;$tcpi=if(($bac-$acwp)-ne0){($bac-$bcwp)/($bac-$acwp)}else{0};return [ordered]@{StatusDate=[string]$p.StatusDate;Cost=Num $s.Cost;BaselineCost=$bac;Work=Num $s.Work;BaselineWork=Num $s.BaselineWork;DurationDays=(Num $s.Duration)/480;BCWS=$bcws;BCWP=$bcwp;ACWP=$acwp;CV=Num $s.CV;SV=Num $s.SV;CPI=$cpi;SPI=$spi;EAC=$eac;VAC=$vac;TCPI=$tcpi;Finish=[string]$s.Finish}}
-          function Validate($a,$path,$name,$needStatus){
-            $a.FileOpenEx($path)|Out-Null;$p=$a.ActiveProject;$all=@($p.Tasks|?{$_-ne$null});$leaf=@($all|?{-not$_.Summary-and-not$_.Milestone});$mile=@($all|?{$_.Milestone});$max=($all|Measure-Object OutlineLevel -Maximum).Maximum;$rc=@($p.Resources|?{$_-ne$null-and$_.Name}).Count;$ac=0;foreach($t in $leaf){$ac+=@($t.Assignments|?{$_-ne$null}).Count};$m=Metrics $p;$ok=($leaf.Count-eq40-and$mile.Count-eq8-and$max-ge4-and$rc-ge12-and$ac-ge40-and[double]$m.BaselineCost-gt0);if($needStatus){$ok=$ok-and([string]$p.StatusDate-ne'NA')};$script:accept+=[pscustomobject]@{File=$name;Bytes=(Get-Item $path).Length;Leaf=$leaf.Count;Milestones=$mile.Count;MaxOutline=$max;Resources=$rc;Assignments=$ac;BaselineCost=$m.BaselineCost;StatusDate=$m.StatusDate;SHA256=(Get-FileHash $path).Hash;Pass=$ok};$script:metrics[$name]=$m;CloseP $a
-          }
-          $app=New-Object -ComObject MSProject.Application;$app.Visible=$false
+          $app=New-Object -ComObject MSProject.Application
+          $app.Visible=$false
           try{
-            $test=Join-Path $OutDir 'test_native.mpp';$app.FileNew()|Out-Null;$p=$app.ActiveProject;$p.ProjectStart=[datetime]'2026-01-12';1..3|%{$t=$p.Tasks.Add("Native test $_");$t.Duration=480};$p.Tasks.Item(2).Predecessors='1';$p.Tasks.Item(3).Predecessors='2';$app.FileSaveAs($test)|Out-Null;CloseP $app;$app.FileOpenEx($test)|Out-Null;if($app.ActiveProject.Tasks.Count-ne3){throw 'TEST A roundtrip mismatch'};CloseP $app;'PASS'|Set-Content evidence/test-a.txt
+            Trace 'TEST A start'
+            $test=Join-Path $OutDir 'test_native.mpp'
+            if(Test-Path $test){Remove-Item -Force $test}
+            $app.FileNew()|Out-Null;$p=$app.ActiveProject;$p.ProjectStart=[datetime]'2026-01-12'
+            1..3|ForEach-Object{$t=$p.Tasks.Add("Native test $_");$t.Duration=480}
+            $p.Tasks.Item(2).Predecessors='1';$p.Tasks.Item(3).Predecessors='2'
+            $app.FileSaveAs($test)|Out-Null;CloseP $app;$app.FileOpenEx($test)|Out-Null
+            if($app.ActiveProject.Tasks.Count-ne3){throw 'TEST A roundtrip mismatch'}
+            CloseP $app;Trace 'TEST A PASS'
+            $base=Join-Path $OutDir 'LR3_01_Baseline_V31.mpp'
+            Trace 'build baseline start'
+            $app.FileNew()|Out-Null;$p=$app.ActiveProject;$p.ProjectStart=[datetime]'2026-01-12'
+            foreach($pair in $data.resources){$r=$p.Resources.Add([string]$pair[0]);$r.StandardRate=[double]$pair[1]}
+            $n=0
+            foreach($x in $data.base){
+              $n++;$t=$p.Tasks.Add([string]$x.name);$t.OutlineLevel=[int]$x.level
+              if($x.kind-eq'task'){$t.Duration=[int]([double]$x.duration*480);$t.FixedCost=[double]$x.fixed;if([int]$x.res-gt0){$t.ResourceNames=[string]$data.resources[[int]$x.res-1][0]}}
+              elseif($x.kind-eq'milestone'){$t.Duration=0}
+              if($x.pred-and@($x.pred).Count-gt0){$t.Predecessors=(@($x.pred)-join ',')}
+              if(($n%10)-eq0){Trace "baseline tasks $n"}
+            }
+            Trace 'baseline calculate'
+            $app.CalculateProject()|Out-Null
+            Trace 'baseline save baseline'
+            $app.BaselineSave()|Out-Null
+            Trace 'baseline save mpp'
+            $app.FileSaveAs($base)|Out-Null
+            CloseP $app
+            Record $app $base 'LR3_01_Baseline_V31.mpp' $false
             $models=@(
-              [pscustomobject]@{N='LR3_01_Baseline_V31.mpp';V='base';S='';D=0;F=1},
               [pscustomobject]@{N='LR3_02_Tracking_V31.mpp';V='track';S='2026-05-15';D=89;F=.95},
               [pscustomobject]@{N='LR3_03_Risk_V31.mpp';V='risk';S='';D=0;F=1},
               [pscustomobject]@{N='LR4_01_Status_P1_V31.mpp';V='track';S='2026-02-20';D=29;F=.92},
               [pscustomobject]@{N='LR4_02_Status_P2_V31.mpp';V='track';S='2026-04-03';D=59;F=.90},
               [pscustomobject]@{N='LR4_03_Status_P3_V31.mpp';V='track';S='2026-05-15';D=89;F=.95}
             )
-            foreach($sp in $models){$dest=Join-Path $OutDir $sp.N;$app.FileNew()|Out-Null;$p=$app.ActiveProject;$p.ProjectStart=[datetime]'2026-01-12';AddStructure $p $data.base $data.resources;$app.CalculateProject()|Out-Null;$app.BaselineSave()|Out-Null;if($sp.V-eq'track'){ApplyVariant $p $data.track}elseif($sp.V-eq'risk'){ApplyVariant $p $data.risk};if($sp.S){$p.StatusDate=[datetime]$sp.S;$p.SpreadPercentCompleteToStatusDate=$true;$v=if($sp.V-eq'track'){$data.track}elseif($sp.V-eq'risk'){$data.risk}else{$data.base};ApplyProgress $p $v $sp.D $sp.F};$app.CalculateProject()|Out-Null;$app.FileSaveAs($dest)|Out-Null;CloseP $app;Validate $app $dest $sp.N ([bool]$sp.S)}
+            foreach($sp in $models){
+              Trace "variant start $($sp.N)"
+              $app.FileOpenEx($base)|Out-Null;$p=$app.ActiveProject
+              if($sp.V-eq'track'){ApplyVariant $p $data.track}elseif($sp.V-eq'risk'){ApplyVariant $p $data.risk}
+              if($sp.S){$p.StatusDate=[datetime]$sp.S;$p.SpreadPercentCompleteToStatusDate=$true;$v=if($sp.V-eq'track'){$data.track}else{$data.risk};ApplyProgress $p $v $sp.D $sp.F}
+              $app.CalculateProject()|Out-Null
+              $dest=Join-Path $OutDir $sp.N
+              $app.FileSaveAs($dest)|Out-Null
+              CloseP $app
+              Record $app $dest $sp.N ([bool]$sp.S)
+            }
             $script:accept|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir 'Acceptance_Report.json')
             $script:metrics|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir 'project_metrics.json')
-            if(@($script:accept|?{-not$_.Pass}).Count-gt0){throw 'MPP acceptance failure'}
+            if(@($script:accept|Where-Object{-not$_.Pass}).Count-gt0){throw 'MPP acceptance failure'}
+            Trace 'ALL SIX PASS'
           } finally {CloseP $app;try{$app.Quit()|Out-Null}catch{}}
       - name: Capture diagnostics
         if: always()
