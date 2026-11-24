@@ -1,0 +1,34 @@
+name: Stage24 source-guided independent acceptance
+on:
+  push:
+    branches: [kompas-7335493-final-engineering]
+    paths: [stage23/source_profile.py, .github/workflows/stage24-source-guided.yml]
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install cadquery==2.8.0
+      - run: python stage23/source_profile.py --out stage24-source-guided
+      - name: Recover existing FRW seed without modifying it
+        run: |
+          mkdir -p seed
+          cat kompas-input/v6.b64.part* | base64 -d > seed/01_Mekhanizm_Variant_06_ORIGINAL.frw
+          python -c "from pathlib import Path; import zipfile; p=Path('seed/01_Mekhanizm_Variant_06_ORIGINAL.frw'); assert p.stat().st_size==71953; print(p.stat().st_size,zipfile.is_zipfile(p))"
+          sha256sum seed/*.frw > seed/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stage24-source-guided
+          path: |
+            stage24-source-guided/
+            seed/
+            stage23/source_profile.py
+            stage23/source-recovered.md
+            .github/workflows/stage24-source-guided.yml
+          include-hidden-files: true
