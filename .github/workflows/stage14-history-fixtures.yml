@@ -1,0 +1,20 @@
+name: Stage 14 historical bushing geometry fixtures
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths: ['.github/workflows/stage14-history-fixtures.yml']
+permissions:
+  contents: read
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 stage14/fetch_history.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage14-history-fixtures
+          path: history-output/
+          retention-days: 7
+          if-no-files-found: error

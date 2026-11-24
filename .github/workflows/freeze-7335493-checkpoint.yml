@@ -1,0 +1,89 @@
+name: Freeze verified KOMPAS runtime and seed 7335493
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/freeze-7335493-checkpoint.yml'
+permissions:
+  actions: read
+  contents: read
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44290433663
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: 7335493-native-seed-alt
+          run-id: 44476851857
+          github-token: ${{ github.token }}
+          path: frozen/seed
+      - name: Verify preserved bytes without rebuilding runtime or opening CAD
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          test "$(cat kompas-runtime.part-00 kompas-runtime.part-01 kompas-runtime.part-02 kompas-runtime.part-03 | sha256sum | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          cd ../seed
+          printf '%s  %s\n' 0898524f47f3659ed4767feccf3052820222ecb9da8d862670a5e4ce064513b6 BlankPart.m3d 407b7c0260034b49dabbffbbc5ae7d80b300316a6214716f6e67ef365df04265 BlankAssembly.a3d | sha256sum -c -
+          echo "RESULT=PASS_CHECKPOINT_BYTES_ONLY_NOT_CAD_ACCEPTANCE" | tee ../preservation.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-runtime-part00
+          path: frozen/runtime/kompas-runtime.part-00
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-runtime-part01
+          path: frozen/runtime/kompas-runtime.part-01
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-runtime-part02
+          path: frozen/runtime/kompas-runtime.part-02
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-runtime-part03
+          path: frozen/runtime/kompas-runtime.part-03
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kompas-v25-runtime-manifests
+          path: frozen/runtime/*.txt
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-native-seed-alt
+          path: frozen/seed/
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-checkpoint-record
+          path: |
+            checkpoints/7335493/2026-11-19.md
+            frozen/preservation.txt
+          retention-days: 90
+          if-no-files-found: error

@@ -1,0 +1,5 @@
+# Stage 5B negative acceptance (2026-11-24)
+
+Run 45391899876, job 138437503226, artifact 14919876246 (7002 bytes). Downloaded ZIP SHA256 verified: 6bb3f9f2ec7759528254a934584cda44c9d491e67cd90c68e9cef59acf867c61.
+
+Runtime restore, SDK connection and 3D module flag passed. GetFilter returned ('', 0) for converter IDs -3 and 3 across Unknown, Part, Assembly, Drawing and Fragment. GetConverterParameters returned IAPIObject for commands -3 and 0. Both explicit output calls to converter -3 returned 0, FILE_EXISTS False. Final error NO_VERIFIED_EXPLICIT_OUTPUT_ROUTE. ZIP contains cube.step, gate.log, kompas.err, converter-files.txt, kompas.out, listeners.txt only. No M3D, mass, rebuild or reopen evidence. The command hypotheses were not confirmed by GetFilter; this is a negative test of those calls, not proof that every STEP route fails. Do not repeat these calls unchanged. Production import remains blocked. A distinct documented route on a supported, properly licensed runtime is needed; do not infer commercial entitlement from module flags or bypass licensing.

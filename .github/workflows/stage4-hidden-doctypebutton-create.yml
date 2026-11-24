@@ -1,0 +1,240 @@
+name: KOMPAS Stage 4 hidden DocTypeButton native create probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-hidden-doctypebutton-create.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Restore exact frozen runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          [ ! -d "$RUNNER_TEMP/runtime/opt/ascon/common" ] || sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+
+      - name: Install compiler Qt headers and host libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang-18 libc++-18-dev libc++abi-18-dev libunwind-18-dev qt6-base-dev pkg-config \
+            xvfb xauth dbus procps python3 \
+            libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1 \
+            libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0 \
+            libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0 \
+            libxcb-composite0 libxcb-shape0 libxv1 libopengl0 libglu1-mesa
+
+      - name: Compile in-process DocTypeButton probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          QTCFLAGS="$(pkg-config --cflags Qt6Widgets)"
+          cat >/tmp/doctype_writer.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <QtWidgets/QApplication>
+          #include <QtWidgets/QWidget>
+          #include <QtWidgets/QAbstractButton>
+          #include <QtCore/QVariant>
+          #include <QtCore/QByteArray>
+          #include <fstream>
+          #include <string>
+          #include <algorithm>
+          #include <cctype>
+          using namespace ksapi;
+          static std::ofstream lg("/tmp/doctypebutton.log",std::ios::out|std::ios::app);
+          static int phase=0;
+          static void log(const std::string&s){lg<<s<<std::endl;lg.flush();}
+          static std::string u8(const QString&s){auto b=s.toUtf8();return std::string(b.constData(),(size_t)b.size());}
+          static std::string low(std::string s){for(char&c:s)if((unsigned char)c<128)c=(char)std::tolower((unsigned char)c);return s;}
+          static bool has(const std::string&s,const char*x){return low(s).find(low(x))!=std::string::npos;}
+          static std::string props(QObject*o){
+            std::string z;
+            for(auto n:o->dynamicPropertyNames()){
+              QVariant v=o->property(n.constData());
+              z+="|"+std::string(n.constData(),(size_t)n.size())+"="+u8(v.toString());
+            }
+            return z;
+          }
+          static QAbstractButton* find_doc_button(const char*kind){
+            QAbstractButton*found=nullptr;
+            int n=0;
+            for(QWidget*w:QApplication::allWidgets()){
+              auto*b=qobject_cast<QAbstractButton*>(w);
+              if(!b)continue;
+              QVariant dp=b->property("DocTypeButton");
+              std::string all=std::string(w->metaObject()?w->metaObject()->className():"")+"|"+u8(w->objectName())+"|"+
+                              u8(b->text())+"|"+u8(w->toolTip())+"|"+u8(w->accessibleName())+props(w);
+              bool dtype=dp.isValid();
+              if(dtype){
+                log("DOCTYPE|"+std::to_string(n++)+"|"+all+"|DocTypeButton="+u8(dp.toString())+
+                    "|enabled="+std::to_string(b->isEnabled())+"|visible="+std::to_string(b->isVisible())+
+                    "|parent="+std::string(w->parent()&&w->parent()->metaObject()?w->parent()->metaObject()->className():"")+
+                    "|parentObj="+(w->parent()?u8(w->parent()->objectName()):""));
+              }
+              if(!dtype)continue;
+              if(std::string(kind)=="fragment"){
+                if(has(all,"фраг")||has(all,"fragment")||has(all,"frw")||has(all,"grfragment")) found=b;
+              }else{
+                if(has(all,"детал")||has(all,"detail")||has(all,"part")||has(all,"m3d")) found=b;
+              }
+            }
+            return found;
+          }
+          extern "C" int run_variant06_writer(){
+            try{
+              IApplication&app=GetKompasApplication();
+              auto docs=app.GetDocuments();
+              if(phase==0){
+                auto lm=app.GetApplicationLicenseManager();
+                log("IN_PROCESS=1");
+                log(std::string("LICENSE_2D=")+(lm&&lm->IsKompasModuleActive(ksKompasModule2D)?"1":"0"));
+                log(std::string("LICENSE_3D=")+(lm&&lm->IsKompasModuleActive(ksKompasModule3D)?"1":"0"));
+                log("DOC_COUNT_0="+std::to_string(docs?docs->GetCount():-1));
+                bool ok=app.ExecuteKompasCommand(ksCMFileNew,true);
+                log(std::string("FILE_NEW_1=")+(ok?"1":"0"));
+                phase=1; return 3;
+              }
+              if(phase==1){
+                auto*b=find_doc_button("fragment");
+                log(std::string("FRAGMENT_BUTTON=")+(b?"1":"0"));
+                if(!b){ log("RESULT=PROBE_NO_FRAGMENT_BUTTON"); phase=99; return 0; }
+                log("FRAGMENT_CLICK_TEXT="+u8(b->text())+"|obj="+u8(b->objectName())+"|tip="+u8(b->toolTip())+props(b));
+                b->click();
+                log("FRAGMENT_CLICKED=1");
+                phase=2; return 3;
+              }
+              if(phase==2){
+                log("DOC_COUNT_AFTER_FRAGMENT="+std::to_string(docs?docs->GetCount():-1));
+                auto active=app.GetActiveDocument();
+                log(std::string("ACTIVE_AFTER_FRAGMENT=")+(active?"1":"0"));
+                if(!active){ log("RESULT=FAIL_FRAGMENT_CLICK_NO_DOCUMENT"); phase=99; return 0; }
+                log("ACTIVE_FRAGMENT_TYPE="+std::to_string((int)active->GetDocumentType()));
+                bool s=active->SaveAs(L"/tmp/HiddenButton_Fragment.frw");
+                log(std::string("FRAGMENT_SAVE=")+(s?"1":"0"));
+                if(!active->Close(kdDoNotSaveChanges)){log("FRAGMENT_CLOSE=0");}
+                else log("FRAGMENT_CLOSE=1");
+                bool ok=app.ExecuteKompasCommand(ksCMFileNew,true);
+                log(std::string("FILE_NEW_2=")+(ok?"1":"0"));
+                phase=3; return 3;
+              }
+              if(phase==3){
+                auto*b=find_doc_button("part");
+                log(std::string("PART_BUTTON=")+(b?"1":"0"));
+                if(!b){ log("RESULT=PASS_FRAGMENT_ONLY_NO_PART_BUTTON"); phase=99; return 0; }
+                log("PART_CLICK_TEXT="+u8(b->text())+"|obj="+u8(b->objectName())+"|tip="+u8(b->toolTip())+props(b));
+                b->click(); log("PART_CLICKED=1");
+                phase=4; return 3;
+              }
+              if(phase==4){
+                log("DOC_COUNT_AFTER_PART="+std::to_string(docs?docs->GetCount():-1));
+                auto active=app.GetActiveDocument();
+                log(std::string("ACTIVE_AFTER_PART=")+(active?"1":"0"));
+                if(!active){log("RESULT=PASS_FRAGMENT_FAIL_PART_CLICK");phase=99;return 0;}
+                log("ACTIVE_PART_TYPE="+std::to_string((int)active->GetDocumentType()));
+                IKompasDocument3DPtr d3=active;
+                auto top=d3?d3->GetTopPart():IPartPtr{};
+                log(std::string("PART_TOP_PART=")+(top?"1":"0"));
+                bool s=active->SaveAs(L"/tmp/HiddenButton_Part.m3d");
+                log(std::string("PART_SAVE=")+(s?"1":"0"));
+                active->Close(kdDoNotSaveChanges);
+                log("RESULT=PASS_HIDDEN_DOCTYPEBUTTON_CREATE_2D_3D");
+                phase=99;return 0;
+              }
+              return 0;
+            }catch(const std::exception&e){
+              log(std::string("EXCEPTION=")+e.what());log("RESULT=FAIL_HIDDEN_DOCTYPEBUTTON_EXCEPTION");return 1;
+            }catch(...){log("EXCEPTION=unknown");log("RESULT=FAIL_HIDDEN_DOCTYPEBUTTON_EXCEPTION");return 1;}
+          }
+          CPP
+          /usr/bin/clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread \
+            $QTCFLAGS -I"$INC" /tmp/doctype_writer.cpp \
+            -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lQt6Widgets -lQt6Gui -lQt6Core -lc++abi -o /tmp/writer_variant06.so
+          sed 's/ms(now)-ms(g_start)<30000/ms(now)-ms(g_start)<8000/' kompas-linux/bootstrap_variant06_poll.cpp >/tmp/doctype_bootstrap.cpp
+          /usr/bin/clang++-18 -std=c++20 -O2 -fPIC -shared -pthread /tmp/doctype_bootstrap.cpp -ldl -o /tmp/doctype_bootstrap.so
+          LD_LIBRARY_PATH="$BIN" ldd /tmp/writer_variant06.so | tee /tmp/doctype.ldd
+          ! grep -q 'not found' /tmp/doctype.ldd
+
+      - name: Execute hidden document type buttons natively
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p result/doctypebutton
+          cat >/tmp/doctype_controller.py <<'PY'
+          import os,pathlib,time,ksapi
+          from constants import constants as c
+          out=pathlib.Path(os.environ["GITHUB_WORKSPACE"])/"result/doctypebutton"
+          ksapi.SetKompasPath("/opt/ascon/kompas3d-v25/Bin")
+          os.environ["LD_PRELOAD"]="/tmp/doctype_bootstrap.so"
+          app=ksapi.OpenKompasInvisible()
+          if not app: raise SystemExit("OpenKompasInvisible null")
+          p=pathlib.Path("/tmp/doctypebutton.log")
+          for _ in range(160):
+              try: app.PumpWaitingMessages()
+              except BaseException: pass
+              if p.exists() and "RESULT=" in p.read_text(errors="replace"): break
+              time.sleep(.5)
+          if p.exists():(out/"gate.log").write_text(p.read_text(errors="replace"),encoding="utf-8")
+          b=pathlib.Path("/tmp/work1_bootstrap.log")
+          if b.exists():(out/"bootstrap.log").write_text(b.read_text(errors="replace"),encoding="utf-8")
+          try: app.Quit()
+          except BaseException: pass
+          PY
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          HOME2="$RUNNER_TEMP/doctype-home"; XDG2="$HOME2/.config"
+          mkdir -p "$XDG2/ascon/KOMPAS-3D Invisible/25"
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$XDG2/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          rm -f /tmp/doctypebutton.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/HiddenButton_Fragment.frw /tmp/HiddenButton_Part.m3d
+          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          timeout 130s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
+            dbus-run-session -- env PYTHONPATH="$BIN" LD_LIBRARY_PATH="$BIN" HOME="$HOME2" XDG_CONFIG_HOME="$XDG2" \
+              QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8 python3 -u /tmp/doctype_controller.py \
+            >result/doctypebutton/stdout.txt 2>result/doctypebutton/stderr.txt || true
+          cp /tmp/doctypebutton.log result/doctypebutton/gate.log 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log result/doctypebutton/bootstrap.log 2>/dev/null || true
+          cp /tmp/HiddenButton_Fragment.frw result/doctypebutton/ 2>/dev/null || true
+          cp /tmp/HiddenButton_Part.m3d result/doctypebutton/ 2>/dev/null || true
+          cat result/doctypebutton/gate.log || true
+          cat result/doctypebutton/stderr.txt || true
+          grep -Eq '^RESULT=(PASS_HIDDEN_DOCTYPEBUTTON_CREATE_2D_3D|PASS_FRAGMENT_ONLY_NO_PART_BUTTON|PASS_FRAGMENT_FAIL_PART_CLICK|PROBE_NO_FRAGMENT_BUTTON|FAIL_FRAGMENT_CLICK_NO_DOCUMENT)$' result/doctypebutton/gate.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-hidden-doctypebutton-create
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/doctypebutton/**

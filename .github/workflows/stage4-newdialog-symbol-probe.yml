@@ -1,0 +1,73 @@
+name: KOMPAS Stage 4 NewDocumentDialog symbol probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-newdialog-symbol-probe.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen runtime and inspect NewDocumentDialog implementation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          BIN="$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25/Bin"
+          OUT="$GITHUB_WORKSPACE/result/newdialog-symbols"
+          mkdir -p "$OUT"
+
+          {
+            echo '=== FILES CONTAINING NewDocumentDialog / OnDocButton_Clicked ==='
+            for f in "$BIN"/*; do
+              [ -f "$f" ] || continue
+              if strings -a "$f" 2>/dev/null | grep -qE 'NewDocumentDialog|OnDocButton_Clicked|DocumentButtonClicked'; then
+                echo "--- $f"
+                file "$f" || true
+                nm -D -C "$f" 2>/dev/null | grep -E 'NewDocumentDialog|OnDocButton_Clicked|DocumentButtonClicked|DocButton' || true
+                echo '--- relevant UTF-8 strings'
+                strings -a -n 3 "$f" 2>/dev/null | grep -E -C 12 'NewDocumentDialog|OnDocButton_Clicked|DocumentButtonClicked|btnDocument|docTypes|Drawing|Fragment|Part|Assembly|Чертеж|Фрагмент|Детал|Сборк' | head -1200 || true
+              fi
+            done
+          } | tee "$OUT/symbols.txt"
+
+          {
+            echo '=== UTF-16LE document type strings by file ==='
+            for f in "$BIN"/*; do
+              [ -f "$f" ] || continue
+              hits=$(strings -a -e l -n 3 "$f" 2>/dev/null | grep -E 'Чертеж|Фрагмент|Детал|Сборк|Drawing|Fragment|Part|Assembly' | head -80 || true)
+              if [ -n "$hits" ]; then
+                echo "--- $f"
+                printf '%s\n' "$hits"
+              fi
+            done
+          } | tee "$OUT/utf16-types.txt"
+
+          echo 'RESULT=PASS_NEWDIALOG_SYMBOL_PROBE' | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-newdialog-symbol-probe
+          retention-days: 90
+          path: result/newdialog-symbols/**

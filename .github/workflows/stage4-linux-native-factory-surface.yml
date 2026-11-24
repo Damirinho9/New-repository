@@ -1,0 +1,79 @@
+name: KOMPAS Stage 4 Linux native factory surface
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-linux-native-factory-surface.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore frozen runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Inspect callable document factories
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          SDK=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-linux-factory
+          mkdir -p "$OUT"
+          {
+            echo '=== IParts surrounding API ==='
+            sed -n '29850,29950p' "$SDK/KsAPI.h" || true
+            echo
+            echo '=== references to GetParts / IParts ==='
+            grep -RniE 'GetParts\(|IPartsPtr|CreateDocument\(const std::wstring & startFileName' "$SDK" | head -500 || true
+            echo
+            echo '=== DocumentTypeEnum values ==='
+            grep -Rni -A30 -B5 'enum DocumentTypeEnum' "$SDK" || true
+            echo
+            echo '=== SysDocumentType clues ==='
+            grep -RniE 'SysDocumentType|DocFragment|DocumentFragment|ksDocumentFragment|ksDocumentPart' /opt/ascon/kompas3d-v25/SDK | head -1000 || true
+            echo
+            echo '=== exact internal exported factories ==='
+            for f in "$BIN/libk2DAppA.so" "$BIN/libk2DDoc.so" "$BIN/libk3DAppA.so" "$BIN/libksAPIC.so" "$BIN/libksAPICLink.so"; do
+              [ -f "$f" ] || continue
+              echo "--- $f"
+              nm -D -C --defined-only "$f" 2>/dev/null | grep -E 'GrDocumentReader::CreateDocument|KompasAppl::CreateDocument3D|IParts_CreateDocument|CreateDocument2DEvents' || true
+              nm -D --defined-only "$f" 2>/dev/null | grep -E '_ZN16GrDocumentReader14CreateDocumentE15SysDocumentTypeb|_ZN10KompasAppl16CreateDocument3D|IParts_CreateDocument|_Z22CreateDocument2DEventsv' || true
+            done
+          } | tee "$OUT/factory-surface.txt"
+          echo 'RESULT=FACTORY_SURFACE_CAPTURED' | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-linux-native-factory-surface
+          retention-days: 90
+          path: result/stage4-linux-factory/**

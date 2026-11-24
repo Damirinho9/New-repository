@@ -1,0 +1,35 @@
+name: Export proot launcher for local ALT KOMPAS rootfs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/export-proot-launcher.yml'
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Package proot and runtime dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y proot
+          mkdir -p out/bin out/lib
+          cp -L "$(command -v proot)" out/bin/proot
+          ldd "$(command -v proot)" | awk '/=> \/|^\// {for(i=1;i<=NF;i++) if($i ~ /^\//) print $i}' | sort -u > out/deps.txt
+          while read -r lib; do
+            [ -f "$lib" ] || continue
+            mkdir -p "out/lib$(dirname "$lib")"
+            cp -L "$lib" "out/lib$lib"
+          done < out/deps.txt
+          file out/bin/proot
+          sha256sum out/bin/proot > out/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proot-local-launcher
+          path: out/**
+          if-no-files-found: error
+          retention-days: 3

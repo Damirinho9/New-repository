@@ -1,0 +1,293 @@
+name: KOMPAS Stage 4 internal native 3D factory gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-internal-create3d-native-gate.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then
+            sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+          fi
+
+      - name: Install compiler and GUI prerequisites
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             clang-18 libc++-18-dev libc++abi-18-dev libunwind-18-dev             xvfb xauth dbus procps python3             libxcb-res0 libxcb-dri2-0 libxcb-xkb1 libxcb-cursor0 libxres1             libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1 libxcb-image0             libxcb-render-util0 libxcb-util1 libxcb-xinerama0 libxkbcommon-x11-0             libxcb-composite0 libxcb-shape0 libxv1 libopengl0 libglu1-mesa
+
+      - name: Compile exact-call in-process writer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+
+          cat >/tmp/internal_create3d.cpp <<'CPP'
+          #include <KsAPI.h>
+          #include <ksConstants.h>
+          #include <dlfcn.h>
+          #include <fstream>
+          #include <string>
+          #include <filesystem>
+          using namespace ksapi;
+
+          static std::ofstream lg("/tmp/internal_create3d_gate.log",std::ios::out|std::ios::app);
+          static void log(const std::string&s){ lg<<s<<std::endl; lg.flush(); }
+          static int tries=0;
+          static bool called=false;
+
+          using SetKompasFn = void(*)(IApplication*);
+          using GetKompasFn = IApplication*(*)();
+          using CreateDocument3DFn = void(*)(
+              const std::wstring&, const std::wstring&, const std::wstring&,
+              const std::wstring&, bool, bool, bool);
+
+          extern "C" int run_variant06_writer(){
+            try{
+              IApplication& app=GetKompasApplication();
+              if(tries==0){
+                int ma=0,mi=0,re=0,bu=0;
+                app.GetSystemVersion(ma,mi,re,bu);
+                log("IN_PROCESS_GET_KOMPAS_APPLICATION=1");
+                log("KOMPAS_VERSION="+std::to_string(ma)+"."+std::to_string(mi)+"."+std::to_string(re)+"."+std::to_string(bu));
+              }
+
+              auto lm=app.GetApplicationLicenseManager();
+              if(!lm){ log("RESULT=FAIL_NO_LICENSE_MANAGER"); return 1; }
+              bool l3=lm->IsKompasModuleActive(ksKompasModule3D);
+              if(tries==0) log(std::string("LICENSE_3D_ACTIVE=")+(l3?"1":"0"));
+              if(!l3){ log("RESULT=FAIL_LICENSE_3D"); return 1; }
+
+              auto docs=app.GetDocuments();
+              if(!docs){ log("RESULT=FAIL_NO_DOCUMENTS"); return 1; }
+              if(tries==0) log("DOC_COUNT_BEFORE="+std::to_string(docs->GetCount()));
+
+              if(!called){
+                void* h=dlopen("/opt/ascon/kompas3d-v25/Bin/libEquipmentObject.so",RTLD_NOW|RTLD_GLOBAL);
+                if(!h){
+                  const char* e=dlerror();
+                  log(std::string("DLOPEN_FAIL=")+(e?e:"unknown"));
+                  log("RESULT=FAIL_DLOPEN_EQUIPMENT");
+                  return 1;
+                }
+                log("DLOPEN_EQUIPMENT=1");
+
+                dlerror();
+                auto setk=reinterpret_cast<SetKompasFn>(dlsym(h,"_ZN10KompasAppl9SetKompasEPN5ksapi12IApplicationE"));
+                auto getk=reinterpret_cast<GetKompasFn>(dlsym(h,"_ZN10KompasAppl9GetKompasEv"));
+                auto create=reinterpret_cast<CreateDocument3DFn>(dlsym(h,
+                  "_ZN10KompasAppl16CreateDocument3DERKNSt3__112basic_stringIwNS0_11char_traitsIwEENS0_9allocatorIwEEEES8_S8_S8_bbb"));
+                const char* de=dlerror();
+                log(std::string("SYM_SET=")+(setk?"1":"0"));
+                log(std::string("SYM_GET=")+(getk?"1":"0"));
+                log(std::string("SYM_CREATE3D=")+(create?"1":"0"));
+                if(de) log(std::string("DLSYM_LAST_ERROR=")+de);
+                if(!setk||!getk||!create){ log("RESULT=FAIL_INTERNAL_SYMBOLS"); return 1; }
+
+                setk(&app);
+                IApplication* got=getk();
+                log(std::string("STATIC_KOMPAS_PTR_MATCH=")+(got==&app?"1":"0"));
+                if(got!=&app){ log("RESULT=FAIL_SETGET_KOMPAS"); return 1; }
+
+                const std::wstring path=L"/tmp/InternalFactory_Native_3D.m3d";
+                const std::wstring empty1=L"";
+                const std::wstring empty2=L"";
+                const std::wstring shortName=L"InternalFactory_Native_3D.m3d";
+                std::filesystem::remove(path);
+                log("CALL_CREATE3D_EXACT_PATTERN=1");
+                create(path,empty1,empty2,shortName,true,false,true);
+                called=true;
+                log("CALL_CREATE3D_RETURNED=1");
+              }
+
+              app.PumpWaitingMessages();
+              log("DOC_COUNT_AFTER="+std::to_string(docs->GetCount()));
+              auto active=app.GetActiveDocument();
+              log(std::string("ACTIVE_DOCUMENT=")+(active?"1":"0"));
+              if(!active){
+                if(++tries<20) return 3;
+                log("RESULT=FAIL_CREATE3D_NO_ACTIVE_DOCUMENT");
+                return 1;
+              }
+
+              IKompasDocument3DPtr d3=active;
+              log(std::string("ACTIVE_CAST_3D=")+(d3?"1":"0"));
+              auto top=d3?d3->GetTopPart():IPartPtr{};
+              log(std::string("TOP_PART=")+(top?"1":"0"));
+              if(!d3||!top){
+                if(++tries<20) return 3;
+                log("RESULT=FAIL_CREATE3D_CONTEXT");
+                return 1;
+              }
+
+              const std::wstring path=L"/tmp/InternalFactory_Native_3D.m3d";
+              bool saved=active->SaveAs(path);
+              log(std::string("SAVEAS=")+(saved?"1":"0"));
+              if(!saved){ log("RESULT=FAIL_CREATE3D_SAVEAS"); return 1; }
+
+              bool closed=active->Close(kdDoNotSaveChanges);
+              log(std::string("CLOSE=")+(closed?"1":"0"));
+              if(!closed){ log("RESULT=FAIL_CREATE3D_CLOSE"); return 1; }
+
+              auto reopened=docs->Open(path,true,false);
+              log(std::string("REOPEN=")+(reopened?"1":"0"));
+              if(!reopened){ log("RESULT=FAIL_CREATE3D_REOPEN"); return 1; }
+
+              IKompasDocument3DPtr rd3=reopened;
+              auto rtop=rd3?rd3->GetTopPart():IPartPtr{};
+              log(std::string("REOPEN_CAST_3D=")+(rd3?"1":"0"));
+              log(std::string("REOPEN_TOP_PART=")+(rtop?"1":"0"));
+              if(!rd3||!rtop){ log("RESULT=FAIL_CREATE3D_REOPEN_CONTEXT"); return 1; }
+
+              reopened->Save();
+              reopened->Close(kdDoNotSaveChanges);
+              log("RESULT=PASS_INTERNAL_NATIVE_CREATE3D_SAVE_CLOSE_REOPEN");
+              return 0;
+            }catch(const std::exception&e){
+              log(std::string("EXCEPTION=")+e.what());
+              log("RESULT=FAIL_INTERNAL_CREATE3D_EXCEPTION");
+              return 1;
+            }catch(...){
+              log("EXCEPTION=unknown");
+              log("RESULT=FAIL_INTERNAL_CREATE3D_EXCEPTION");
+              return 1;
+            }
+          }
+          CPP
+
+          /usr/bin/clang++-18 -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" /tmp/internal_create3d.cpp -L"$BIN" -Wl,-rpath,"$BIN"             -lksAPI -lc++abi -ldl -o /tmp/writer_variant06.so
+
+          sed \
+            -e 's/ms(now)-ms(g_start)<30000/ms(now)-ms(g_start)<1000/' \
+            -e 's#if(!g_enabled||g_done||g_in_writer||!pthread_equal(pthread_self(),g_main_thread)) return;#if(!g_enabled||g_done||g_in_writer||!pthread_equal(pthread_self(),g_main_thread)) return; if(access("/tmp/controller_app_ready",F_OK)!=0) return;#' \
+            kompas-linux/bootstrap_variant06_poll.cpp >/tmp/internal_bootstrap.cpp
+          /usr/bin/clang++-18 -std=c++20 -O2 -fPIC -shared -pthread             /tmp/internal_bootstrap.cpp -ldl -o /tmp/internal_bootstrap.so
+
+          ldd /tmp/writer_variant06.so | tee /tmp/writer.ldd
+          ! grep -q 'not found' /tmp/writer.ldd
+
+      - name: Run exact native factory inside licensed ksinvisible
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OUT=result/internal-create3d
+          mkdir -p "$OUT"
+
+          cat >/tmp/controller.py <<'PY'
+          import os,pathlib,time,traceback,ksapi
+          from constants import constants as c
+          out=pathlib.Path(os.environ["GITHUB_WORKSPACE"])/"result/internal-create3d"
+          ctl=out/"controller.log"
+          def log(s):
+              print(s,flush=True)
+              with ctl.open("a",encoding="utf-8") as f:f.write(str(s)+"\n")
+          app=None
+          try:
+              ksapi.SetKompasPath("/opt/ascon/kompas3d-v25/Bin")
+              os.environ["LD_PRELOAD"]="/tmp/internal_bootstrap.so"
+              log("CALL=OpenKompasInvisible")
+              app=ksapi.OpenKompasInvisible()
+              if not app: raise RuntimeError("OpenKompasInvisible returned null")
+              log("CONTROLLER_APP=1")
+              lm=app.GetApplicationLicenseManager()
+              log("CONTROLLER_LICENSE_3D="+str(int(bool(lm and lm.IsKompasModuleActive(c.ksKompasModule3D)))))
+              pathlib.Path("/tmp/controller_app_ready").write_text("READY\n",encoding="ascii")
+              log("CONTROLLER_READY_HANDSHAKE=1")
+              for i in range(180):
+                  try: app.PumpWaitingMessages()
+                  except BaseException: pass
+                  p=pathlib.Path("/tmp/internal_create3d_gate.log")
+                  if p.exists():
+                      t=p.read_text(errors="replace")
+                      if "RESULT=PASS_" in t or "RESULT=FAIL_" in t:
+                          break
+                  time.sleep(.5)
+              p=pathlib.Path("/tmp/internal_create3d_gate.log")
+              if p.exists():
+                  text=p.read_text(errors="replace")
+                  (out/"gate.log").write_text(text,encoding="utf-8")
+                  log(text)
+              else:
+                  log("GATE_LOG_MISSING")
+              bp=pathlib.Path("/tmp/work1_bootstrap.log")
+              if bp.exists():
+                  (out/"bootstrap.log").write_text(bp.read_text(errors="replace"),encoding="utf-8")
+          except BaseException as e:
+              log("CONTROLLER_EXCEPTION="+type(e).__name__+":"+repr(e))
+              traceback.print_exc()
+          finally:
+              try:
+                  if app: app.Quit()
+              except BaseException as e: log("QUIT_EXCEPTION="+repr(e))
+          PY
+
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          HOST_HOME="$RUNNER_TEMP/internal-create3d-home"
+          HOST_XDG="$HOST_HOME/.config"
+          mkdir -p "$HOST_XDG/ascon/KOMPAS-3D Invisible/25"
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" "$HOST_XDG/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+          rm -f /tmp/internal_create3d_gate.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/controller_app_ready /tmp/InternalFactory_Native_3D.m3d
+          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+
+          timeout 160s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset"             dbus-run-session -- env               PYTHONPATH="$BIN"               LD_LIBRARY_PATH="$BIN"               HOME="$HOST_HOME"               XDG_CONFIG_HOME="$HOST_XDG"               QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LC_ALL=C.UTF-8               python3 -u /tmp/controller.py             >"$OUT/stdout.txt" 2>"$OUT/stderr.txt" || true
+
+          cp /tmp/internal_create3d_gate.log "$OUT/gate.log" 2>/dev/null || true
+          cp /tmp/work1_bootstrap.log "$OUT/bootstrap.log" 2>/dev/null || true
+          cat "$OUT/controller.log" || true
+          cat "$OUT/gate.log" || true
+          cat "$OUT/bootstrap.log" || true
+          cat "$OUT/stderr.txt" || true
+          ps -eo pid,ppid,comm,args | grep -E 'ksinvisible|kKompas|python3' | tee "$OUT/processes.txt" || true
+
+          grep -qx 'RESULT=PASS_INTERNAL_NATIVE_CREATE3D_SAVE_CLOSE_REOPEN' "$OUT/gate.log"
+          test -s /tmp/InternalFactory_Native_3D.m3d
+          cp /tmp/InternalFactory_Native_3D.m3d "$OUT/"
+          file "$OUT/InternalFactory_Native_3D.m3d" | tee "$OUT/file.txt"
+          stat -c '%n %s bytes' "$OUT/InternalFactory_Native_3D.m3d" | tee "$OUT/stat.txt"
+          sha256sum "$OUT/InternalFactory_Native_3D.m3d" | tee "$OUT/SHA256.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-internal-native-create3d
+          retention-days: 90
+          if-no-files-found: ignore
+          path: result/internal-create3d/**

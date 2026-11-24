@@ -1,0 +1,224 @@
+name: KOMPAS native Work 4 variant 16 parametric bearing
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - kompas-7335493-native-work1
+    paths:
+      - 'work4-variant16/**'
+      - '.github/workflows/work4-variant16-native.yml'
+
+jobs:
+  source-and-syntax-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Syntax gate
+        run: |
+          python -m py_compile \
+            work4-variant16/work4_common.py \
+            work4-variant16/prove_parametric_runtime.py \
+            work4-variant16/build_work4_native.py \
+            work4-variant16/verify_work4_native.py
+
+      - name: Exact variant 16 source contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import csv
+
+          root = Path("work4-variant16")
+          basis = (root/"source_basis.md").read_text(encoding="utf-8")
+          expected_text = "Подшипник роликовый радиально-упорный с коническими роликами двухрядный с двойным внутренним кольцом"
+          if expected_text not in basis:
+              raise SystemExit("Exact source variant-16 description is absent")
+          if "one double inner ring" not in basis or "two separate outer cups" not in basis:
+              raise SystemExit("Variant-16 topology contract is absent")
+          if "c8cf9bc3b26df5b86e97d0341a248e176c9296aebe8fa553299ebde24eace612" not in basis:
+              raise SystemExit("Exact methodology SHA-256 provenance is absent")
+
+          rows = {}
+          with (root/"parameters.csv").open(encoding="utf-8-sig", newline="") as f:
+              for row in csv.DictReader(f):
+                  rows[row["parameter"]] = row["value"]
+          def num(name): return float(rows[name])
+
+          assert int(num("variant")) == 16
+          assert rows["topology"] == "double inner ring + two outer cups"
+          assert num("D") == 120
+          assert num("d") == 70
+          assert num("T") == 40
+          assert num("B") == 20
+          assert num("N_rol") == 13
+          assert num("D1") == round((num("d")+num("D"))/2 + 0.6*num("d_rol"))
+          assert num("D2") == round((num("d")+num("D"))/2 - 0.3*num("d_rol"))
+          assert abs(num("z") - (num("d")+num("D"))/4) < 1e-9
+          assert abs(num("rivet_pitch_d") - (num("D1")+num("D2"))/2) < 1e-9
+
+          print("SOURCE_VARIANT16_EXACT_TEXT_PASS")
+          print("SOURCE_VARIANT16_TOPOLOGY_PASS")
+          print("SOURCE_PROVENANCE_SHA_PASS")
+          print("PARAMETER_FORMULAS_PASS")
+          print("RESULT=PASS_WORK4_VARIANT16_SOURCE_GATE")
+          PY
+
+  build-native-work4:
+    needs: source-and-syntax-gate
+    runs-on: [self-hosted, Windows, X64, kompas]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout exact Work 4 source
+        uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Freeze licensed Windows KOMPAS runtime
+        shell: powershell
+        run: |
+          Write-Host "Computer=$env:COMPUTERNAME"
+          Write-Host "User=$env:USERNAME"
+          Write-Host "OS=$([Environment]::OSVersion.VersionString)"
+          if ($env:KOMPAS_COMMERCIAL_CONFIRMED -ne "1") {
+            throw "Work 4 requires the licensed Windows KOMPAS runtime."
+          }
+          if ($null -eq [type]::GetTypeFromProgID("KOMPAS.Application.7")) {
+            throw "KOMPAS.Application.7 is not registered."
+          }
+          if ($null -eq [type]::GetTypeFromProgID("Kompas.Application.5")) {
+            throw "Kompas.Application.5 is not registered."
+          }
+          New-Item -ItemType Directory -Force work4-variant16/native | Out-Null
+          @(
+            "RUNTIME_CONTRACT_PASS",
+            "SOURCE_METHODOLOGY_SHA=c8cf9bc3b26df5b86e97d0341a248e176c9296aebe8fa553299ebde24eace612"
+          ) | Set-Content -Encoding UTF8 work4-variant16/native/runtime-contract.txt
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pywin32
+        shell: powershell
+        run: python -m pip install --disable-pip-version-check pywin32
+
+      - name: Re-run syntax gate on Windows
+        shell: powershell
+        run: python -m py_compile work4-variant16/work4_common.py work4-variant16/prove_parametric_runtime.py work4-variant16/build_work4_native.py work4-variant16/verify_work4_native.py
+
+      - name: Prove native parametric mutation in frozen runtime
+        shell: powershell
+        working-directory: work4-variant16
+        run: |
+          python prove_parametric_runtime.py
+          Get-Content runtime-parametric-proof.txt
+          if (-not (Select-String -Path runtime-parametric-proof.txt -Pattern '^RESULT=RUNTIME_NATIVE_PARAMETRIC_MUTATION_PASS$' -Quiet)) {
+            throw "Native KOMPAS runtime did not prove variable-driven parametric mutation."
+          }
+
+      - name: Build exact variant 16 native M3D and A3D
+        shell: powershell
+        working-directory: work4-variant16
+        run: |
+          python build_work4_native.py
+          Get-Content native/build-report.txt
+          if (-not (Select-String -Path native/build-report.txt -Pattern '^RESULT=BUILD_NATIVE_WORK4_VARIANT16_PASS$' -Quiet)) {
+            throw "Work 4 native build gate failed."
+          }
+
+      - name: Save Close Reopen and strict T rebuild test
+        shell: powershell
+        working-directory: work4-variant16
+        run: |
+          python verify_work4_native.py
+          Get-Content native/verification.txt
+          if (-not (Select-String -Path native/verification.txt -Pattern '^RESULT=PASS_NATIVE_WORK4_VARIANT16_REOPEN_REBUILD_PARAMETRIC$' -Quiet)) {
+            throw "Work 4 strict parametric reopen/rebuild test failed."
+          }
+
+      - name: Final native container and SHA gate
+        shell: powershell
+        run: |
+          $dir = "work4-variant16/native"
+          $files = @(
+            "$dir/Work4_V16_InnerDoubleRing.m3d",
+            "$dir/Work4_V16_OuterCup_L.m3d",
+            "$dir/Work4_V16_OuterCup_R.m3d",
+            "$dir/Work4_V16_TaperRoller.m3d",
+            "$dir/Work4_V16_CageHalf.m3d",
+            "$dir/Work4_V16_Rivet.m3d",
+            "$dir/Work4_V16_Bearing.a3d"
+          )
+          foreach ($p in $files) {
+            $f = Get-Item $p -ErrorAction Stop
+            if ($f.Length -lt 1024) { throw "$p is unexpectedly small." }
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+            if ($bytes[0] -ne 0x50 -or $bytes[1] -ne 0x4B) {
+              throw "$p is not a native modern KOMPAS container."
+            }
+          }
+
+          Get-FileHash $files -Algorithm SHA256 |
+            Format-Table -AutoSize | Out-String |
+            Set-Content -Encoding UTF8 "$dir/SHA256.txt"
+
+          @(
+            "SOURCE_VARIANT16_EXACT_TOPOLOGY_PASS",
+            "MASTER_GEOMETRY_PASS",
+            "PARAMETRIC_T_40_44_40_PASS",
+            "FINAL_NOMINAL_REOPEN_PASS",
+            "RESULT=PASS_NATIVE_WORK4_VARIANT16"
+          ) | Set-Content -Encoding UTF8 "$dir/ACCEPTANCE.txt"
+
+          Get-Content "$dir/SHA256.txt"
+          Get-Content "$dir/ACCEPTANCE.txt"
+
+      - name: Upload strictly accepted Work 4 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work4-variant16-native-parametric-bearing
+          if-no-files-found: error
+          path: |
+            work4-variant16/native/Work4_V16_InnerDoubleRing.m3d
+            work4-variant16/native/Work4_V16_OuterCup_L.m3d
+            work4-variant16/native/Work4_V16_OuterCup_R.m3d
+            work4-variant16/native/Work4_V16_TaperRoller.m3d
+            work4-variant16/native/Work4_V16_CageHalf.m3d
+            work4-variant16/native/Work4_V16_Rivet.m3d
+            work4-variant16/native/Work4_V16_Bearing.a3d
+            work4-variant16/native/native-manifest.json
+            work4-variant16/native/build-report.txt
+            work4-variant16/native/verification.txt
+            work4-variant16/native/runtime-contract.txt
+            work4-variant16/runtime-parametric-proof.txt
+            work4-variant16/native/SHA256.txt
+            work4-variant16/native/ACCEPTANCE.txt
+            work4-variant16/source_basis.md
+            work4-variant16/parameters.csv
+
+      - name: Upload Work 4 failure diagnostics only
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work4-variant16-native-diagnostics
+          if-no-files-found: ignore
+          path: |
+            work4-variant16/runtime-parametric-proof.txt
+            work4-variant16/native/runtime-contract.txt
+            work4-variant16/native/build-report.txt
+            work4-variant16/native/verification.txt
+            work4-variant16/native/native-manifest.json
+            work4-variant16/source_basis.md
+            work4-variant16/parameters.csv

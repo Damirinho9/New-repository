@@ -1,0 +1,69 @@
+name: KOMPAS Stage 4 command id probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-command-id-probe.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen runtime and inspect official command constants
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          BIN="$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25/Bin"
+          SDK="$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25/SDK"
+          mkdir -p "$GITHUB_WORKSPACE/result/command-probe"
+          {
+            echo '=== HEADER COMMAND CANDIDATES ==='
+            grep -RniE 'ksCM[A-Za-z0-9_]*(New|Create|Document|Drawing|Fragment|Part|Assembly)|ksCM(New|Create|Document|Drawing|Fragment|Part|Assembly)[A-Za-z0-9_]*' \
+              "$SDK" 2>/dev/null | head -3000 || true
+            echo '=== PYTHON COMMAND CANDIDATES ==='
+            PYTHONPATH="$BIN" python3 - <<'PY'
+          from constants import constants as c
+          names=[]
+          for n in dir(c):
+              if not n.startswith("ksCM"):
+                  continue
+              low=n.lower()
+              if any(k in low for k in ("new","create","document","drawing","fragment","part","assembly")):
+                  try: v=getattr(c,n)
+                  except BaseException: continue
+                  if isinstance(v,(int,bool)):
+                      names.append((int(v),n))
+          for v,n in sorted(set(names)):
+              print(f"{n}={v}")
+          PY
+          } | tee "$GITHUB_WORKSPACE/result/command-probe/command-candidates.txt"
+          echo 'RESULT=COMMAND_IDS_PROBED' | tee "$GITHUB_WORKSPACE/result/command-probe/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-command-id-probe
+          retention-days: 90
+          path: result/command-probe/**

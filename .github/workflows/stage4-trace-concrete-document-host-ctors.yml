@@ -1,0 +1,90 @@
+name: KOMPAS Stage 4 trace concrete document host constructors
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage4-trace-concrete-document-host-ctors.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common; fi
+      - name: Trace ctor callsites and virtual overrides
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          OUT=result/stage4-concrete-host-ctors
+          mkdir -p "$OUT"
+          : > "$OUT/ctors.txt"
+
+          for f in "$BIN/libk3DAppA.so" "$BIN/libk2DDoc.so"; do
+            b=$(basename "$f")
+            objdump -drC "$f" > "$OUT/$b.disasm"
+            python3 - "$OUT/$b.disasm" "$b" <<'PY' >> "$OUT/ctors.txt"
+          import sys
+          from pathlib import Path
+          lines=Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          name=sys.argv[2]
+          needles=["D3DocumentHost::D3DocumentHost()","EdDocumentHost::EdDocumentHost()"]
+          print("\n==========",name,"==========")
+          for needle in needles:
+              idx=[i for i,l in enumerate(lines) if needle in l]
+              print("NEEDLE",needle,"COUNT",len(idx))
+              for n,i in enumerate(idx[:30]):
+                  print("\n===== OCCURRENCE",needle,n,"line",i,"=====")
+                  for l in lines[max(0,i-100):min(len(lines),i+40)]:
+                      print(l)
+          PY
+          done
+
+          {
+            echo "=== OVERRIDES ==="
+            for f in "$BIN/libk3DAppA.so" "$BIN/libk2DDoc.so" "$BIN/libkHost.so"; do
+              echo "===== $f ====="
+              readelf -Ws "$f" 2>/dev/null | c++filt | grep -E                 '(D3DocumentHost|EdDocumentHost|PrDocumentHost|ItDocumentHost)::(NewKompasDocument|ReadKompasDocument|CreateNewDocument|CreateKompasDocument|GetDefFileName|CreateDefFileName|OnCreateDocument|GetDocumentFileOpenType|GetKompasDocument)' || true
+            done
+          } >> "$OUT/ctors.txt"
+          cat "$OUT/ctors.txt"
+          echo "RESULT=CONCRETE_HOST_CTORS_TRACED" | tee "$OUT/result.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage4-concrete-host-ctors
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            result/stage4-concrete-host-ctors/ctors.txt
+            result/stage4-concrete-host-ctors/result.txt

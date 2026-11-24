@@ -1,0 +1,22 @@
+name: Stage 13 licensed native comparison fixtures
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage13-licensed-native-fixtures.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 stage13/fetch_fixtures.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage13-licensed-native-comparison-fixtures
+          path: fixture-output/
+          retention-days: 7
+          if-no-files-found: error

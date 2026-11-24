@@ -1,0 +1,90 @@
+name: Probe active native M3D seed in KOMPAS Invisible
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/probe-active3d-seed.yml'
+      - 'kompas-linux/probe_active3d_seed.cpp'
+      - 'kompas-linux/bootstrap_variant06_qt.cpp'
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Install KOMPAS and run active-document 3D seed mutation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wget ca-certificates gnupg xvfb xauth dbus procps qt6-base-dev pkg-config clang g++ libc++-dev libc++abi-dev             libxcb-res0 libxcb-dri2-0 libxcb-cursor0 libxres1 libxcb-ewmh2 libxcb-icccm4 libxcb-keysyms1             libxcb-image0 libxcb-render-util0 libunwind8 libxcb-xkb1 libxkbcommon-x11-0 libxcb-util1             libxcb-shape0 libxcb-xinerama0 libxcb-randr0 libxcb-render0 libxcb-shm0 libxcb-sync1             libxcb-xfixes0 libxcb-glx0 libxcb-present0 libxcb-dri3-0
+
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y             ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25
+
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          INC=/opt/ascon/kompas3d-v25/SDK/KsAPI/Include
+          SEED=/opt/ascon/kompas3d-v25/Utils/KLibEditor/Templates/Деталь.m3d
+          test -x "$BIN/ksinvisible"
+          test -s "$SEED"
+
+          clang++ -std=c++20 -stdlib=libc++ -O2 -fPIC -shared -pthread             -I"$INC" kompas-linux/probe_active3d_seed.cpp             -L"$BIN" -Wl,-rpath,"$BIN" -lksAPI -lc++abi             -o /tmp/writer_variant06.so
+          g++ -std=c++20 -O2 -fPIC -shared -pthread             kompas-linux/bootstrap_variant06_qt.cpp             $(pkg-config --cflags --libs Qt6Core) -ldl             -o /tmp/bootstrap_variant06_qt.so
+
+          export HOME=/root XDG_CONFIG_HOME=/root/.config
+          mkdir -p /root/.config/ascon/KOMPAS-3D/25 /root/.config/ascon/"KOMPAS-3D Invisible"/25
+          if [ -d /etc/ascon/KOMPAS-3D/25 ]; then
+            sudo cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/KOMPAS-3D/25/ || true
+            sudo cp -a /etc/ascon/KOMPAS-3D/25/. /root/.config/ascon/"KOMPAS-3D Invisible"/25/ || true
+          fi
+          RES=$(find /opt/ascon/kompas3d-v25 -type f -name QtResources.bin -print -quit || true)
+          [ -z "$RES" ] || cp -f "$RES" /root/.config/ascon/"KOMPAS-3D Invisible"/25/QtResources.bin
+
+          rm -f /tmp/active3d_seed_probe.log /tmp/work1_bootstrap.log /tmp/work1_bootstrap_once.lock /tmp/active3d_seed_result.m3d
+          sudo mkdir -p /tmp/.X11-unix
+          sudo chmod 1777 /tmp/.X11-unix
+          sudo rm -f /tmp/.X11-unix/X108 /tmp/.X108-lock
+          Xvfb :108 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.out 2>/tmp/xvfb.err &
+          XV=$!
+          trap 'kill "$XV" 2>/dev/null || true' EXIT
+          sleep 2
+
+          export DISPLAY=:108 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN"
+          dbus-run-session -- env HOME=/root XDG_CONFIG_HOME=/root/.config DISPLAY=:108 QT_QPA_PLATFORM=xcb             LIBGL_ALWAYS_SOFTWARE=1 LD_LIBRARY_PATH="$BIN" LD_PRELOAD=/tmp/bootstrap_variant06_qt.so             "$BIN/ksinvisible" -automation "$SEED" >/tmp/kompas.out 2>/tmp/kompas.err &
+          KP=$!
+
+          PASS=0
+          for i in $(seq 1 45); do
+            sleep 2
+            if grep -q '^RESULT=ACTIVE3D_SEED_NATIVE_MUTATION_PASS$' /tmp/active3d_seed_probe.log 2>/dev/null; then PASS=1; break; fi
+            if grep -q '^FAIL ' /tmp/active3d_seed_probe.log 2>/dev/null; then break; fi
+            if ! kill -0 "$KP" 2>/dev/null; then break; fi
+          done
+
+          cat /tmp/work1_bootstrap.log 2>/dev/null || true
+          cat /tmp/active3d_seed_probe.log 2>/dev/null || true
+          tail -150 /tmp/kompas.err 2>/dev/null || true
+          test "$PASS" = 1
+          test -s /tmp/active3d_seed_result.m3d
+          sha256sum /tmp/active3d_seed_result.m3d | tee active3d-seed-SHA256.txt
+          cp /tmp/active3d_seed_result.m3d .
+          cp /tmp/active3d_seed_probe.log .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: active3d-seed-native-probe
+          if-no-files-found: ignore
+          path: |
+            active3d_seed_result.m3d
+            active3d_seed_probe.log
+            active3d-seed-SHA256.txt

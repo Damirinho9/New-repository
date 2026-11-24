@@ -1,0 +1,180 @@
+name: 7335493 Stage 5B converter command and output gate
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/stage5-step-import-gate.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  gate:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reuse verified STEP smoke solid from prior run
+        uses: actions/download-artifact@v4
+        with:
+          name: 7335493-stage5-step-import-smoke-not-production
+          run-id: 45390767561
+          github-token: ${{ github.token }}
+          path: prior-smoke
+      - name: Copy smoke input only
+        run: |
+          mkdir -p result/step-gate
+          cp prior-smoke/cube.step result/step-gate/cube.step
+          test -s result/step-gate/cube.step
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kompas-v25-runtime-*
+          run-id: 44521459604
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen/runtime
+      - name: Restore exact frozen licensed runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd frozen/runtime
+          sha256sum -c runtime-parts-SHA256.txt
+          cat kompas-runtime.part-* > "$RUNNER_TEMP/runtime.tar.zst"
+          test "$(sha256sum "$RUNNER_TEMP/runtime.tar.zst" | cut -d' ' -f1)" = "9c5252e4f3f53edf17ee74eacbc3c76369411380122b898de4efe7e347d729b2"
+          mkdir -p "$RUNNER_TEMP/runtime"
+          tar --zstd -xf "$RUNNER_TEMP/runtime.tar.zst" -C "$RUNNER_TEMP/runtime"
+          sudo mkdir -p /opt/ascon
+          sudo rm -rf /opt/ascon/kompas3d-v25 /opt/ascon/common
+          sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/kompas3d-v25" /opt/ascon/kompas3d-v25
+          if [ -d "$RUNNER_TEMP/runtime/opt/ascon/common" ]; then
+            sudo ln -s "$RUNNER_TEMP/runtime/opt/ascon/common" /opt/ascon/common
+          fi
+
+
+      - name: Test official STEP input routes without factory Add or licensing changes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=/opt/ascon/kompas3d-v25/Bin
+          SYSROOT="$RUNNER_TEMP/runtime/system-libs"
+          SYS_LD=$(find "$SYSROOT" -type f -printf '%h\n' | sort -u | paste -sd: -)
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth dbus libxcb-res0 libxcb-dri2-0 libxcb-xkb1
+          export HOME="$RUNNER_TEMP/stage5-home" XDG_CONFIG_HOME="$RUNNER_TEMP/stage5-home/.config"
+          export LD_LIBRARY_PATH="$BIN:$SYS_LD" PYTHONPATH="$BIN" QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          mkdir -p "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25"
+          RES=$(find "$BIN" -type f -name QtResources.bin -print -quit)
+          if [ -n "$RES" ]; then
+            cp "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/QtResources.bin"
+            cp "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/QtResources.bin"
+          fi
+          export ROOT="$GITHUB_WORKSPACE/result/step-gate"
+          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          if [ -d "$RUNNER_TEMP/runtime/etc/ascon/KOMPAS-3D/25" ]; then
+            cp -a "$RUNNER_TEMP/runtime/etc/ascon/KOMPAS-3D/25/." "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/"
+            cp -a "$RUNNER_TEMP/runtime/etc/ascon/KOMPAS-3D/25/." "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/"
+          fi
+          find "$BIN" -type f \( -iname '*step*' -o -iname '*stp*' -o -iname '*convert*' \) | sort > "$ROOT/converter-files.txt"
+          cat "$ROOT/converter-files.txt"
+          cat > /tmp/import_gate.py <<'PY'
+          import pathlib,os,time,traceback,zipfile
+          import ksapi
+          from constants import constants as c
+          root=pathlib.Path(os.environ["ROOT"])
+          app=None
+          for i in range(45):
+              app=ksapi.GetKompas()
+              if app: break
+              time.sleep(1)
+          if not app: raise RuntimeError("NO_OFFICIAL_SDK_CONNECTION")
+          lm=app.GetApplicationLicenseManager()
+          if not lm or not lm.IsKompasModuleActive(c.ksKompasModule3D):
+              raise RuntimeError("NO_ACTIVE_3D_MODULE")
+          print("APP",app.GetApplicationName(True),flush=True)
+          print("3D_MODULE_ACTIVE",flush=True)
+          app.SetHideMessage(c.ksHideMessageYes)
+          docs=app.GetDocuments()
+          source=str(root/"cube.step")
+          out=root/"cube_imported.m3d"
+          def validate(doc):
+              if not doc: raise RuntimeError("NO_DOCUMENT")
+              if doc.GetDocumentType()!=c.ksDocumentPart: raise RuntimeError("NOT_PART_DOCUMENT")
+              d=ksapi.IKompasDocument3D(doc)
+              top=d.GetTopPart()
+              if not top: raise RuntimeError("NO_TOP_PART")
+              mass=top.GetMass()
+              print("NATIVE_MASS",mass,flush=True)
+              if mass<=0: raise RuntimeError("NO_POSITIVE_MASS")
+              if not d.RebuildDocument(): raise RuntimeError("REBUILD_FAILED")
+              if not doc.SaveAs(str(out)): raise RuntimeError("SAVE_FAILED")
+              if not doc.Close(c.kdDoNotSaveChanges): raise RuntimeError("CLOSE_FAILED")
+              if not zipfile.is_zipfile(out): raise RuntimeError("NOT_NATIVE_CONTAINER")
+              with zipfile.ZipFile(out) as z:
+                  assert z.testzip() is None and {"Contents","FileInfo"}<=set(z.namelist())
+              r=docs.Open(str(out),True,False)
+              if not r: raise RuntimeError("REOPEN_FAILED")
+              d2=ksapi.IKompasDocument3D(r)
+              m2=d2.GetTopPart().GetMass()
+              if not d2.RebuildDocument() or abs(m2-mass)>max(1e-9,abs(mass)*1e-6): raise RuntimeError("REOPEN_MASS_OR_REBUILD_FAILED")
+              print("RESULT=NATIVE_STEP_SMOKE_REOPEN_PASS",flush=True)
+              return True
+          # Previous test only tried a zero command with an empty output name.
+          # Inspect supported document types and parameter interfaces first.
+          commands=set()
+          for attr in ("ksDocumentUnknown","ksDocumentPart","ksDocumentAssembly","ksDocumentDrawing","ksDocumentFragment"):
+              dtype=getattr(c,attr,None)
+              if dtype is None: continue
+              for cid in (-3,3):
+                  try:
+                      converter=app.GetConverter(cid)
+                      if not converter: continue
+                      result=converter.GetFilter(dtype,False,0)
+                      print("FILTER",cid,attr,repr(result),flush=True)
+                      if isinstance(result,(list,tuple)) and any(isinstance(v,str) and v.strip() for v in result):
+                          commands.update((cid,v) for v in result if type(v) is int)
+                  except Exception as e: print("FILTER_ERROR",cid,attr,repr(e),flush=True)
+          conv=app.GetConverter(-3)
+          if not conv: raise RuntimeError("NO_STEP_CONVERTER")
+          print("CONVERTER_METHODS",[n for n in dir(conv) if not n.startswith("_")],flush=True)
+          # Explicit output mode is documented. -3 is a bounded hypothesis
+          # for the command argument, not claimed to be a documented command ID.
+          commands.add((-3,-3))
+          commands.add((-3,0))
+          for cid,cmd in sorted(commands):
+              converter=app.GetConverter(cid)
+              if not converter: continue
+              for name in ("GetConverterParameters","ConverterParameters"):
+                  method=getattr(converter,name,None)
+                  if method:
+                      try:
+                          param=method(cmd)
+                          print("PARAMETERS",cid,cmd,type(param).__name__,bool(param),flush=True)
+                      except Exception as e: print("PARAMETERS_ERROR",repr(e),flush=True)
+              out.unlink(missing_ok=True)
+              try:
+                  print("TRY_EXPLICIT_OUTPUT",cid,cmd,flush=True)
+                  rc=converter.Convert(source,str(out),cmd,False)
+                  print("CONVERT_RESULT",rc,"FILE_EXISTS",out.exists(),flush=True)
+                  if rc==1 and out.is_file():
+                      # Do not overwrite the input to SaveAs.
+                      candidate=out
+                      out=root/"cube_reopened.m3d"
+                      if validate(docs.Open(str(candidate),True,False)): raise SystemExit(0)
+              except Exception as e: print("EXPLICIT_ROUTE_ERROR",repr(e),flush=True)
+          raise RuntimeError("NO_VERIFIED_EXPLICIT_OUTPUT_ROUTE")
+          PY
+          timeout --kill-after=5s 130s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" dbus-run-session -- bash -c '
+            /tmp/kKompas -automation >"$ROOT/kompas.out" 2>"$ROOT/kompas.err" &
+            pid=$!; trap "kill $pid 2>/dev/null || true" EXIT
+            sleep 5
+            ss -ltnp >"$ROOT/listeners.txt" || true
+            /usr/bin/python3 -u /tmp/import_gate.py
+          ' bash "$BIN" 2>&1 | tee "$ROOT/gate.log"
+          grep -qx 'RESULT=NATIVE_STEP_SMOKE_REOPEN_PASS' "$ROOT/gate.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage5b-explicit-output-gate
+          path: result/step-gate/
+          if-no-files-found: ignore

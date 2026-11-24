@@ -1,0 +1,92 @@
+name: Invisible Native Document Factory Recovery
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths: ['.github/workflows/stage7-invisible-native-factory-recovery.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: stage7-native-factory
+  cancel-in-progress: false
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Fetch Stage 6 audit
+        uses: actions/download-artifact@v4
+        with:
+          name: 7335493-stage6-official-installer-audit
+          run-id: 45396687501
+          github-token: ${{ github.token }}
+          path: stage6
+      - name: Compare official package installation and Linux API declarations
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/stage7"
+          mkdir -p "$OUT" "$RUNNER_TEMP/sdk" "$RUNNER_TEMP/debs"
+          df -h / > "$OUT/disk.txt"
+          grep -nE 'repo.ascon.ru|ascon-kompas3d-v25-full|apt install|KOMPAS_VERSION=' stage6/ubuntu.sh > "$OUT/installer-package-lines.txt"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends ca-certificates wget gnupg binutils
+          wget -qO "$RUNNER_TEMP/ascon-repo.sh" https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          bash -n "$RUNNER_TEMP/ascon-repo.sh"
+          # Only vendor repository registration, not product installation or activation.
+          sudo bash "$RUNNER_TEMP/ascon-repo.sh" > "$OUT/repository-setup.txt" 2>&1 || true
+          test -s /etc/apt/trusted.gpg.d/ascon.gpg
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list >/dev/null
+          sudo apt-get update -qq
+          apt-cache depends ascon-kompas3d-v25-full > "$OUT/full-depends.txt"
+          apt-cache policy ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25 ascon-kompas3d-v25-full > "$OUT/versions.txt"
+          apt-get -s install ascon-kompas3d-v25-full > "$OUT/full-simulation.txt" 2>&1 || true
+          apt-get -s install ascon-kompas-v25 ascon-kompas-graphic-v25 ascon-kompas3d-v25 ascon-kompas-sdk-v25 > "$OUT/base-simulation.txt" 2>&1 || true
+          python3 - "$OUT" <<'PY'
+          import pathlib,re,sys
+          root=pathlib.Path(sys.argv[1])
+          def plan(name):
+              return set(re.findall(r'^Inst (\S+)',(root/name).read_text(),re.M))
+          a,b=plan('full-simulation.txt'),plan('base-simulation.txt')
+          (root/'full-only-packages.txt').write_text('\n'.join(sorted(a-b))+'\n')
+          print('FULL_SIMULATED_PACKAGES',len(a),'BASE_SIMULATED_PACKAGES',len(b))
+          PY
+          cd "$RUNNER_TEMP/debs"
+          apt-get download ascon-kompas-sdk-v25
+          for f in *.deb; do dpkg-deb -x "$f" "$RUNNER_TEMP/sdk"; dpkg-deb -f "$f" Package Version Architecture > "$OUT/sdk-version.txt"; done
+          # SDK inspection only; do not upload vendor code or binaries.
+          python3 - "$RUNNER_TEMP/sdk" "$OUT" <<'PY'
+          import pathlib,re,sys,json
+          root,out=map(pathlib.Path,sys.argv[1:])
+          names=['SetLockTemplatesSettings','IsLockTemplatesSettings','GetOpenDocumentParam','OpenDocument','ksCreateDocument','CreateDocumentW','CreateDocument','DocumentParam']
+          hits={n:[] for n in names}
+          for f in root.rglob('*'):
+              if not f.is_file() or f.suffix.lower() not in {'.h','.hpp','.hxx','.idl','.inl'}: continue
+              s=f.read_text(errors='replace')
+              for n in names:
+                  matches=list(re.finditer(r'\b'+n+r'\b',s))
+                  if matches:
+                      hits[n].append({'file':str(f.relative_to(root)),'lines':[s.count('\n',0,m.start())+1 for m in matches][:12]})
+          (out/'sdk-header-index.json').write_text(json.dumps(hits,indent=2))
+          for n,v in hits.items(): print(n,'HEADER_FILES',len(v))
+          PY
+          find "$RUNNER_TEMP/sdk" -type f -name '*.so*' > "$RUNNER_TEMP/sdk-libs.txt"
+          : > "$OUT/sdk-export-index.txt"
+          while IFS= read -r f; do
+            nm -D --defined-only "$f" 2>/dev/null | awk '$NF=="CreateDocument" || $NF=="CreateDocumentW" || $NF=="ksCreateDocument" {print $2,$NF}' | while read -r line; do printf '%s %s\n' "$(basename "$f")" "$line"; done >> "$OUT/sdk-export-index.txt" || true
+          done < "$RUNNER_TEMP/sdk-libs.txt"
+          echo 'No CAD execution or activation performed. No documented entitlement for the previously recovered Invisible runtime has been established.' > "$OUT/license-gate.txt"
+          echo 'RESULT=SDK_STATIC_AUDIT_ONLY_NO_NATIVE_PASS' > "$OUT/result.txt"
+      - name: Record diagnostic result
+        if: always()
+        run: |
+          mkdir -p stage7
+          test -f stage7/result.txt || echo 'RESULT=DIAGNOSTIC_INCOMPLETE_NO_NATIVE_PASS' > stage7/result.txt
+          cat stage7/result.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage7-sdk-diagnostic
+          path: stage7/
+          retention-days: 7

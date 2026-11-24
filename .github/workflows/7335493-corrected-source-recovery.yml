@@ -1,0 +1,23 @@
+name: 7335493 corrected variant source recovery
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths: ['native-resume/**', '.github/workflows/7335493-corrected-source-recovery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  static-recovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - run: |
+          python3 -m py_compile native-resume/*.py
+          python3 native-resume/recover.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-original-native-frw-recovered-not-accepted
+          path: native-resume/recovered/
+          if-no-files-found: error

@@ -1,0 +1,33 @@
+name: Export KOMPAS v25 config deb
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - '.github/workflows/export-kompas-config-deb.yml'
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download exact config package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq wget ca-certificates gnupg
+          wget -qO /tmp/ascon.sh https://repo.ascon.ru/scripts/ascon-stable-deb.sh
+          sudo bash /tmp/ascon.sh || true
+          echo 'deb [signed-by=/etc/apt/trusted.gpg.d/ascon.gpg] https://repo.ascon.ru/stable/deb 1.8_x86-64 main' | sudo tee /etc/apt/sources.list.d/ascon.list
+          sudo apt-get update -qq
+          cd /tmp
+          apt-get download ascon-kompas-v25=25.0.5.2780
+          mv ascon-kompas-v25_25.0.5.2780_amd64.deb /home/runner/work/config.deb
+          sha256sum /home/runner/work/config.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ascon-kompas-v25-config-deb
+          compression-level: 0
+          path: /home/runner/work/config.deb

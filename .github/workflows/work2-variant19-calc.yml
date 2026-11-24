@@ -1,0 +1,46 @@
+name: Work 2 variant 19 calculations
+
+on:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths:
+      - 'work2-variant19/**'
+      - '.github/workflows/work2-variant19-calc.yml'
+  workflow_dispatch:
+
+jobs:
+  calculate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: kompas-7335493-native-work1
+
+      - name: Run independent Work 2 calculation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p work2-variant19/result
+          python3 -m py_compile work2-variant19/calc_variant19.py
+          python3 work2-variant19/calc_variant19.py | tee work2-variant19/result/calculation.log
+          grep -q '^RESULT=PASS_WORK2_VARIANT19_CALC$' work2-variant19/result/calculation.log
+
+          cp work2-variant19/calculation.md work2-variant19/result/
+          cp work2-variant19/calculation.csv work2-variant19/result/
+
+          grep -q '^l_i_prime,80,mm' work2-variant19/calculation.csv
+          grep -q '^Pz,15200,N' work2-variant19/calculation.csv
+          grep -q '^d_adopted,65,mm' work2-variant19/calculation.csv
+          grep -q '^e_adopted,35,mm' work2-variant19/calculation.csv
+          grep -q '^overall_length,89,mm' work2-variant19/calculation.csv
+          grep -q '^rifling_z,32,pcs' work2-variant19/calculation.csv
+
+          sha256sum             work2-variant19/calculation.md             work2-variant19/calculation.csv             work2-variant19/calc_variant19.py             | tee work2-variant19/result/SHA256.txt
+
+      - name: Upload Work 2 calculation package
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7335493-work2-variant19-calculations
+          if-no-files-found: error
+          path: work2-variant19/result/**
