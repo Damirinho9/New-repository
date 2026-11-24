@@ -1,6 +1,6 @@
 """Orchestrator. Independent path works without KOMPAS; native path is candidate-only until scope and review confirmed."""
 from pathlib import Path
-import argparse,csv,hashlib,json,os,shutil,subprocess,sys,zipfile
+import argparse,csv,hashlib,json,os,shutil,subprocess,sys,zipfile,traceback
 from engineering import load,models
 HERE=Path(__file__).resolve().parent
 NAMES=["01_Mechanism_Variant_06.frw","Work2_V19_Workpiece.m3d","Work2_V19_FormCutter.m3d","Work2_V19_TopDown.a3d","Work3_V19_FormCutter.cdw"]
@@ -87,7 +87,7 @@ def build(args):
             if f.is_file():
                 row.update(file_exists=True,sha256=sha(f),size=f.stat().st_size)
                 if row["status"]=="BLOCKED":row["status"]="PARTIAL_UNVERIFIED"
-        save();print(manifest["reason"],file=sys.stderr);return 1
+        save();traceback.print_exc();return 1
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--mode",choices=["independent","native"],default="independent")
