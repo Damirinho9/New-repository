@@ -1,0 +1,59 @@
+name: Microsoft Project 2024 official media and COM probe
+on:
+  push:
+    branches: [project-desktop-native-probe]
+    paths: ['.github/workflows/msproject2024-official-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - name: Environment and official media availability
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          $ErrorActionPreference = 'Continue'
+          Get-CimInstance Win32_OperatingSystem | Select Caption,Version,OSArchitecture | Format-List | Out-File evidence/environment.txt
+          Get-PSDrive C | Format-List Used,Free | Out-File evidence/environment.txt -Append
+          Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue | Select ProductReleaseIds,Platform,VersionToReport | Format-List | Out-File evidence/environment.txt -Append
+          $url = 'https://officecdn.microsoft.com/db/492350f6-3a01-4f97-b9c0-c7c6ddf67d60/media/ru-ru/ProjectPro2024Retail.img'
+          curl.exe -I -L --connect-timeout 15 --max-time 45 $url 2>&1 | Tee-Object evidence/media-http.txt
+          Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\MSProject.Application\CLSID' -ErrorAction SilentlyContinue | Format-List | Out-File evidence/environment.txt -Append
+          Get-Content evidence/environment.txt
+      - name: COM probe with synthetic project
+        shell: powershell
+        timeout-minutes: 2
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $app = New-Object -ComObject MSProject.Application
+            $app.Visible = $true
+            $app.FileNew() | Out-Null
+            $p = $app.ActiveProject
+            $a = $p.Tasks.Add('Synthetic task 1')
+            $b = $p.Tasks.Add('Synthetic task 2')
+            $c = $p.Tasks.Add('Synthetic task 3')
+            $b.Predecessors = '1'
+            $c.Predecessors = '2'
+            $r = $p.Resources.Add('Synthetic analyst')
+            $p.Assignments.Add($a.ID,$r.ID,1) | Out-Null
+            $dest = Join-Path (Resolve-Path evidence) 'Native_Test.mpp'
+            $app.FileSaveAs($dest) | Out-Null
+            $app.FileClose() | Out-Null
+            $app.FileOpenEx($dest) | Out-Null
+            if ($app.ActiveProject.Tasks.Count -ne 3) { throw 'Wrong task count' }
+            "PASS: COM created and reopened MPP. Version $($app.Version)" | Tee-Object evidence/com.txt
+            Get-FileHash $dest | Format-List | Out-File evidence/mpp-hash.txt
+            $app.FileClose() | Out-Null
+            $app.Quit() | Out-Null
+          } catch {
+            "NOT VERIFIED: $($_.Exception.Message)" | Tee-Object evidence/com.txt
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: msproject-official-probe
+          path: evidence/
