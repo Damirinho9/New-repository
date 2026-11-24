@@ -1,0 +1,447 @@
+{
+  "schema": 1,
+  "scope": {
+    "confirmed": false,
+    "note": "Original request was two corrections; source methodology and comments not recovered."
+  },
+  "work1": {
+    "variant": 6,
+    "l1": 20,
+    "L": 25,
+    "l2_expression": "2*L",
+    "l3": 60,
+    "fi": 90,
+    "DX": 20,
+    "n": 250,
+    "source": "kompas-linux/build_variant06_python.py at 9024b75340d69786631cb3e6cc17d702cfbfe202"
+  },
+  "work2": {
+    "variant": 19,
+    "calculation": [
+      {
+        "parameter": "variant",
+        "value": "19",
+        "unit": "",
+        "status": "given",
+        "source_or_formula": "task selection"
+      },
+      {
+        "parameter": "scheme",
+        "value": "1",
+        "unit": "",
+        "status": "given",
+        "source_or_formula": "first digit of variant"
+      },
+      {
+        "parameter": "column",
+        "value": "9",
+        "unit": "",
+        "status": "given",
+        "source_or_formula": "second digit of variant"
+      },
+      {
+        "parameter": "material",
+        "value": "Steel 60",
+        "unit": "",
+        "status": "given",
+        "source_or_formula": "table 3"
+      },
+      {
+        "parameter": "sigma_b",
+        "value": "680",
+        "unit": "MPa",
+        "status": "given",
+        "source_or_formula": "table 3"
+      },
+      {
+        "parameter": "D1",
+        "value": "80",
+        "unit": "mm",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "D2",
+        "value": "70",
+        "unit": "mm",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "D3",
+        "value": "50",
+        "unit": "mm",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "part_l1",
+        "value": "8",
+        "unit": "mm",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "part_l2",
+        "value": "22",
+        "unit": "mm",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "part_l3",
+        "value": "12",
+        "unit": "mm",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "part_l4",
+        "value": "14",
+        "unit": "mm",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "L_part",
+        "value": "75",
+        "unit": "mm",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "R_part",
+        "value": "21",
+        "unit": "mm",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "S",
+        "value": "0.04",
+        "unit": "mm/rev",
+        "status": "given",
+        "source_or_formula": "table 3 column 9"
+      },
+      {
+        "parameter": "gamma",
+        "value": "10",
+        "unit": "deg",
+        "status": "calculated/selected",
+        "source_or_formula": "table 4 for steel sigma_b 680 MPa"
+      },
+      {
+        "parameter": "alpha",
+        "value": "10",
+        "unit": "deg",
+        "status": "selected",
+        "source_or_formula": "method range for round cutter 10...12 deg"
+      },
+      {
+        "parameter": "v",
+        "value": "27",
+        "unit": "m/min",
+        "status": "table lookup",
+        "source_or_formula": "table 5 at S=0.04"
+      },
+      {
+        "parameter": "p_z",
+        "value": "190",
+        "unit": "N/mm",
+        "status": "table lookup",
+        "source_or_formula": "table 5 at S=0.04"
+      },
+      {
+        "parameter": "cutoff_edge",
+        "value": "5",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": "method range 4...5; worked example uses 5"
+      },
+      {
+        "parameter": "cutoff_angle",
+        "value": "15",
+        "unit": "deg",
+        "status": "selected",
+        "source_or_formula": "method range 15...20; worked example uses 15"
+      },
+      {
+        "parameter": "l_i_prime",
+        "value": "80",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "L_part + cutoff_edge"
+      },
+      {
+        "parameter": "Pz",
+        "value": "15200",
+        "unit": "N",
+        "status": "calculated",
+        "source_or_formula": "p_z*l_i_prime"
+      },
+      {
+        "parameter": "mounting_type",
+        "value": "bilateral",
+        "unit": "",
+        "status": "calculated",
+        "source_or_formula": "l_i_prime > 30 mm"
+      },
+      {
+        "parameter": "d_calc",
+        "value": "64.123837",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "1.36*l_i_prime^0.33*Pz^0.25"
+      },
+      {
+        "parameter": "d_adopted",
+        "value": "65",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": "next larger adopted mounting-hole size"
+      },
+      {
+        "parameter": "t",
+        "value": "15",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "(Dmax-Dmin)/2"
+      },
+      {
+        "parameter": "a",
+        "value": "8",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": "method range 3...8; worked example uses 8"
+      },
+      {
+        "parameter": "e_min",
+        "value": "32.5",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "0.5*d"
+      },
+      {
+        "parameter": "e_adopted",
+        "value": "35",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": ">=e_min"
+      },
+      {
+        "parameter": "d_a_calc",
+        "value": "181",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "2*(t+a+e+d/2)"
+      },
+      {
+        "parameter": "axis_distance_x",
+        "value": "115.5",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "Dmax/2+a+e+d/2"
+      },
+      {
+        "parameter": "OA_horizontal",
+        "value": "90.5",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "axis_distance_x-Dmin/2"
+      },
+      {
+        "parameter": "axis_offset_y",
+        "value": "15.957592",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "OA_horizontal*tan(alpha)"
+      },
+      {
+        "parameter": "OA",
+        "value": "91.896108",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "OA_horizontal/cos(alpha)"
+      },
+      {
+        "parameter": "guide_diameter",
+        "value": "183.792217",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "2*OA"
+      },
+      {
+        "parameter": "overlap",
+        "value": "2",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": "method range 1...2"
+      },
+      {
+        "parameter": "end_belt",
+        "value": "2",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": "method range 1...2"
+      },
+      {
+        "parameter": "flange_width",
+        "value": "5",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": "method range 3...5"
+      },
+      {
+        "parameter": "flange_d_min",
+        "value": "97.5",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "1.5*d"
+      },
+      {
+        "parameter": "flange_d_max",
+        "value": "110.5",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "1.7*d"
+      },
+      {
+        "parameter": "flange_d_adopted",
+        "value": "100",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": "inside 1.5d...1.7d"
+      },
+      {
+        "parameter": "mount_recess_d",
+        "value": "80",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": "d+15; allowed d+10...15"
+      },
+      {
+        "parameter": "mount_recess_length",
+        "value": "15",
+        "unit": "mm",
+        "status": "selected",
+        "source_or_formula": "allowed 10...15"
+      },
+      {
+        "parameter": "tech_recess_d",
+        "value": "67",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "d+2"
+      },
+      {
+        "parameter": "overall_length",
+        "value": "89",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "L_part+5+2+2+5"
+      },
+      {
+        "parameter": "chamfer",
+        "value": "1x45",
+        "unit": "deg/mm",
+        "status": "given by method",
+        "source_or_formula": "section 2.6.7"
+      },
+      {
+        "parameter": "chip_space_fillet_R",
+        "value": "2",
+        "unit": "mm",
+        "status": "given by method",
+        "source_or_formula": "section 2.6.9"
+      },
+      {
+        "parameter": "rifling_z",
+        "value": "32",
+        "unit": "pcs",
+        "status": "selected",
+        "source_or_formula": "method range 32...34 and worked example uses 32"
+      },
+      {
+        "parameter": "rifling_profile_angle",
+        "value": "90",
+        "unit": "deg",
+        "status": "given by method",
+        "source_or_formula": "normal section"
+      },
+      {
+        "parameter": "rifling_side_angle",
+        "value": "45",
+        "unit": "deg",
+        "status": "calculated",
+        "source_or_formula": "symmetric 90 deg profile"
+      },
+      {
+        "parameter": "rifling_beta",
+        "value": "5.607032",
+        "unit": "deg",
+        "status": "calculated",
+        "source_or_formula": "atan(pi/z)"
+      },
+      {
+        "parameter": "rifling_beta_dms",
+        "value": "5deg36min25sec",
+        "unit": "",
+        "status": "calculated",
+        "source_or_formula": "atan(pi/32)"
+      },
+      {
+        "parameter": "rifling_angular_pitch",
+        "value": "11.25",
+        "unit": "deg",
+        "status": "calculated",
+        "source_or_formula": "360/z"
+      },
+      {
+        "parameter": "rifling_circ_pitch_at_flange_od",
+        "value": "9.817477",
+        "unit": "mm",
+        "status": "calculated",
+        "source_or_formula": "pi*flange_d/z"
+      },
+      {
+        "parameter": "rifling_profile_offset_1",
+        "value": "1.5",
+        "unit": "mm",
+        "status": "given by method",
+        "source_or_formula": "figure 25"
+      },
+      {
+        "parameter": "rifling_profile_offset_2",
+        "value": "0.25",
+        "unit": "mm",
+        "status": "given by method",
+        "source_or_formula": "figure 25"
+      }
+    ],
+    "groove": {
+      "count": 32,
+      "profile_deg": 90,
+      "depth_mm": 1.5,
+      "axial_tool_overrun_mm": 0.25,
+      "radial_start_mm": 40.25,
+      "radial_end_mm": 50.5,
+      "confirmed": false,
+      "source": "Stage 18 V90 candidate; figure 25 missing"
+    },
+    "tech_recess_length_mm": 15,
+    "tech_recess_length_confirmed": false
+  },
+  "work3": {
+    "variant": 19,
+    "format": "A2",
+    "scale": 1,
+    "format_confirmed": false,
+    "source": "work3-variant19/build_work3_native.py"
+  },
+  "reference": {
+    "cutter_volume_mm3": 1851876.160772,
+    "workpiece_volume_mm3": 315536.26,
+    "groove_removed_mm3": 701.729976,
+    "max_E_speed_mm_s": 5371.344969
+  }
+}
