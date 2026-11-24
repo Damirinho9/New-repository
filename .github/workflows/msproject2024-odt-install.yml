@@ -1,4 +1,4 @@
-name: Microsoft Project 2024 official installation and functional test
+name: Microsoft Project 2024 native build for order 7350160
 on:
   push:
     branches: [project-desktop-native-probe]
@@ -9,25 +9,24 @@ permissions:
 jobs:
   project:
     runs-on: windows-2022
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Download official signed ODT
         shell: powershell
         run: |
           $ErrorActionPreference='Stop'
-          New-Item -ItemType Directory -Force evidence,odt | Out-Null
+          New-Item -ItemType Directory -Force evidence,odt,native-7350160 | Out-Null
           $url='https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20527-20150.exe'
           curl.exe -fL --retry 2 --max-time 120 $url -o odt.exe
-          if ($LASTEXITCODE -ne 0) {throw 'ODT download failed'}
+          if ($LASTEXITCODE -ne 0) { throw 'ODT download failed' }
           $sig=Get-AuthenticodeSignature .\odt.exe
           $sig | Format-List | Out-File evidence/odt-signature.txt
-          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Microsoft') {throw 'Signature check failed'}
-          Get-FileHash .\odt.exe | Format-List | Out-File evidence/odt-hash.txt
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Microsoft') { throw 'ODT signature check failed' }
           $p=Start-Process .\odt.exe -ArgumentList "/quiet /extract:$pwd\odt" -Wait -PassThru
-          if ($p.ExitCode -ne 0 -or !(Test-Path odt/setup.exe)) {throw "ODT extraction failed: $($p.ExitCode)"}
-      - name: Install official retail edition
+          if ($p.ExitCode -ne 0 -or !(Test-Path odt/setup.exe)) { throw "ODT extraction failed: $($p.ExitCode)" }
+      - name: Install official Project Professional 2024 retail binaries
         shell: powershell
-        timeout-minutes: 12
+        timeout-minutes: 15
         run: |
           $ErrorActionPreference='Stop'
           @'
@@ -42,56 +41,78 @@ jobs:
           Copy-Item odt/configuration.xml evidence/
           $p=Start-Process .\odt\setup.exe -ArgumentList "/configure `"$pwd\odt\configuration.xml`"" -Wait -PassThru
           "ODT exit code: $($p.ExitCode)" | Tee-Object evidence/install.txt
+          if ($p.ExitCode -ne 0) { throw "ODT configure failed: $($p.ExitCode)" }
           $exe=Join-Path $env:ProgramFiles 'Microsoft Office\root\Office16\WINPROJ.EXE'
-          if (!(Test-Path $exe)) {throw 'WINPROJ not found'}
+          if (!(Test-Path $exe)) { throw 'WINPROJ.EXE not found' }
           (Get-Item $exe).VersionInfo | Format-List | Out-File evidence/version.txt
           Get-AuthenticodeSignature $exe | Format-List | Out-File evidence/project-signature.txt
-      - name: Test ordinary COM capabilities without modifying licensing
+      - name: Prepare sanitized project model
         shell: powershell
-        timeout-minutes: 3
         run: |
           $ErrorActionPreference='Stop'
-          try {
-            $app=New-Object -ComObject MSProject.Application
-            $app.Visible=$true
-            "COM version $($app.Version)" | Tee-Object evidence/com.txt
-            $app.FileNew() | Out-Null
-            $p=$app.ActiveProject
-            $a=$p.Tasks.Add('Synthetic planning')
-            $b=$p.Tasks.Add('Synthetic development')
-            $c=$p.Tasks.Add('Synthetic acceptance')
-            $a.Duration=480; $b.Duration=960; $c.Duration=480
-            $b.Predecessors='1';$c.Predecessors='2'
-            $r=$p.Resources.Add('Analyst')
-            $r.StandardRate=100
-            "Standard rate: $($r.StandardRate)" | Tee-Object -Append evidence/com.txt
-            $a.Assignments.Add($a.ID,$r.ID,1) | Out-Null
-            $app.BaselineSave() | Out-Null
-            'Baseline saved' | Tee-Object -Append evidence/com.txt
-            $a.PercentComplete=100
-            $dest=Join-Path (Resolve-Path evidence) 'Native_Test.mpp'
-            $app.FileSaveAs($dest) | Out-Null
-            'Save returned' | Tee-Object -Append evidence/com.txt
-            if (!(Test-Path $dest)) {throw 'MPP not saved'}
-            $app.FileCloseEx(0) | Out-Null
-            $app.FileOpenEx($dest) | Out-Null
-            if ($app.ActiveProject.Tasks.Count -ne 3 -or $app.ActiveProject.Tasks.Item(1).PercentComplete -ne 100) {throw 'Roundtrip mismatch'}
-            'PASS: native MPP roundtrip' | Tee-Object -Append evidence/com.txt
-            Get-FileHash $dest | Format-List | Out-File evidence/mpp-hash.txt
-            $app.FileCloseEx(0) | Out-Null
-            $app.Quit() | Out-Null
-          } catch {
-            "BLOCKED: $($_.Exception.Message)" | Tee-Object -Append evidence/com.txt
-            throw
+          $b64='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'
+          $bytes=[Convert]::FromBase64String($b64)
+          $ms=New-Object IO.MemoryStream(,$bytes)
+          $gz=New-Object IO.Compression.GZipStream($ms,[IO.Compression.CompressionMode]::Decompress)
+          $sr=New-Object IO.StreamReader($gz,[Text.Encoding]::UTF8)
+          $json=$sr.ReadToEnd(); $sr.Dispose(); $gz.Dispose(); $ms.Dispose()
+          [IO.File]::WriteAllText((Join-Path $pwd 'native-7350160\native_data.json'),$json,(New-Object Text.UTF8Encoding($false)))
+      - name: Build and validate native MPP files
+        shell: powershell
+        timeout-minutes: 8
+        run: |
+          $ErrorActionPreference='Stop'
+          $DataPath=(Join-Path $pwd 'native-7350160\native_data.json')
+          $OutDir=(Join-Path $pwd 'native-7350160\out')
+          New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+          $data = Get-Content -Raw -Encoding UTF8 $DataPath | ConvertFrom-Json
+          $script:accept=@(); $script:metrics=[ordered]@{}
+          function Num($x){if($null -eq $x -or $x -eq ''){return 0.0};return [double]$x}
+          function CloseP($a){try{if($a.Projects.Count -gt 0){$a.FileCloseEx(0)|Out-Null}}catch{}}
+          function AddResources($p,$rs){foreach($pair in $rs){$r=$p.Resources.Add([string]$pair[0]);$r.StandardRate=[double]$pair[1]}}
+          function AddStructure($p,$tasks,$rs){
+            AddResources $p $rs
+            foreach($x in $tasks){
+              $t=$p.Tasks.Add([string]$x.name);$t.OutlineLevel=[int]$x.level
+              if($x.kind -eq 'task'){$t.Duration=[int]([double]$x.duration*480);$t.FixedCost=[double]$x.fixed;if([int]$x.res -gt 0){$t.ResourceNames=[string]$rs[[int]$x.res-1][0]}}
+              elseif($x.kind -eq 'milestone'){$t.Duration=0}
+              if($x.pred -and @($x.pred).Count -gt 0){$t.Predecessors=(@($x.pred)-join ',')}
+            }
           }
-      - name: Capture diagnostic logs
+          function ApplyVariant($p,$v){foreach($x in $v){if($x.kind -eq 'task'){$t=$p.Tasks.Item([int]$x.id);if($null-ne$t){$t.Duration=[int]([double]$x.duration*480);$t.FixedCost=[double]$x.fixed}}}}
+          function ApplyProgress($p,$v,[double]$day,[double]$f){foreach($x in $v){if($x.kind-ne'task'){continue};$s=[double]$x.s;$e=[double]$x.e;$pct=0;if($day-ge$e){$pct=100}elseif($day-gt$s){$pct=(($day-$s)/($e-$s))*100};if($pct-gt0-and$pct-lt100){$pct=[math]::Min(99,[math]::Round($pct*$f,0))};$p.Tasks.Item([int]$x.id).PercentComplete=[int]$pct}}
+          function Metrics($p){$s=$p.ProjectSummaryTask;$bcws=Num $s.BCWS;$bcwp=Num $s.BCWP;$acwp=Num $s.ACWP;$bac=Num $s.BaselineCost;$cpi=if($acwp-ne0){$bcwp/$acwp}else{0};$spi=if($bcws-ne0){$bcwp/$bcws}else{0};$eac=Num $s.EAC;$vac=$bac-$eac;$tcpi=if(($bac-$acwp)-ne0){($bac-$bcwp)/($bac-$acwp)}else{0};return [ordered]@{StatusDate=[string]$p.StatusDate;Cost=Num $s.Cost;BaselineCost=$bac;Work=Num $s.Work;BaselineWork=Num $s.BaselineWork;DurationDays=(Num $s.Duration)/480;BCWS=$bcws;BCWP=$bcwp;ACWP=$acwp;CV=Num $s.CV;SV=Num $s.SV;CPI=$cpi;SPI=$spi;EAC=$eac;VAC=$vac;TCPI=$tcpi;Finish=[string]$s.Finish}}
+          function Validate($a,$path,$name,$needStatus){
+            $a.FileOpenEx($path)|Out-Null;$p=$a.ActiveProject;$all=@($p.Tasks|?{$_-ne$null});$leaf=@($all|?{-not$_.Summary-and-not$_.Milestone});$mile=@($all|?{$_.Milestone});$max=($all|Measure-Object OutlineLevel -Maximum).Maximum;$rc=@($p.Resources|?{$_-ne$null-and$_.Name}).Count;$ac=0;foreach($t in $leaf){$ac+=@($t.Assignments|?{$_-ne$null}).Count};$m=Metrics $p;$ok=($leaf.Count-eq40-and$mile.Count-eq8-and$max-ge4-and$rc-ge12-and$ac-ge40-and[double]$m.BaselineCost-gt0);if($needStatus){$ok=$ok-and([string]$p.StatusDate-ne'NA')};$script:accept+=[pscustomobject]@{File=$name;Bytes=(Get-Item $path).Length;Leaf=$leaf.Count;Milestones=$mile.Count;MaxOutline=$max;Resources=$rc;Assignments=$ac;BaselineCost=$m.BaselineCost;StatusDate=$m.StatusDate;SHA256=(Get-FileHash $path).Hash;Pass=$ok};$script:metrics[$name]=$m;CloseP $a
+          }
+          $app=New-Object -ComObject MSProject.Application;$app.Visible=$false
+          try{
+            $test=Join-Path $OutDir 'test_native.mpp';$app.FileNew()|Out-Null;$p=$app.ActiveProject;$p.ProjectStart=[datetime]'2026-01-12';1..3|%{$t=$p.Tasks.Add("Native test $_");$t.Duration=480};$p.Tasks.Item(2).Predecessors='1';$p.Tasks.Item(3).Predecessors='2';$app.FileSaveAs($test)|Out-Null;CloseP $app;$app.FileOpenEx($test)|Out-Null;if($app.ActiveProject.Tasks.Count-ne3){throw 'TEST A roundtrip mismatch'};CloseP $app;'PASS'|Set-Content evidence/test-a.txt
+            $models=@(
+              [pscustomobject]@{N='LR3_01_Baseline_V31.mpp';V='base';S='';D=0;F=1},
+              [pscustomobject]@{N='LR3_02_Tracking_V31.mpp';V='track';S='2026-05-15';D=89;F=.95},
+              [pscustomobject]@{N='LR3_03_Risk_V31.mpp';V='risk';S='';D=0;F=1},
+              [pscustomobject]@{N='LR4_01_Status_P1_V31.mpp';V='track';S='2026-02-20';D=29;F=.92},
+              [pscustomobject]@{N='LR4_02_Status_P2_V31.mpp';V='track';S='2026-04-03';D=59;F=.90},
+              [pscustomobject]@{N='LR4_03_Status_P3_V31.mpp';V='track';S='2026-05-15';D=89;F=.95}
+            )
+            foreach($sp in $models){$dest=Join-Path $OutDir $sp.N;$app.FileNew()|Out-Null;$p=$app.ActiveProject;$p.ProjectStart=[datetime]'2026-01-12';AddStructure $p $data.base $data.resources;$app.CalculateProject()|Out-Null;$app.BaselineSave()|Out-Null;if($sp.V-eq'track'){ApplyVariant $p $data.track}elseif($sp.V-eq'risk'){ApplyVariant $p $data.risk};if($sp.S){$p.StatusDate=[datetime]$sp.S;$p.SpreadPercentCompleteToStatusDate=$true;$v=if($sp.V-eq'track'){$data.track}elseif($sp.V-eq'risk'){$data.risk}else{$data.base};ApplyProgress $p $v $sp.D $sp.F};$app.CalculateProject()|Out-Null;$app.FileSaveAs($dest)|Out-Null;CloseP $app;Validate $app $dest $sp.N ([bool]$sp.S)}
+            $script:accept|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir 'Acceptance_Report.json')
+            $script:metrics|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir 'project_metrics.json')
+            if(@($script:accept|?{-not$_.Pass}).Count-gt0){throw 'MPP acceptance failure'}
+          } finally {CloseP $app;try{$app.Quit()|Out-Null}catch{}}
+      - name: Capture diagnostics
         if: always()
         shell: powershell
         run: |
           Get-ChildItem $env:TEMP -Filter '*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 10 | Copy-Item -Destination evidence -ErrorAction SilentlyContinue
           Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue | Select ProductReleaseIds,Platform,VersionToReport | Format-List | Out-File evidence/c2r.txt
-      - uses: actions/upload-artifact@v4
+      - name: Publish native artifacts
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: project2024-install-evidence
-          path: evidence/
+          name: native-7350160
+          path: |
+            native-7350160/out/**
+            evidence/**
+          if-no-files-found: warn
