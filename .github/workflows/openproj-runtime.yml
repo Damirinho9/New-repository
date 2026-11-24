@@ -1,0 +1,24 @@
+name: OpenProj Java 8 runtime
+on:
+  push:
+    branches: [project-desktop-native-probe]
+    paths: ['.github/workflows/openproj-runtime.yml']
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+      - run: |
+          "${JAVA_HOME}/jre/bin/java" -version
+          tar -C "${JAVA_HOME}" -czf java8-jre.tar.gz jre
+          sha256sum java8-jre.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java8-jre
+          path: java8-jre.tar.gz
