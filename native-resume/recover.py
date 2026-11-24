@@ -1,11 +1,12 @@
 from pathlib import Path
-import base64, hashlib, zipfile, json
+import base64, hashlib, zipfile, json, gzip
 from geometry import audit
 audit()
 root=Path(__file__).resolve().parent.parent
 parts=sorted((root/"kompas-input").glob("v6.b64.part*"))
 assert len(parts)==8
-data=base64.b64decode("".join(p.read_text().strip() for p in parts),validate=True)
+encoded=base64.b64decode("".join(p.read_text().strip() for p in parts),validate=True)
+data=gzip.decompress(encoded) if encoded.startswith(b"\x1f\x8b") else encoded
 assert len(data)==71953, len(data)
 out=root/"native-resume"/"recovered"
 out.mkdir(exist_ok=True)
