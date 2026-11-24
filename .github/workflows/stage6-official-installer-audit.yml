@@ -1,0 +1,47 @@
+name: 7335493 Stage 6 official installer source audit
+on:
+  workflow_dispatch:
+  push:
+    branches: [kompas-7335493-native-work1]
+    paths: ['.github/workflows/stage6-official-installer-audit.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Fetch official installers without executing or accepting licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p audit
+          df -h / > audit/runner-disk.txt
+          cat /etc/os-release > audit/runner-os.txt
+          for item in 'debian|https://kompas.ru/source/files/2026/10/install-kompas3d-full-debian.sh' 'ubuntu|https://kompas.ru/source/files/2026/09/install-kompas3d-full-ubuntu.sh'; do
+            name=${item%%|*}
+            url=${item#*|}
+            if curl --proto '=https' --location --fail --silent --show-error --retry 1 --connect-timeout 15 --max-time 45 "$url" -o "audit/$name.sh" 2>"audit/$name.download.log"; then
+              file "audit/$name.sh" | tee -a audit/summary.txt
+              sha256sum "audit/$name.sh" | tee -a audit/summary.txt
+              if head -n 1 "audit/$name.sh" | grep -Eq '^#!.*(bash|sh)'; then
+                bash -n "audit/$name.sh" && echo "$name SYNTAX_PASS" | tee -a audit/summary.txt
+                grep -nEi 'ascon|kompas|apt|dpkg|license|лиценз|install|space|free|disk|sudo|repo|http' "audit/$name.sh" > "audit/$name.relevant.txt" || true
+                grep -Eo 'ascon-[[:alnum:]_.+-]+' "audit/$name.sh" | sort -u > "audit/$name.packages.txt" || true
+              else
+                echo "$name NOT_SHELL_SCRIPT" | tee -a audit/summary.txt
+              fi
+            else
+              echo "$name DOWNLOAD_FAIL" | tee -a audit/summary.txt
+            fi
+          done
+          cat audit/summary.txt
+          for f in audit/*.packages.txt; do [ ! -e "$f" ] || cat "$f"; done
+          test -s audit/ubuntu.relevant.txt
+          test -s audit/debian.relevant.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 7335493-stage6-official-installer-audit
+          path: audit/
+          retention-days: 14
