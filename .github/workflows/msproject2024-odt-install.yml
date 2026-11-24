@@ -1,0 +1,94 @@
+name: Microsoft Project 2024 official installation and functional test
+on:
+  push:
+    branches: [project-desktop-native-probe]
+    paths: ['.github/workflows/msproject2024-odt-install.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  project:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Download official signed ODT
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force evidence,odt | Out-Null
+          $url='https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20527-20150.exe'
+          curl.exe -fL --retry 2 --max-time 120 $url -o odt.exe
+          if ($LASTEXITCODE -ne 0) {throw 'ODT download failed'}
+          $sig=Get-AuthenticodeSignature .\odt.exe
+          $sig | Format-List | Out-File evidence/odt-signature.txt
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Microsoft') {throw 'Signature check failed'}
+          Get-FileHash .\odt.exe | Format-List | Out-File evidence/odt-hash.txt
+          $p=Start-Process .\odt.exe -ArgumentList "/quiet /extract:$pwd\odt" -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or !(Test-Path odt/setup.exe)) {throw "ODT extraction failed: $($p.ExitCode)"}
+      - name: Install official retail edition
+        shell: powershell
+        timeout-minutes: 12
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          <Configuration>
+            <Add OfficeClientEdition="64" Channel="Current">
+              <Product ID="ProjectPro2024Retail"><Language ID="ru-ru"/></Product>
+            </Add>
+            <Display Level="None" AcceptEULA="TRUE"/>
+            <Updates Enabled="FALSE"/>
+          </Configuration>
+          '@ | Set-Content -Encoding UTF8 odt/configuration.xml
+          Copy-Item odt/configuration.xml evidence/
+          $p=Start-Process .\odt\setup.exe -ArgumentList "/configure `"$pwd\odt\configuration.xml`"" -Wait -PassThru
+          "ODT exit code: $($p.ExitCode)" | Tee-Object evidence/install.txt
+          $exe=Join-Path $env:ProgramFiles 'Microsoft Office\root\Office16\WINPROJ.EXE'
+          if (!(Test-Path $exe)) {throw 'WINPROJ not found'}
+          (Get-Item $exe).VersionInfo | Format-List | Out-File evidence/version.txt
+          Get-AuthenticodeSignature $exe | Format-List | Out-File evidence/project-signature.txt
+      - name: Test ordinary COM capabilities without modifying licensing
+        shell: powershell
+        timeout-minutes: 3
+        run: |
+          $ErrorActionPreference='Stop'
+          try {
+            $app=New-Object -ComObject MSProject.Application
+            $app.Visible=$true
+            "COM version $($app.Version)" | Tee-Object evidence/com.txt
+            $app.FileNew() | Out-Null
+            $p=$app.ActiveProject
+            $a=$p.Tasks.Add('Synthetic planning')
+            $b=$p.Tasks.Add('Synthetic development')
+            $c=$p.Tasks.Add('Synthetic acceptance')
+            $a.Duration=480; $b.Duration=960; $c.Duration=480
+            $b.Predecessors='1';$c.Predecessors='2'
+            $r=$p.Resources.Add('Analyst')
+            $r.StandardRate='100/h'
+            $p.Assignments.Add($a.ID,$r.ID,1) | Out-Null
+            $app.BaselineSave() | Out-Null
+            $a.PercentComplete=100
+            $dest=Join-Path (Resolve-Path evidence) 'Native_Test.mpp'
+            $app.FileSaveAs($dest) | Out-Null
+            if (!(Test-Path $dest)) {throw 'MPP not saved'}
+            $app.FileClose() | Out-Null
+            $app.FileOpenEx($dest) | Out-Null
+            if ($app.ActiveProject.Tasks.Count -ne 3 -or $app.ActiveProject.Tasks.Item(1).PercentComplete -ne 100) {throw 'Roundtrip mismatch'}
+            'PASS: native MPP roundtrip' | Tee-Object -Append evidence/com.txt
+            Get-FileHash $dest | Format-List | Out-File evidence/mpp-hash.txt
+            $app.FileClose() | Out-Null
+            $app.Quit() | Out-Null
+          } catch {
+            "BLOCKED: $($_.Exception.Message)" | Tee-Object -Append evidence/com.txt
+            throw
+          }
+      - name: Capture diagnostic logs
+        if: always()
+        shell: powershell
+        run: |
+          Get-ChildItem $env:TEMP -Filter '*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 10 | Copy-Item -Destination evidence -ErrorAction SilentlyContinue
+          Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration' -ErrorAction SilentlyContinue | Select ProductReleaseIds,Platform,VersionToReport | Format-List | Out-File evidence/c2r.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: project2024-install-evidence
+          path: evidence/
