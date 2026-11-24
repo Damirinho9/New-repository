@@ -5,7 +5,11 @@ audit()
 root=Path(__file__).resolve().parent.parent
 parts=sorted((root/"kompas-input").glob("v6.b64.part*"))
 assert len(parts)==8
-encoded=base64.b64decode("".join(p.read_text().strip() for p in parts),validate=True)
+chunks=[p.read_text().strip() for p in parts]
+# The archived final chunk duplicates the tail of the previous chunk.
+if chunks[-2].endswith(chunks[-1]) and chunks[-2].endswith("="):
+    chunks.pop()
+encoded=base64.b64decode("".join(chunks),validate=True)
 data=gzip.decompress(encoded) if encoded.startswith(b"\x1f\x8b") else encoded
 assert len(data)==71953, len(data)
 out=root/"native-resume"/"recovered"
