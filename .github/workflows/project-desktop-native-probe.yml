@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '8'
+          java-version: ${{ matrix.app == 'openproj' && '8' || '21' }}
       - name: Obtain official distribution
         shell: bash
         run: |
@@ -33,6 +33,10 @@ jobs:
           tar -tzf app.tar.gz > evidence/file-list.txt
           tar -xzf app.tar.gz -C app
           java -version 2> evidence/java-version.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distribution-${{ matrix.app }}
+          path: app.tar.gz
       - name: Launch real desktop
         shell: bash
         run: |
@@ -46,6 +50,7 @@ jobs:
           java -jar "$(basename "$jar")" > "$GITHUB_WORKSPACE/evidence/app.log" 2>&1 &
           pid=$!
           sleep 20
+          cat "$GITHUB_WORKSPACE/evidence/app.log"
           kill -0 "$pid"
           xdotool search --onlyvisible --name '.*' getwindowname %@ | tee "$GITHUB_WORKSPACE/evidence/windows.txt"
           import -window root "$GITHUB_WORKSPACE/evidence/desktop.png"
