@@ -59,7 +59,7 @@ jobs:
           [IO.File]::WriteAllText((Join-Path $pwd 'native-7350160\native_data.json'),$json,(New-Object Text.UTF8Encoding($false)))
       - name: Build and validate native MPP files
         shell: powershell
-        timeout-minutes: 10
+        timeout-minutes: 5
         run: |
           $ErrorActionPreference='Stop'
           $DataPath=(Join-Path $pwd 'native-7350160\native_data.json')
@@ -130,7 +130,7 @@ jobs:
             Trace 'baseline calculate'
             $app.CalculateProject()|Out-Null
             Trace 'baseline save baseline'
-            $app.BaselineSave()|Out-Null
+            $okBaseline=$app.BaselineSave($true); Trace ("baseline result="+$okBaseline)
             Trace 'baseline save mpp'
             $app.FileSaveAs($base)|Out-Null
             CloseP $app
