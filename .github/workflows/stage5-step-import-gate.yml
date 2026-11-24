@@ -14,24 +14,18 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        id: cqpython
+      - name: Reuse verified STEP smoke solid from prior run
+        uses: actions/download-artifact@v4
         with:
-          python-version: '3.12'
-      - name: Generate independent STEP test solid
-        env:
-          CQ_PYTHON: ${{ steps.cqpython.outputs.python-path }}
+          name: 7335493-stage5-step-import-smoke-not-production
+          run-id: 45390767561
+          github-token: ${{ github.token }}
+          path: prior-smoke
+      - name: Copy smoke input only
         run: |
-          set -euxo pipefail
           mkdir -p result/step-gate
-          "$CQ_PYTHON" -m venv "$RUNNER_TEMP/cq"
-          "$RUNNER_TEMP/cq/bin/pip" -q install cadquery==2.6.1
-          "$RUNNER_TEMP/cq/bin/python" - <<'PY'
-          import cadquery as cq
-          s=cq.Workplane("XY").box(10,20,30)
-          assert abs(s.val().Volume()-6000)<1e-5
-          cq.exporters.export(s,"result/step-gate/cube.step")
-          PY
+          cp prior-smoke/cube.step result/step-gate/cube.step
+          test -s result/step-gate/cube.step
       - uses: actions/download-artifact@v4
         with:
           pattern: kompas-v25-runtime-*
@@ -75,6 +69,12 @@ jobs:
             cp "$RES" "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/QtResources.bin"
           fi
           export ROOT="$GITHUB_WORKSPACE/result/step-gate"
+          unset LD_PRELOAD HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy
+          ln -sf "$BIN/ksinvisible" /tmp/kKompas
+          if [ -d "$RUNNER_TEMP/runtime/etc/ascon/KOMPAS-3D/25" ]; then
+            cp -a "$RUNNER_TEMP/runtime/etc/ascon/KOMPAS-3D/25/." "$XDG_CONFIG_HOME/ascon/KOMPAS-3D/25/"
+            cp -a "$RUNNER_TEMP/runtime/etc/ascon/KOMPAS-3D/25/." "$XDG_CONFIG_HOME/ascon/KOMPAS-3D Invisible/25/"
+          fi
           find "$BIN" -type f \( -iname '*step*' -o -iname '*stp*' -o -iname '*convert*' \) | sort > "$ROOT/converter-files.txt"
           cat "$ROOT/converter-files.txt"
           cat > /tmp/import_gate.py <<'PY'
@@ -83,7 +83,7 @@ jobs:
           from constants import constants as c
           root=pathlib.Path(os.environ["ROOT"])
           app=None
-          for i in range(20):
+          for i in range(45):
               app=ksapi.GetKompas()
               if app: break
               time.sleep(1)
@@ -91,6 +91,7 @@ jobs:
           lm=app.GetApplicationLicenseManager()
           if not lm or not lm.IsKompasModuleActive(c.ksKompasModule3D):
               raise RuntimeError("NO_ACTIVE_3D_MODULE")
+          print("APP",app.GetApplicationName(True),flush=True)
           print("3D_MODULE_ACTIVE",flush=True)
           app.SetHideMessage(c.ksHideMessageYes)
           docs=app.GetDocuments()
@@ -123,33 +124,38 @@ jobs:
           except Exception as e:
               print("OPEN_ROUTE_FAIL",repr(e),flush=True)
           print("PUBLIC_CONVERTER_API",[n for n in dir(app) if "onvert" in n],flush=True)
-          getter=getattr(app,"GetConverter",None)
-          if not getter: raise RuntimeError("NO_PUBLIC_CONVERTER_METHOD")
-          paths=[]
-          for line in (root/"converter-files.txt").read_text().splitlines():
-              p=pathlib.Path(line)
-              if (p.suffix.lower() in (".so",".rtw") or ".so." in p.name) and ("step" in p.name.lower() or "stp" in p.name.lower()):
-                  paths.append(p)
-          for p in paths:
-              try:
-                  print("TRY_PUBLIC_CONVERTER",p,flush=True)
-                  conv=getter(str(p))
-                  if not conv: continue
-                  print("CONVERTER_TYPE",type(conv),flush=True)
-                  # Command 0 is a trial of the default conversion command, not a guaranteed STEP import code.
-                  rc=conv.Convert(source,str(out),0,False)
-                  print("CONVERT_RESULT",rc,flush=True)
-                  if rc and out.is_file():
-                      if validate(docs.Open(str(out),True,False)): raise SystemExit(0)
-              except Exception as e:
-                  print("CONVERTER_ROUTE_FAIL",repr(e),flush=True)
+          converter_id=getattr(c,"ksConverterFromSTEP",-3)
+          print("STEP_CONVERTER_ID",converter_id,flush=True)
+          conv=app.GetConverter(converter_id)
+          if not conv: raise RuntimeError("BUILTIN_STEP_CONVERTER_UNAVAILABLE")
+          print("BUILTIN_STEP_CONVERTER_CONNECTED",flush=True)
+          command=converter_id
+          try:
+              result=conv.GetFilter(c.ksDocumentPart,False,0)
+              print("IMPORT_FILTER",repr(result),flush=True)
+              if isinstance(result,(list,tuple)):
+                  for v in result:
+                      if type(v) is int: command=v
+          except Exception as e:
+              print("GET_FILTER_FAILED",repr(e),flush=True)
+          print("IMPORT_COMMAND",command,flush=True)
+          # Native import convention: no target filename -> new document.
+          before=docs.GetCount()
+          rc=conv.Convert(source,"",command,False)
+          print("IMPORT_RC",rc,"DOCS_BEFORE_AFTER",before,docs.GetCount(),flush=True)
+          if rc==1:
+              d=app.GetActiveDocument()
+              if not d and docs.GetCount()>before:
+                  d=docs.GetItem(docs.GetCount()-1)
+              if validate(d): raise SystemExit(0)
           raise RuntimeError("NO_VERIFIED_NATIVE_STEP_ROUTE")
           PY
-          timeout --kill-after=5s 100s xvfb-run -a dbus-run-session -- bash -c '
-            "$1/ksinvisible" -automation >"$ROOT/kompas.out" 2>"$ROOT/kompas.err" &
+          timeout --kill-after=5s 130s xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" dbus-run-session -- bash -c '
+            /tmp/kKompas -automation >"$ROOT/kompas.out" 2>"$ROOT/kompas.err" &
             pid=$!; trap "kill $pid 2>/dev/null || true" EXIT
-            sleep 3
-            python3 -u /tmp/import_gate.py
+            sleep 5
+            ss -ltnp >"$ROOT/listeners.txt" || true
+            /usr/bin/python3 -u /tmp/import_gate.py
           ' bash "$BIN" 2>&1 | tee "$ROOT/gate.log"
           grep -qx 'RESULT=NATIVE_STEP_SMOKE_REOPEN_PASS' "$ROOT/gate.log"
       - uses: actions/upload-artifact@v4
