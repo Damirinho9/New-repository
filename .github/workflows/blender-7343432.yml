@@ -1,0 +1,311 @@
+name: Blender 7343432 native build
+on:
+  push:
+    branches: [blender-7343432]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Install Blender 4.2 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 2 --connect-timeout 20 https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -o /tmp/blender.tar.xz
+          tar -xf /tmp/blender.tar.xz -C /tmp
+          echo "/tmp/blender-4.2.0-linux-x64" >> "$GITHUB_PATH"
+      - name: Native format smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          blender --version
+          blender -b --factory-startup --python-expr "import bpy; bpy.context.scene.render.engine='CYCLES'; bpy.context.scene.cycles.samples=2; bpy.context.scene.render.resolution_x=128; bpy.context.scene.render.resolution_y=128; bpy.context.scene.render.resolution_percentage=100; bpy.ops.wm.save_as_mainfile(filepath='/tmp/smoke.blend')"
+          blender -b /tmp/smoke.blend -o /tmp/smoke_ -F PNG -f 1
+          test -s /tmp/smoke_0001.png
+      - name: Build editable scenes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output/projects output/renders output/report
+          cat > /tmp/build.py <<'PY'
+          import bpy, math, os, random
+          from mathutils import Vector
+          from math import sin, cos, pi, exp
+          from pathlib import Path
+          OUT=Path(os.getcwd())/'output'
+          P=OUT/'projects'
+          names=['01_Sculpture','02_Landscape_Geometry','03_Lighthouse_Geometry','04_Logo','05_Lighthouse_Boolean','06_Landscape_Materials','07_Lighthouse_Textured','08_Landscape_Textured','09_Landscape_Final']
+          def select(o):
+              bpy.ops.object.select_all(action='DESELECT')
+              o.select_set(True); bpy.context.view_layer.objects.active=o
+          def reset():
+              bpy.ops.wm.read_factory_settings(use_empty=True)
+              s=bpy.context.scene
+              s.render.engine='CYCLES'; s.cycles.device='CPU'; s.cycles.samples=16
+              s.cycles.use_denoising=True; s.render.resolution_x=960; s.render.resolution_y=720
+              s.render.resolution_percentage=100; s.render.image_settings.file_format='PNG'
+              s.render.threads_mode='FIXED'; s.render.threads=4
+              s.view_settings.view_transform='AgX'
+              s.world=bpy.data.worlds.new('World'); s.world.use_nodes=True
+              s.world.node_tree.nodes['Background'].inputs['Color'].default_value=(.19,.19,.19,1)
+              s.world.node_tree.nodes['Background'].inputs['Strength'].default_value=.55
+              bpy.context.preferences.filepaths.save_version=0
+          def mat(n,c,rough=.5,metal=0):
+              m=bpy.data.materials.new(n); m.diffuse_color=(*c,1); m.use_nodes=True
+              bs=m.node_tree.nodes.get('Principled BSDF')
+              bs.inputs['Base Color'].default_value=(*c,1); bs.inputs['Roughness'].default_value=rough; bs.inputs['Metallic'].default_value=metal
+              return m
+          def assign(o,m):
+              o.data.materials.clear(); o.data.materials.append(m)
+          def smooth(o):
+              for f in o.data.polygons: f.use_smooth=True
+          def mesh(n,v,f):
+              me=bpy.data.meshes.new(n+' mesh'); me.from_pydata(v,[],f); me.update()
+              o=bpy.data.objects.new(n,me); bpy.context.collection.objects.link(o)
+              select(o); bpy.ops.object.mode_set(mode='EDIT'); bpy.ops.mesh.select_all(action='SELECT'); bpy.ops.mesh.normals_make_consistent(inside=False); bpy.ops.object.mode_set(mode='OBJECT')
+              return o
+          def primitive(kind,n,loc,scale,m=None,rot=(0,0,0)):
+              getattr(bpy.ops.mesh,'primitive_'+kind+'_add')(location=loc)
+              o=bpy.context.object; o.name=n; o.scale=scale; o.rotation_euler=rot
+              if kind in ('uv_sphere','ico_sphere','cylinder','cone','torus','monkey'): smooth(o)
+              if m: assign(o,m)
+              return o
+          def camera(loc,target,lens=48,tracking=False):
+              bpy.ops.object.camera_add(location=loc); o=bpy.context.object; o.name='Camera'
+              o.rotation_euler=(Vector(target)-o.location).to_track_quat('-Z','Y').to_euler()
+              o.data.lens=lens; o.data.clip_end=200
+              bpy.context.scene.camera=o
+              if tracking:
+                  e=bpy.data.objects.new('Camera target (Empty)',None); bpy.context.collection.objects.link(e); e.location=target
+                  c=o.constraints.new('TRACK_TO'); c.target=e; c.track_axis='TRACK_NEGATIVE_Z'; c.up_axis='UP_Y'
+              return o
+          def light(n,loc,power,size,target=(0,0,0)):
+              bpy.ops.object.light_add(type='AREA',location=loc); o=bpy.context.object; o.name=n
+              o.data.energy=power; o.data.shape='DISK'; o.data.size=size
+              o.rotation_euler=(Vector(target)-o.location).to_track_quat('-Z','Y').to_euler()
+          def studio(target=(0,0,2)):
+              light('Key', (4,-5,8),850,5,target); light('Fill',(-4,-2,5),420,4,target); light('Rim',(3,4,6),650,3,target)
+          def save(i):
+              for screen in bpy.data.screens:
+                  for a in screen.areas:
+                      if a.type=='VIEW_3D':
+                          sp=a.spaces.active; sp.region_3d.view_perspective='CAMERA'
+                          sp.shading.type='SOLID'; sp.clip_end=200
+              bpy.ops.file.pack_all()
+              bpy.ops.wm.save_as_mainfile(filepath=str(P/(names[i-1]+'.blend')))
+          def open_stage(i):
+              bpy.ops.wm.open_mainfile(filepath=str(P/(names[i-1]+'.blend')))
+              bpy.context.preferences.filepaths.save_version=0
+          # 1: all basic mesh primitives except circle/grid
+          reset()
+          grey=mat('Neutral sculpture',(.48,.48,.48),.6)
+          floor=mat('Floor',(.22,.22,.22),.8)
+          primitive('plane','Floor',(0,0,0),(5,5,5),floor)
+          primitive('uv_sphere','Torso',(0,0,2.1),(.7,.46,.89),grey)
+          primitive('monkey','Suzanne head',(0,0,3.45),(.57,.57,.57),grey)
+          primitive('cylinder','Neck',(0,0,2.95),(.22,.22,.27),grey)
+          primitive('torus','Collar',(0,0,2.75),(.37,.37,.37),grey)
+          primitive('cone','Hat',(0,.05,4.05),(.48,.48,.34),grey)
+          for s in (-1,1):
+              primitive('ico_sphere','Shoulder '+str(s),(s*.77,0,2.55),(.29,.29,.29),grey)
+              primitive('cylinder','Upper arm '+str(s),(s*1.03,0,2.24),(.18,.18,.36),grey,(0,-s*.63,0))
+              primitive('uv_sphere','Elbow '+str(s),(s*1.26,0,1.96),(.2,.2,.2),grey)
+              primitive('cylinder','Forearm '+str(s),(s*1.43,0,2.24),(.16,.16,.34),grey,(0,s*.6,0))
+              primitive('cube','Hand '+str(s),(s*1.62,0,2.58),(.21,.19,.22),grey)
+              primitive('cylinder','Thigh '+str(s),(s*.37,0,1.15),(.25,.25,.47),grey,(0,s*.20,0))
+              primitive('uv_sphere','Knee '+str(s),(s*.45,0,.72),(.25,.25,.25),grey)
+              primitive('cylinder','Shin '+str(s),(s*.48,0,.4),(.2,.2,.28),grey)
+              primitive('cube','Foot '+str(s),(s*.48,-.17,.16),(.28,.40,.16),grey)
+          camera((6,-10,5),(0,0,2),55); studio(); save(1)
+          # 2: 65 by 65 editable subdivided terrain, shoreline toward camera
+          reset()
+          def coast(x): return -.15+.39*sin(x*.55)+.28*cos(x*.93)+.14*sin(x*2.4)
+          def ground(x,y):
+              d=y-coast(x)
+              t=max(0,min(1,(d+.18)/.60))
+              # plateau height, irregular cliff, rolling hill; flat lighthouse area
+              hill=1.5*exp(-((x+4.0)**2/14+(y-5.3)**2/9))+.65*exp(-((x-5)**2/20+(y-6)**2/8))
+              flat=1-exp(-((x-2.7)**2+(y-2.0)**2)/1.4)
+              return t*(2.0+hill*flat+flat*.12*sin(x*1.3)*sin(y*1.6))
+          n=65
+          v=[(-10+20*i/(n-1),-10+20*j/(n-1),ground(-10+20*i/(n-1),-10+20*j/(n-1))) for j in range(n) for i in range(n)]
+          f=[(j*n+i,j*n+i+1,(j+1)*n+i+1,(j+1)*n+i) for j in range(n-1) for i in range(n-1)]
+          land=mesh('Landscape 64 x 64',v,f); smooth(land)
+          assign(land,mat('Neutral terrain',(.43,.43,.43)))
+          camera((0,-12,2.25),(0,1.3,2.35),26,True)
+          light('Landscape key',(-4,-6,11),1800,7,(0,2,0)); light('Sky fill',(6,5,8),800,7,(0,0,0))
+          save(2)
+          # 3: lathe mesh, 32 vertices per ring, sharp structural corners
+          def lathe(n,rings,cap=True,tip=False,skip=False):
+              v=[(r*cos(2*pi*i/32),r*sin(2*pi*i/32),z) for z,r in rings for i in range(32)]
+              f=[]
+              if cap: f.append(tuple(reversed(range(32))))
+              for j in range(len(rings)-1):
+                  for i in range(32):
+                      if skip and i%4!=3: continue
+                      k=(i+1)%32; f.append((j*32+i,j*32+k,(j+1)*32+k,(j+1)*32+i))
+              if tip:
+                  idx=len(v); v.append((0,0,rings[-1][0]+.62))
+                  f.extend(((len(rings)-1)*32+i,(len(rings)-1)*32+(i+1)%32,idx) for i in range(32))
+              elif cap: f.append(tuple(range((len(rings)-1)*32,len(rings)*32)))
+              o=mesh(n,v,f)
+              for p in o.data.polygons: p.use_smooth=len(p.vertices)==4 and abs(p.normal.z)<.85
+              uv=o.data.uv_layers.new(name='Cylindrical')
+              for poly in o.data.polygons:
+                  u=[(math.atan2(o.data.vertices[o.data.loops[k].vertex_index].co.y,o.data.vertices[o.data.loops[k].vertex_index].co.x)/(2*pi))%1 for k in poly.loop_indices]
+                  if max(u)-min(u)>.5: u=[x+1 if x<.5 else x for x in u]
+                  for k,x in zip(poly.loop_indices,u): uv.data[k].uv=(x,o.data.vertices[o.data.loops[k].vertex_index].co.z/3)
+              return o
+          reset()
+          tower=lathe('Lighthouse',[(0,1),(0.12,1),(3.0,.69),(3.0,.99),(3.14,.99),(3.14,.62),(3.86,.62),(3.86,.79)],True,True)
+          assign(tower,mat('Neutral lighthouse',(.47,.47,.47)))
+          camera((7,-10,5.6),(0,0,2.1),51); studio(); save(3)
+          # 4: extruded contour logo, Blender-inspired orange ring + three arms, blue disk
+          reset()
+          orange=mat('Orange',(.95,.22,.025),.38); blue=mat('Blue',(.025,.28,.72),.36)
+          def ring2d(n,r0,r1,z0,z1):
+              v=[(r*cos(2*pi*i/64),r*sin(2*pi*i/64),z) for z in (z0,z1) for r in (r0,r1) for i in range(64)]
+              f=[]
+              for i in range(64):
+                  j=(i+1)%64
+                  f.extend([(i,j,64+j,64+i),(128+i,192+i,192+j,128+j),(i,128+i,128+j,j),(64+i,64+j,192+j,192+i)])
+              return mesh(n,v,f)
+          logo=ring2d('Orange outer and inner contours',.72,1.13,0,.28)
+          def boolean(o,c,operation):
+              select(o); m=o.modifiers.new(operation,'BOOLEAN'); m.operation=operation; m.solver='EXACT'; m.object=c
+              bpy.ops.object.modifier_apply(modifier=m.name); bpy.data.objects.remove(c,do_unlink=True)
+          def bar(n,a,b,w):
+              ax,ay=a; bx,by=b; angle=math.atan2(by-ay,bx-ax)
+              o=primitive('cube',n,((ax+bx)/2,(ay+by)/2,.14),((math.hypot(bx-ax,by-ay)+w)/2,w/2,.14),None,(0,0,angle))
+              select(o); bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
+              return o
+          for k,(a,b) in enumerate([((-2.2,.12),(-.78,.35)),((-1.68,1.08),(-.53,.78)),((-.89,1.8),(.20,1.0))]):
+              boolean(logo,bar('Arm '+str(k),a,b,.35),'UNION')
+          assign(logo,orange)
+          disc=primitive('cylinder','Blue central contour',(0,0,.13),(.49,.49,.13),blue)
+          camera((.1,-3.8,8.2),(-.35,.2,0),46); studio((0,0,0)); save(4)
+          # 5: actual boolean window cuts in the original solid
+          open_stage(3); tower=bpy.data.objects['Lighthouse']
+          for k,(ang,z) in enumerate([(0,1.15),(-pi/2,2.0),(pi,1.65),(pi/2,.7)]):
+              c=primitive('cube','Window cutter '+str(k),(.76*cos(ang),.76*sin(ang),z),(.36,.13,.25),None,(0,0,ang))
+              select(c); bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
+              boolean(tower,c,'DIFFERENCE')
+          save(5)
+          # 6: simple landscape materials and separate sea
+          open_stage(2)
+          land=bpy.data.objects['Landscape 64 x 64']; assign(land,mat('Green land',(.11,.25,.045),.92))
+          water=primitive('plane','Sea',(0,-4,.68),(20,20,20),mat('Blue water',(.025,.16,.37),.21,.16))
+          save(6)
+          # procedural textures, all data internal
+          def noise_material(n,c1,c2,scale,rough,dist,second=False,brick=False):
+              m=mat(n,c1,rough); nt=m.node_tree; nodes=nt.nodes; link=nt.links
+              bs=nodes.get('Principled BSDF'); tc=nodes.new('ShaderNodeTexCoord')
+              a=nodes.new('ShaderNodeTexNoise'); a.label='Clouds / broad variation'; a.inputs['Scale'].default_value=scale; a.inputs['Detail'].default_value=4
+              link.new(tc.outputs['Object'],a.inputs['Vector'])
+              ramp=nodes.new('ShaderNodeValToRGB'); ramp.color_ramp.elements[0].position=.24; ramp.color_ramp.elements[0].color=(*c1,1); ramp.color_ramp.elements[1].position=.76; ramp.color_ramp.elements[1].color=(*c2,1)
+              link.new(a.outputs['Fac'],ramp.inputs['Fac']); link.new(ramp.outputs['Color'],bs.inputs['Base Color'])
+              bump=nodes.new('ShaderNodeBump'); bump.inputs['Strength'].default_value=.65; bump.inputs['Distance'].default_value=dist; link.new(a.outputs['Fac'],bump.inputs['Height'])
+              if brick:
+                  b=nodes.new('ShaderNodeTexBrick'); b.label='Cylindrical stone courses'; b.inputs['Color1'].default_value=(*c1,1); b.inputs['Color2'].default_value=(*c2,1); b.inputs['Mortar'].default_value=(.05,.045,.04,1); b.inputs['Scale'].default_value=10; b.inputs['Mortar Size'].default_value=.025; b.inputs['Brick Width'].default_value=.5; b.inputs['Row Height'].default_value=.25
+                  link.new(tc.outputs['UV'],b.inputs['Vector']); link.new(b.outputs['Color'],bs.inputs['Base Color'])
+                  bb=nodes.new('ShaderNodeBump'); bb.inputs['Strength'].default_value=.8; bb.inputs['Distance'].default_value=.045; link.new(b.outputs['Fac'],bb.inputs['Height']); link.new(bump.outputs['Normal'],bb.inputs['Normal']); bump=bb
+              if second:
+                  fine=nodes.new('ShaderNodeTexNoise'); fine.label='Stucci equivalent / fine ripple'; fine.inputs['Scale'].default_value=scale*5; fine.inputs['Detail'].default_value=2
+                  link.new(tc.outputs['Object'],fine.inputs['Vector']); b2=nodes.new('ShaderNodeBump'); b2.inputs['Strength'].default_value=.55; b2.inputs['Distance'].default_value=dist*.35
+                  link.new(fine.outputs['Fac'],b2.inputs['Height']); link.new(bump.outputs['Normal'],b2.inputs['Normal']); bump=b2
+              link.new(bump.outputs['Normal'],bs.inputs['Normal'])
+              return m
+          # 7: retain boolean cut geometry from stage 5; remove lantern faces, assign parts
+          open_stage(5); tower=bpy.data.objects['Lighthouse']
+          import bmesh
+          bm=bmesh.new(); bm.from_mesh(tower.data)
+          remove=[]
+          for p in bm.faces:
+              z=sum(v.co.z for v in p.verts)/len(p.verts)
+              if 3.15<z<3.85 and len(p.verts)==4:
+                  x=sum(v.co.x for v in p.verts)/len(p.verts); y=sum(v.co.y for v in p.verts)/len(p.verts)
+                  i=int((math.atan2(y,x)%(2*pi))*32/(2*pi))
+                  if i%4!=3: remove.append(p)
+          bmesh.ops.delete(bm,geom=remove,context='FACES'); bm.to_mesh(tower.data); bm.free(); tower.data.update()
+          stone=noise_material('Stone masonry',(.12,.10,.075),(.33,.29,.23),17,.88,.025,brick=True)
+          concrete=noise_material('Stucci concrete',(.22,.21,.19),(.46,.43,.39),34,.82,.025)
+          red=mat('Red lantern supports',(.38,.055,.035),.48); roof=mat('Roof',(.10,.095,.085),.55)
+          tower.data.materials.clear()
+          for m in (stone,concrete,red,roof): tower.data.materials.append(m)
+          for p in tower.data.polygons:
+              z=sum(tower.data.vertices[i].co.z for i in p.vertices)/len(p.vertices)
+              p.material_index=0 if z<2.99 else (1 if z<3.15 else (2 if z<3.86 else 3))
+          tower.name='Lighthouse textured'; save(7)
+          # 8: dual-scale water detail and terrain texture
+          open_stage(6)
+          land=bpy.data.objects['Landscape 64 x 64']; sea=bpy.data.objects['Sea']
+          assign(land,noise_material('Grass and soil',(.075,.055,.026),(.23,.31,.075),5,.95,.11,second=True))
+          assign(sea,noise_material('Storm sea | Clouds + Stucci',(.016,.045,.095),(.065,.14,.25),1.7,.24,.20,second=True))
+          save(8)
+          # 9: append original textured object, gradient sky, editable heterogeneous volume
+          open_stage(8)
+          with bpy.data.libraries.load(str(P/(names[6]+'.blend')),link=False) as (src,dst):
+              dst.objects=['Lighthouse textured']
+          tower=dst.objects[0]; bpy.context.collection.objects.link(tower); tower.scale=(.66,.66,.66); tower.location=(2.7,2.0,ground(2.7,2.0))
+          s=bpy.context.scene; world=s.world; world.name='Storm grey gradient'; nt=world.node_tree; bg=nt.nodes['Background']; bg.inputs['Strength'].default_value=.65
+          tc=nt.nodes.new('ShaderNodeTexCoord'); sep=nt.nodes.new('ShaderNodeSeparateXYZ'); nt.links.new(tc.outputs['Normal'],sep.inputs[0])
+          ramp=nt.nodes.new('ShaderNodeValToRGB'); ramp.color_ramp.elements[0].color=(.25,.26,.28,1); ramp.color_ramp.elements[1].color=(.085,.09,.10,1)
+          nt.links.new(sep.outputs['Z'],ramp.inputs['Fac']); nt.links.new(ramp.outputs['Color'],bg.inputs['Color'])
+          s.world.mist_settings.start=0; s.world.mist_settings.depth=22; s.world.mist_settings.falloff='QUADRATIC'
+          s.view_layers[0].use_pass_mist=True
+          fog=primitive('cube','Editable heterogeneous fog',(0,4,3),(13,14,5))
+          m=bpy.data.materials.new('Fog | Voronoi distance to edge'); m.use_nodes=True; nt=m.node_tree; nt.nodes.clear()
+          out=nt.nodes.new('ShaderNodeOutputMaterial'); vol=nt.nodes.new('ShaderNodeVolumeScatter'); vol.inputs['Color'].default_value=(.70,.72,.74,1); vol.inputs['Anisotropy'].default_value=.12
+          tc=nt.nodes.new('ShaderNodeTexCoord'); noise=nt.nodes.new('ShaderNodeTexNoise'); noise.inputs['Scale'].default_value=2.8; noise.inputs['Detail'].default_value=2
+          nt.links.new(tc.outputs['Generated'],noise.inputs['Vector'])
+          vor=nt.nodes.new('ShaderNodeTexVoronoi'); vor.feature='DISTANCE_TO_EDGE'; vor.inputs['Scale'].default_value=8; nt.links.new(tc.outputs['Generated'],vor.inputs['Vector'])
+          mix=nt.nodes.new('ShaderNodeMath'); mix.operation='MULTIPLY'; nt.links.new(noise.outputs['Fac'],mix.inputs[0]); nt.links.new(vor.outputs['Distance'],mix.inputs[1])
+          ramp=nt.nodes.new('ShaderNodeMapRange'); ramp.inputs['From Min'].default_value=0; ramp.inputs['From Max'].default_value=.3; ramp.inputs['To Min'].default_value=.008; ramp.inputs['To Max'].default_value=.095; nt.links.new(mix.outputs[0],ramp.inputs['Value'])
+          nt.links.new(ramp.outputs[0],vol.inputs['Density']); nt.links.new(vol.outputs[0],out.inputs['Volume']); assign(fog,m); fog.display_type='WIRE'
+          s.cycles.samples=32; s.cycles.volume_step_rate=2
+          save(9)
+          print('BUILT',len(list(P.glob('*.blend'))))
+          PY
+          blender -b --factory-startup --python-exit-code 1 --python /tmp/build.py
+          test "$(find output/projects -name '*.blend' | wc -l)" -eq 9
+      - name: Reopen and render every native project
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/validate.py <<'PY'
+          import bpy, json, os
+          from pathlib import Path
+          s=bpy.context.scene
+          p=Path(bpy.data.filepath)
+          meshes=[o for o in s.objects if o.type=='MESH']
+          assert s.camera and meshes
+          assert all(len(o.data.vertices)>0 and len(o.data.polygons)>0 for o in meshes)
+          assert not [im.name for im in bpy.data.images if im.source=='FILE' and not im.packed_file and not os.path.isfile(bpy.path.abspath(im.filepath))]
+          record={'file':p.name,'blender':bpy.app.version_string,'meshes':len(meshes),'vertices':sum(len(o.data.vertices) for o in meshes),'faces':sum(len(o.data.polygons) for o in meshes),'materials':len({m.name for o in meshes for m in o.data.materials if m}),'camera':s.camera.name}
+          s.render.filepath=str(Path.cwd()/'output'/'renders'/(p.stem+'.png'))
+          bpy.ops.render.render(write_still=True)
+          assert Path(s.render.filepath).stat().st_size>1000
+          record['native_open_and_render']='PASS'
+          with open('output/validation.jsonl','a') as f: f.write(json.dumps(record)+'\n')
+          PY
+          for f in output/projects/*.blend; do
+            blender -b "$f" --python-exit-code 1 --python /tmp/validate.py
+          done
+          test "$(find output/renders -name '*.png' | wc -l)" -eq 9
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          rows=[json.loads(x) for x in Path('output/validation.jsonl').read_text().splitlines()]
+          assert len(rows)==9
+          print(json.dumps(rows,indent=2))
+          PY
+      - name: Upload native projects and validation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blender-7343432-native
+          path: output/
+          if-no-files-found: warn
