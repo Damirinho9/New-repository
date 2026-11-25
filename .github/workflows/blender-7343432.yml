@@ -10,13 +10,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
-      - name: Install Blender 4.2 LTS
+      - name: Install Blender from Ubuntu package repository
         shell: bash
         run: |
           set -euo pipefail
-          curl -fL --retry 2 --connect-timeout 20 https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -o /tmp/blender.tar.xz
-          tar -xf /tmp/blender.tar.xz -C /tmp
-          echo "/tmp/blender-4.2.0-linux-x64" >> "$GITHUB_PATH"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends blender
+          blender --version
       - name: Native format smoke test
         shell: bash
         run: |
