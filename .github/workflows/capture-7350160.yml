@@ -1,0 +1,72 @@
+name: Capture Microsoft Project UI 7350160
+on:
+  workflow_dispatch:
+  push:
+    branches: [native-project-7350160]
+    paths:
+      - '.github/workflows/capture-7350160.yml'
+      - 'native-7350160/capture-ui.ps1'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  capture:
+    runs-on: windows-2022
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download native MPP artifact
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $u="https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/artifacts/14991915294/zip"
+          Invoke-WebRequest -Headers @{Authorization="Bearer $env:GITHUB_TOKEN";Accept="application/vnd.github+json";"X-GitHub-Api-Version"="2022-11-28"} -Uri $u -OutFile native.zip
+          Expand-Archive native.zip -DestinationPath artifact -Force
+          Get-ChildItem artifact -Recurse
+      - name: Download official signed ODT
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $url='https://download.microsoft.com/download/6c1eeb25-cf8b-41d9-8d0d-cc1dbc032140/officedeploymenttool_20527-20150.exe'
+          curl.exe -fL --retry 2 --max-time 120 $url -o odt.exe
+          if ($LASTEXITCODE -ne 0) { throw 'ODT download failed' }
+          $sig=Get-AuthenticodeSignature .\odt.exe
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Microsoft') { throw 'ODT signature check failed' }
+          New-Item -ItemType Directory -Force odt | Out-Null
+          $p=Start-Process .\odt.exe -ArgumentList "/quiet /extract:$pwd\odt" -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or !(Test-Path odt/setup.exe)) { throw "ODT extraction failed: $($p.ExitCode)" }
+      - name: Install Microsoft Project Professional 2024
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          @'
+          <Configuration>
+            <Add OfficeClientEdition="64" Channel="Current">
+              <Product ID="ProjectPro2024Retail"><Language ID="ru-ru"/></Product>
+            </Add>
+            <Display Level="None" AcceptEULA="TRUE"/>
+            <Updates Enabled="FALSE"/>
+          </Configuration>
+          '@ | Set-Content -Encoding UTF8 odt/configuration.xml
+          $p=Start-Process .\odt\setup.exe -ArgumentList "/configure `"$pwd\odt\configuration.xml`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "ODT configure failed: $($p.ExitCode)" }
+          $exe=Join-Path $env:ProgramFiles 'Microsoft Office\root\Office16\WINPROJ.EXE'
+          if (!(Test-Path $exe)) { throw 'WINPROJ.EXE not found' }
+          (Get-Item $exe).VersionInfo | Format-List | Out-File capture-project-version.txt
+      - name: Capture real Microsoft Project windows and final acceptance
+        shell: powershell
+        run: |
+          $mpp=(Resolve-Path 'artifact/native-7350160/out').Path
+          $out=Join-Path $pwd 'capture-out'
+          .\native-7350160\capture-ui.ps1 -MppDir $mpp -OutDir $out
+      - name: Publish capture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-7350160-capture
+          path: |
+            capture-out/**
+            capture-project-version.txt
+          if-no-files-found: warn
