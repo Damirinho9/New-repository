@@ -187,8 +187,14 @@ jobs:
               $s=$p.ProjectSummaryTask
               $m=[ordered]@{StatusDate=[string]$p.StatusDate;Cost=Num $s.Cost;BaselineCost=Num $s.BaselineCost;Work=Num $s.Work;BaselineWork=Num $s.BaselineWork;BCWS=Num $s.BCWS;BCWP=Num $s.BCWP;ACWP=Num $s.ACWP;CV=Num $s.CV;SV=Num $s.SV;CPI=Num $s.CPI;SPI=Num $s.SPI;EAC=Num $s.EAC;VAC=Num $s.VAC;Finish=[string]$s.Finish}
               $metrics[$spec.name]=$m
-              $accept+=[pscustomobject]@{File=$spec.name;Bytes=(Get-Item $dest).Length;Tasks=$p.Tasks.Count;Resources=$p.Resources.Count;StatusDate=[string]$p.StatusDate;BaselineCost=$m.BaselineCost;SHA256=(Get-FileHash $dest -Algorithm SHA256).Hash;Pass=$true}
+              $bytes=(Get-Item $dest).Length
+              $tasks=$p.Tasks.Count
+              $resources=$p.Resources.Count
+              $statusDate=[string]$p.StatusDate
+              $baseline=[double]$m.BaselineCost
               Close-Proj $app
+              $sha=(Get-FileHash $dest -Algorithm SHA256).Hash
+              $accept+=[pscustomobject]@{File=$spec.name;Bytes=$bytes;Tasks=$tasks;Resources=$resources;StatusDate=$statusDate;BaselineCost=$baseline;SHA256=$sha;Pass=$true}
               Mark "COPY_DONE $($spec.name)"
             }
             $accept+=[pscustomobject]@{File='LR3_01_Baseline_V31.mpp';Bytes=(Get-Item $base).Length;Tasks=65;Resources=12;StatusDate='';BaselineCost=$baselineCost;SHA256=(Get-FileHash $base -Algorithm SHA256).Hash;Pass=$true}
