@@ -22,7 +22,7 @@ jobs:
         run: |
           set -euo pipefail
           blender --version
-          blender -b --factory-startup --python-expr "import bpy; bpy.context.scene.render.engine='CYCLES'; bpy.context.scene.cycles.samples=2; bpy.context.scene.render.resolution_x=128; bpy.context.scene.render.resolution_y=128; bpy.context.scene.render.resolution_percentage=100; bpy.ops.wm.save_as_mainfile(filepath='/tmp/smoke.blend')"
+          blender -b --factory-startup --python-expr "import bpy; bpy.context.scene.render.engine='CYCLES'; bpy.context.scene.cycles.samples=2; bpy.context.scene.cycles.use_denoising=False; bpy.context.scene.render.resolution_x=128; bpy.context.scene.render.resolution_y=128; bpy.context.scene.render.resolution_percentage=100; bpy.ops.wm.save_as_mainfile(filepath='/tmp/smoke.blend')"
           blender -b /tmp/smoke.blend -o /tmp/smoke_ -F PNG -f 1
           test -s /tmp/smoke_0001.png
       - name: Build editable scenes
@@ -44,8 +44,8 @@ jobs:
           def reset():
               bpy.ops.wm.read_factory_settings(use_empty=True)
               s=bpy.context.scene
-              s.render.engine='CYCLES'; s.cycles.device='CPU'; s.cycles.samples=16
-              s.cycles.use_denoising=True; s.render.resolution_x=960; s.render.resolution_y=720
+              s.render.engine='CYCLES'; s.cycles.device='CPU'; s.cycles.samples=24
+              s.cycles.use_denoising=False; s.render.resolution_x=960; s.render.resolution_y=720
               s.render.resolution_percentage=100; s.render.image_settings.file_format='PNG'
               s.render.threads_mode='FIXED'; s.render.threads=4
               s.view_settings.view_transform='AgX'
@@ -288,7 +288,7 @@ jobs:
           s.render.filepath=str(Path.cwd()/'output'/'renders'/(p.stem+'.png'))
           bpy.ops.render.render(write_still=True)
           assert Path(s.render.filepath).stat().st_size>1000
-          record['native_open_and_render']='PASS'
+          record['native_open_and_render']='PASS'; record['sha256']=__import__('hashlib').sha256(p.read_bytes()).hexdigest(); record['bytes']=p.stat().st_size
           with open('output/validation.jsonl','a') as f: f.write(json.dumps(record)+'\n')
           PY
           for f in output/projects/*.blend; do
