@@ -63,6 +63,7 @@ jobs:
           $src=(Resolve-Path '.\native-7350160\capture-ui.ps1').Path
           $bom=Join-Path $pwd 'capture-ui-bom.ps1'
           $txt=[IO.File]::ReadAllText($src,[Text.Encoding]::UTF8)
+          $txt=$txt.Replace('\nAdd-Type -AssemblyName System.Windows.Forms',[Environment]::NewLine+'Add-Type -AssemblyName System.Windows.Forms')
           [IO.File]::WriteAllText($bom,$txt,(New-Object Text.UTF8Encoding($true)))
           & $bom -MppDir $mpp -OutDir $out
       - name: Publish capture evidence
