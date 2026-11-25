@@ -1,0 +1,140 @@
+name: Blender 7343432 final scene retouch
+on:
+  push:
+    branches: [blender-7343432]
+    paths: ['.github/workflows/blender-7343432-retouch.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  retouch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Obtain validated nine native scenes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          gh run download 45572028613 --repo Damirinho9/New-repository --name Blender-7343432-native --dir output
+          test "$(find output/projects -name '*.blend' | wc -l)" -eq 9
+          test "$(find output/renders -name '*.png' | wc -l)" -eq 9
+      - name: Install known working Blender 4.0.2
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends blender
+          blender --version
+      - name: Improve final camera, terrain composition, ocean and atmospheric volume in native Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/retouch.py <<'PY'
+          import bpy, math, hashlib, json
+          from pathlib import Path
+          root=Path.cwd()/'output'
+          p=root/'projects'/'09_Landscape_Final.blend'
+          s=bpy.context.scene
+          bpy.context.preferences.filepaths.save_version=0
+          camera=s.camera
+          assert camera and camera.name=='Camera'
+          # Put lighthouse nearer the visual focus and preserve the original editable lighthouse.
+          lighthouse=bpy.data.objects.get('Lighthouse textured')
+          assert lighthouse is not None, 'Original appended lighthouse missing'
+          lighthouse.scale=(.88,.88,.88)
+          aim=bpy.data.objects.get('Camera target (Empty)')
+          assert aim is not None
+          aim.location=(2.3,2.1,2.50)
+          camera.location=(1.15,-11.65,3.2)
+          camera.data.lens=39.0
+          camera.data.clip_end=400
+          # Give the sea actual editable wave vertices, in addition to its two procedural bump layers.
+          sea=bpy.data.objects.get('Sea')
+          assert sea and sea.type=='MESH'
+          bpy.ops.object.select_all(action='DESELECT')
+          sea.select_set(True); bpy.context.view_layer.objects.active=sea
+          bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+          bpy.ops.object.mode_set(mode='EDIT')
+          bpy.ops.mesh.select_all(action='SELECT')
+          bpy.ops.mesh.subdivide(number_cuts=95, smoothness=0)
+          bpy.ops.object.mode_set(mode='OBJECT')
+          for v in sea.data.vertices:
+              x,y=v.co.x,v.co.y
+              v.co.z = .065*math.sin(1.15*x+.72*y)+.039*math.sin(2.55*x-1.02*y)+.019*math.sin(4.7*x+2.0*y)
+          sea.data.update()
+          for polygon in sea.data.polygons: polygon.use_smooth=True
+          material=sea.active_material
+          assert material and material.use_nodes
+          bs=material.node_tree.nodes.get('Principled BSDF')
+          if bs:
+              bs.inputs['Roughness'].default_value=.43
+              bs.inputs['Metallic'].default_value=.06
+          for node in material.node_tree.nodes:
+              if node.type=='VALTORGB':
+                  node.color_ramp.elements[0].color=(.006,.026,.057,1)
+                  node.color_ramp.elements[1].color=(.032,.092,.16,1)
+              if node.type=='BUMP':
+                  node.inputs['Strength'].default_value=.36
+          # Remove the volumetric foreground veil while retaining editable atmospheric fog.
+          fog=bpy.data.objects.get('Editable heterogeneous fog')
+          assert fog and fog.type=='MESH'
+          fog.location=(0,4.5,3.5)
+          fog.scale=(12,10.2,4.2)
+          vm=fog.active_material
+          assert vm and vm.use_nodes
+          for node in vm.node_tree.nodes:
+              if node.type=='MAP_RANGE':
+                  node.inputs['To Min'].default_value=.002
+                  node.inputs['To Max'].default_value=.035
+          # Darker, more overcast environment.
+          world=s.world
+          if world and world.use_nodes:
+              bg=world.node_tree.nodes.get('Background')
+              if bg: bg.inputs['Strength'].default_value=.48
+          for name,energy in [('Landscape key',1250),('Sky fill',510)]:
+              ob=bpy.data.objects.get(name)
+              if ob and ob.type=='LIGHT': ob.data.energy=energy
+          s.cycles.use_denoising=False
+          s.cycles.samples=48
+          s.render.resolution_x=960; s.render.resolution_y=720; s.render.resolution_percentage=100
+          s.render.threads_mode='FIXED'; s.render.threads=4
+          bpy.ops.file.pack_all()
+          bpy.ops.wm.save_as_mainfile(filepath=str(p))
+          s.render.filepath=str(root/'renders'/'09_Landscape_Final.png')
+          bpy.ops.render.render(write_still=True)
+          png=Path(s.render.filepath)
+          assert png.stat().st_size>15000
+          linefile=root/'validation.jsonl'
+          records=[json.loads(x) for x in linefile.read_text().splitlines()]
+          record=next(x for x in records if x['file']==p.name)
+          record.update({'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size,'native_open_and_render':'PASS','retouched':True})
+          linefile.write_text('\n'.join(json.dumps(x) for x in records)+'\n')
+          print('FINAL_RETOUCH_PASS',record, 'RENDER_BYTES',png.stat().st_size)
+          PY
+          blender -b output/projects/09_Landscape_Final.blend --python-exit-code 1 --python /tmp/retouch.py
+      - name: Verify retouched native file reopens in clean Blender process
+        shell: bash
+        run: |
+          set -euo pipefail
+          blender -b output/projects/09_Landscape_Final.blend --python-exit-code 1 --python-expr "import bpy; s=bpy.context.scene; assert s.camera and bpy.data.objects.get('Lighthouse textured') and bpy.data.objects.get('Editable heterogeneous fog'); assert len(bpy.data.objects.get('Sea').data.vertices)>5000; print('NATIVE_REOPEN_PASS')"
+          python - <<'PY'
+          import json, pathlib, hashlib
+          from PIL import Image
+          root=pathlib.Path('output')
+          rows=[json.loads(x) for x in (root/'validation.jsonl').read_text().splitlines()]
+          assert len(rows)==9
+          for r in rows:
+              p=root/'projects'/r['file']; assert hashlib.sha256(p.read_bytes()).hexdigest()==r['sha256']
+              png=root/'renders'/(p.stem+'.png'); im=Image.open(png); im.verify()
+          print('ALL_NINE_HASHES_AND_RENDER_IMAGES_VERIFIED')
+          PY
+      - name: Upload refined nine-scene project package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blender-7343432-native-refined
+          path: output/
+          if-no-files-found: warn
+          retention-days: 30
