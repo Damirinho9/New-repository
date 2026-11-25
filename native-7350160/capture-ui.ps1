@@ -35,9 +35,9 @@ function Get-ProjectHwnd {
   [NativeWin32]::EnumWindows({
     param($h,$l)
     if(-not [NativeWin32]::IsWindowVisible($h)){return $true}
-    [uint32]$pid=0
-    [void][NativeWin32]::GetWindowThreadProcessId($h,[ref]$pid)
-    if($procs.Id -contains [int]$pid){
+    [uint32]$procId=0
+    [void][NativeWin32]::GetWindowThreadProcessId($h,[ref]$procId)
+    if($procs.Id -contains [int]$procId){
       $r=New-Object NativeWin32+RECT
       if([NativeWin32]::GetWindowRect($h,[ref]$r)){
         $w=$r.Right-$r.Left;$hh=$r.Bottom-$r.Top;$area=$w*$hh
