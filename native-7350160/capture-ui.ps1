@@ -30,10 +30,28 @@ public static class NativeWin32 {
 function Mark([string]$m){$line="$(Get-Date -Format o) $m";Write-Host $line;Add-Content -Encoding UTF8 (Join-Path $OutDir 'capture-progress.txt') $line}
 function Close-Proj($app){try{if($app.Projects.Count -gt 0){$app.FileCloseEx(0)|Out-Null}}catch{}}
 function Get-ProjectHwnd {
-  $procs=@(Get-Process WINPROJ -ErrorAction SilentlyContinue);foreach($p in $procs){if($p.MainWindowHandle -ne 0){return [IntPtr]$p.MainWindowHandle}}
-  $script:foundHwnd=$null
-  [NativeWin32]::EnumWindows({param($h,$l);if(-not [NativeWin32]::IsWindowVisible($h)){return $true};[uint32]$pid=0;[void][NativeWin32]::GetWindowThreadProcessId($h,[ref]$pid);if($procs.Id -contains [int]$pid){$len=[NativeWin32]::GetWindowTextLength($h);if($len -gt 0){$sb=New-Object Text.StringBuilder ($len+1);[void][NativeWin32]::GetWindowText($h,$sb,$sb.Capacity);if($sb.ToString().Trim().Length -gt 0){$script:foundHwnd=$h;return $false}}};return $true},[IntPtr]::Zero)|Out-Null
-  if($script:foundHwnd){return [IntPtr]$script:foundHwnd};return [IntPtr]::Zero
+  $procs=@(Get-Process WINPROJ -ErrorAction SilentlyContinue)
+  $script:windowCandidates=@()
+  [NativeWin32]::EnumWindows({
+    param($h,$l)
+    if(-not [NativeWin32]::IsWindowVisible($h)){return $true}
+    [uint32]$pid=0
+    [void][NativeWin32]::GetWindowThreadProcessId($h,[ref]$pid)
+    if($procs.Id -contains [int]$pid){
+      $r=New-Object NativeWin32+RECT
+      if([NativeWin32]::GetWindowRect($h,[ref]$r)){
+        $w=$r.Right-$r.Left;$hh=$r.Bottom-$r.Top;$area=$w*$hh
+        $len=[NativeWin32]::GetWindowTextLength($h)
+        $title=''
+        if($len -gt 0){$sb=New-Object Text.StringBuilder ($len+1);[void][NativeWin32]::GetWindowText($h,$sb,$sb.Capacity);$title=$sb.ToString()}
+        $script:windowCandidates += [pscustomobject]@{Hwnd=$h;Area=$area;Width=$w;Height=$hh;Title=$title}
+      }
+    }
+    return $true
+  },[IntPtr]::Zero)|Out-Null
+  $best=@($script:windowCandidates|Where-Object{$_.Area -gt 0}|Sort-Object Area -Descending|Select-Object -First 1)
+  if($best.Count -gt 0){Mark ("HWND "+$best[0].Width+"x"+$best[0].Height+" "+$best[0].Title);return [IntPtr]$best[0].Hwnd}
+  return [IntPtr]::Zero
 }
 function Get-ImageQuality([string]$path){
   if(!(Test-Path $path)){return [pscustomobject]@{Pass=$false;Width=0;Height=0;Range=0;Std=0;Sampled=0}}
