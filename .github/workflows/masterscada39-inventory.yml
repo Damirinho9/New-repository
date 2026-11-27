@@ -1,0 +1,42 @@
+name: MasterSCADA 3.9 package inventory 7341100
+on:
+  push:
+    branches: [tmp-masterscada-7341100]
+jobs:
+  inventory39:
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - name: Download extract inventory
+        shell: pwsh
+        run: |
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.9"
+          curl.exe -k -L --fail "$base/version.txt" -o version39.txt
+          curl.exe -k -L --fail "$base/setup.exe" -o setup39.exe
+          New-Item -Type Directory extracted39 -Force | Out-Null
+          7z.exe x setup39.exe -oextracted39 -y *> extract.log
+          Get-ChildItem extracted39 -Recurse -File | Select FullName,Length | Sort FullName | ConvertTo-Csv -NoTypeInformation | Out-File files.csv
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $out=@()
+          foreach($m in Get-ChildItem extracted39 -Recurse -File -Filter *.msi){
+            try {
+              $db=$installer.OpenDatabase($m.FullName,0)
+              $q=$db.OpenView("SELECT Property, Value FROM Property WHERE Property IN ('ProductName','ProductVersion','Manufacturer','ProductCode','UpgradeCode','ALLUSERS','INSTALLLEVEL')")
+              $q.Execute()
+              $props=@{}
+              while($r=$q.Fetch()){ $props[$r.StringData(1)]=$r.StringData(2) }
+              $out += [pscustomobject]@{Path=$m.FullName;Length=$m.Length;ProductName=$props.ProductName;ProductVersion=$props.ProductVersion;Manufacturer=$props.Manufacturer;ProductCode=$props.ProductCode;UpgradeCode=$props.UpgradeCode;AllUsers=$props.ALLUSERS;InstallLevel=$props.INSTALLLEVEL}
+            } catch { $out += [pscustomobject]@{Path=$m.FullName;Length=$m.Length;ProductName="ERROR $($_.Exception.Message)"} }
+          }
+          $out | ConvertTo-Json -Depth 4 | Out-File msi_inventory.json
+          $out | Format-Table -AutoSize | Out-File msi_inventory.txt -Width 500
+          Get-Content version39.txt | Out-File version39_out.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masterscada39-package-inventory
+          path: |
+            version39_out.txt
+            files.csv
+            msi_inventory.json
+            msi_inventory.txt
+            extract.log
