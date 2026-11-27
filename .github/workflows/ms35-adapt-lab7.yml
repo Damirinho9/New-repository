@@ -1,0 +1,145 @@
+name: MasterSCADA 3.5 adapted Lab7 native
+on:
+  push:
+    branches: [tmp-ms35-adapt]
+jobs:
+  adapt:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Install MasterSCADA
+        shell: pwsh
+        run: |
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
+          curl.exe -k -L --fail "$b/data.msi" -o data.msi
+          curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
+          $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "MSI failed"}
+          python -m pip install --disable-pip-version-check pywinauto pillow pyautogui
+      - name: Adapt official tank demo
+        shell: pwsh
+        run: |
+          $src="C:\MasterSCADA Projects\Projects\Tutorials\Demo_Бак"
+          $dst="C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7"
+          if(Test-Path $dst){Remove-Item $dst -Recurse -Force}
+          Copy-Item -LiteralPath $src -Destination $dst -Recurse
+          $vav=Get-ChildItem $dst -Filter *.vav | Select-Object -First 1
+          Rename-Item -LiteralPath $vav.FullName -NewName "7341100_MasterSCADA_Lab7.vav"
+          @'
+          from pathlib import Path
+          root=Path(r"C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7")
+          vav=root/"7341100_MasterSCADA_Lab7.vav"
+          data=vav.read_bytes()
+          changes=[]
+          def rep_u16(old,new,expected_min=1):
+              global data
+              assert len(old)==len(new),(old,new,len(old),len(new))
+              a=old.encode("utf-16le"); b=new.encode("utf-16le")
+              n=data.count(a)
+              if n<expected_min: raise RuntimeError(f"missing {old!r}: {n}")
+              data=data.replace(a,b)
+              changes.append((old,new,n))
+          # project identity / display terms
+          rep_u16("Demo_Бак","Lab7_Bak")
+          rep_u16("Переполнен","Выше нормы")
+          rep_u16("Пуст","Ниже")
+          rep_u16("График Уровня","График уровня")
+          # physical model: +1 constant inflow per cycle; regular and high-level drains overcome inflow
+          old="Уровень + ( Залив <> 0 ) - ( Слив <> 0 ) + Шум - ( ( Аварийный_Слив <> 0 ) * 2 )"
+          expr="Уровень + 1 - ( ( Слив <> 0 ) * 3 ) - ( ( Аварийный_Слив <> 0 ) * 3 )"
+          new=expr+" "*(len(old)-len(expr))
+          rep_u16(old,new)
+          # same boundary for high-level state and safety drain trigger
+          rep_u16("100 <= Уровень","Уровень >= 95 ")
+          vav.write_bytes(data)
+          # Update text shown on tank mnemonic. These labels live as UTF-16LE hex in XML ItemData.
+          for mgs in root.rglob("mrt.mgs"):
+              txt=mgs.read_text(encoding="utf-8")
+              orig=txt
+              replacements=[
+                ("переполнен","ВЫШЕ НОРМЫ"),
+                ("скоро будет пуст","НИЖЕ НОРМЫ      "),
+                ("норма","НОРМА"),
+              ]
+              for old,new in replacements:
+                  assert len(old)==len(new)
+                  txt=txt.replace(old.encode("utf-16le").hex(),new.encode("utf-16le").hex())
+              if txt!=orig:
+                  mgs.write_text(txt,encoding="utf-8")
+                  changes.append((str(mgs),"mnemonic-labels",1))
+          Path("adapt_changes.txt").write_text("\n".join(map(str,changes)),encoding="utf-8")
+          '@ | Set-Content adapt.py -Encoding UTF8
+          python adapt.py
+          Get-ChildItem $dst -Recurse -File | Select FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-File adapted_files.txt -Width 600
+      - name: Native open save and run
+        shell: pwsh
+        run: |
+          @'
+          from pywinauto import Application, Desktop, keyboard
+          from pathlib import Path
+          import time, traceback, pyautogui
+          log=[]
+          exe=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          proj=r"C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7\7341100_MasterSCADA_Lab7.vav"
+          try:
+              app=Application(backend="win32").start(f'"{exe}" "{proj}"')
+              time.sleep(12)
+              for w in Desktop(backend="win32").windows():
+                  try:
+                      if w.class_name()=="#32770" and w.window_text()=="MasterSCADA":
+                          log.append("MODAL "+repr([(c.class_name(),c.window_text()) for c in w.children()]))
+                          for c in w.children():
+                              if c.class_name()=="Button" and c.window_text()=="OK":
+                                  c.click()
+                                  log.append("CLICKED OK")
+                                  break
+                  except Exception as e:log.append("MODALERR "+repr(e))
+              time.sleep(30)
+              pyautogui.screenshot("adapted_editor.png")
+              keyboard.send_keys("^s")
+              time.sleep(6)
+              keyboard.send_keys("{F5}")
+              time.sleep(12)
+              # acknowledge runtime modal if any
+              for w in Desktop(backend="win32").windows():
+                  try:
+                      if w.class_name()=="#32770":
+                          log.append("POSTF5 MODAL "+repr([(c.class_name(),c.window_text()) for c in w.children()]))
+                          for c in w.children():
+                              if c.class_name()=="Button" and c.window_text() in ("OK","Да","Yes"):
+                                  c.click(); log.append("POSTF5 CLICK "+c.window_text()); break
+                  except Exception as e:log.append("POSTF5ERR "+repr(e))
+              time.sleep(15)
+              pyautogui.screenshot("runtime_t0.png")
+              time.sleep(15)
+              pyautogui.screenshot("runtime_t15.png")
+              for w in Desktop(backend="win32").windows():
+                  try:
+                      t=w.window_text()
+                      if t: log.append(f"TOP {w.handle} {w.class_name()} {t!r}")
+                      if "Master" in t or "Lab7" in t or "Bak" in t:
+                          try:w.capture_as_image().save("win_"+str(w.handle)+".png")
+                          except:pass
+                  except:pass
+          except Exception:
+              log.append(traceback.format_exc())
+          Path("native_run_log.txt").write_text("\n".join(log),encoding="utf-8")
+          '@ | Set-Content run_native.py -Encoding UTF8
+          python run_native.py
+          Get-CimInstance Win32_Process | Where-Object {$_.Name -match 'MasterSCADA|MasterRT|RT'} | Select ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | Format-List | Out-File native_processes.txt
+          Compress-Archive -Path "C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7\*" -DestinationPath 7341100_MasterSCADA_Lab7_NATIVE.zip -Force
+          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA|MasterRT'} | Stop-Process -Force -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 7341100-MasterSCADA-Lab7-native
+          path: |
+            adapt_changes.txt
+            adapted_files.txt
+            adapted_editor.png
+            runtime_t0.png
+            runtime_t15.png
+            win_*.png
+            native_run_log.txt
+            native_processes.txt
+            7341100_MasterSCADA_Lab7_NATIVE.zip
+          if-no-files-found: warn
