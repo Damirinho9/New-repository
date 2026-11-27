@@ -49,7 +49,7 @@ jobs:
       - name: Add native values and probe runtime controls
         shell: pwsh
         run: |
-          python -m pip install --disable-pip-version-check pywinauto pillow psutil
+          python -m pip install --disable-pip-version-check pywinauto pillow psutil pyautogui
           @'
           from pathlib import Path
           from pywinauto import Desktop, Application
@@ -88,67 +88,49 @@ jobs:
               if not ds: raise RuntimeError("MasterSCADA project dialog missing")
               d=ds[0]
               log.append("PROJECT_DIALOG="+repr(d.window_text()))
-              # Select the "Existing" tab. Tabs are New, Previous, Existing, Samples.
-              tab_controls=[c for c in d.children() if c.class_name()=="SysTabControl32"]
-              if not tab_controls:
-                  tab_controls=[c for c in d.descendants() if c.class_name()=="SysTabControl32"]
-              if not tab_controls: raise RuntimeError("Project dialog tab control missing")
-              tab=tab_controls[0]
-              try:
-                  log.append("TAB_RECT="+str(tab.rectangle()))
-                  log.append("TAB_TEXTS="+repr([demoji(x) for x in tab.texts()]))
-              except Exception as e:
-                  log.append("TAB_TEXTS_ERR="+repr(e))
-              # This legacy MFC tab is not reliably exposed by pywinauto's TabControlWrapper.
-              # Keyboard navigation is native and robust: New -> Previous -> Existing.
-              d.set_focus();d.type_keys("^{TAB}");time.sleep(.5);d.type_keys("^{TAB}");time.sleep(2)
-              # Try selecting the project from the default-folder list.
-              selected=False
-              list_controls=[c for c in d.descendants() if c.class_name() in ("SysListView32","ListBox")]
-              for lc in list_controls:
-                  try:
-                      texts=[]
-                      if hasattr(lc,"texts"): texts=lc.texts()
-                      log.append("PROJECT_LIST="+repr([demoji(x) for x in texts]))
-                      if hasattr(lc,"get_item"):
-                          try:
-                              it=lc.get_item("7341100_MasterSCADA_Lab7")
-                              it.select(); selected=True; break
-                          except: pass
-                      # Fallback: click matching child/list item by text.
-                      for ch in lc.children():
-                          try:
-                              if "7341100_MasterSCADA_Lab7" in ch.window_text():
-                                  ch.click_input(); selected=True; break
-                          except: pass
-                      if selected: break
-                  except Exception as e:
-                      log.append("LIST_ERR="+repr(e))
-              # Find buttons and prefer Open if project selected; otherwise Browse.
+              # Select the "Existing" tab. Legacy MFC recreates child handles,
+              # so use a native mouse click relative to the current dialog rectangle.
+              import pyautogui
+              rr=d.rectangle()
+              log.append("PROJECT_DIALOG_RECT="+str(rr))
+              try: pyautogui.screenshot("00_project_dialog_new.png")
+              except: pass
+              # Header layout is New | Previous | Existing | Samples.
+              pyautogui.click(rr.left+200, rr.top+48)
+              time.sleep(2)
+              # Re-acquire the dialog because the old MFC child handles may be destroyed.
+              ds=dialogs(pid)
+              if not ds: raise RuntimeError("Project dialog vanished after Existing-tab click")
+              d=ds[0]
+              try: pyautogui.screenshot("00_project_dialog_existing.png")
+              except: pass
               buttons=[c for c in d.descendants() if c.class_name()=="Button" and c.is_visible()]
               btn_info=[(demoji(b.window_text()).strip(),str(b.rectangle()),b.is_enabled()) for b in buttons]
-              log.append("PROJECT_BUTTONS="+repr(btn_info))
-              if selected:
-                  target=None
+              log.append("EXISTING_BUTTONS="+repr(btn_info))
+              browse=None
+              for b in buttons:
+                  try:
+                      if demoji(b.window_text()).strip()=="Обзор" and b.is_enabled():
+                          browse=b;break
+                  except: pass
+              if browse is None:
+                  # Fallback: the Browse button is the non-primary button to the right/bottom
+                  # whose decoded label is not Open/Delete/Cancel.
                   for b in buttons:
-                      if demoji(b.window_text()).strip()=="Открыть" and b.is_enabled(): target=b;break
-                  if target is None:
-                      # Usually first enabled primary button after choosing project.
-                      enabled=[b for b in buttons if b.is_enabled() and demoji(b.window_text()).strip() not in ("Отмена","Удалить","Обзор")]
-                      if enabled: target=enabled[0]
-                  if target:
-                      target.click_input()
-                  else:
-                      d.type_keys("{ENTER}")
-              else:
-                  browse=None
-                  for b in buttons:
-                      if demoji(b.window_text()).strip()=="Обзор" and b.is_enabled(): browse=b;break
-                  if browse is None: raise RuntimeError("Existing project not listed and Browse button missing")
-                  browse.click_input();time.sleep(2)
-                  fds=dialogs(pid)
-                  fd=fds[-1]
-                  fd.set_focus();fd.type_keys("%n");time.sleep(.3);fd.type_keys(VAV,with_spaces=True);fd.type_keys("{ENTER}")
+                      try:
+                          lab=demoji(b.window_text()).strip()
+                          if b.is_enabled() and lab not in ("Открыть","Удалить","Отмена","OK",""):
+                              browse=b;break
+                      except: pass
+              if browse is None: raise RuntimeError("Browse button missing on Existing tab")
+              browse.click_input();time.sleep(2)
+              fds=dialogs(pid)
+              if not fds: raise RuntimeError("Common file dialog missing after Browse")
+              fd=fds[-1]
+              try: pyautogui.screenshot("00_file_dialog.png")
+              except: pass
+              # Common Windows file dialog: Alt+N focuses File name.
+              fd.type_keys("%n");time.sleep(.3);fd.type_keys(VAV,with_spaces=True);time.sleep(.3);fd.type_keys("{ENTER}")
               # Wait through optional project access dialog and complete editor load.
               deadline=time.time()+45;last_title="";handled=set()
               while time.time()<deadline:
