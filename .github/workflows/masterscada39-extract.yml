@@ -1,0 +1,61 @@
+name: MasterSCADA 3.9 extract probe 7341100
+on:
+  push:
+    branches: [tmp-masterscada-7341100]
+jobs:
+  probe39:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Download old 3.9 demo
+        shell: pwsh
+        run: |
+          $base="https://download.mps-soft.ru/demo/Old%20Demo/3.9"
+          curl.exe -k -L --fail "$base/version.txt" -o version39.txt
+          curl.exe -k -L --fail "$base/setup.exe" -o setup39.exe
+          Get-Content version39.txt | Tee-Object version39_out.txt
+          Get-FileHash -Algorithm SHA256 setup39.exe | Format-List | Out-File setup39_sha256.txt
+          (Get-Item setup39.exe).VersionInfo | Format-List * | Out-File setup39_versioninfo.txt
+      - name: Extract package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory extracted39 -Force | Out-Null
+          7z.exe l setup39.exe *> setup39_7z_list.txt
+          7z.exe x setup39.exe -oextracted39 -y *> setup39_7z_extract.txt
+          Get-ChildItem extracted39 -Recurse -File | Select-Object FullName,Length | Sort-Object FullName | Format-Table -AutoSize | Out-File extracted39_files.txt -Width 400
+          Get-ChildItem extracted39 -Recurse -File -Include *.msi,*.exe,*.cab | Select-Object FullName,Length | Format-Table -AutoSize | Out-File extracted39_installers.txt -Width 400
+          exit 0
+      - name: Try MSI install if present
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Continue"
+          $msis=Get-ChildItem extracted39 -Recurse -File -Filter *.msi
+          foreach($m in $msis){
+            "INSTALL $($m.FullName)" | Out-File -Append msi_install_log.txt
+            $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + $m.FullName + '"'),'/qn','REBOOT=ReallySuppress','/L*V',('"' + (Join-Path $PWD ("msi_"+$m.BaseName+".log")) + '"')) -PassThru -Wait
+            "EXIT=$($p.ExitCode)" | Out-File -Append msi_install_log.txt
+          }
+          Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {$_.Name -match 'MasterSCADA|Master.*SCADA'} |
+            Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-File masterscada39_exes.txt -Width 400
+          Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+            Get-ItemProperty -ErrorAction SilentlyContinue |
+            Where-Object {$_.DisplayName -match 'MasterSCADA|Master SCADA'} |
+            Select-Object DisplayName,DisplayVersion,InstallLocation,UninstallString | Format-List | Out-File masterscada39_registry.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masterscada39-extract-probe
+          path: |
+            version39_out.txt
+            setup39_sha256.txt
+            setup39_versioninfo.txt
+            setup39_7z_list.txt
+            setup39_7z_extract.txt
+            extracted39_files.txt
+            extracted39_installers.txt
+            msi_install_log.txt
+            msi_*.log
+            masterscada39_exes.txt
+            masterscada39_registry.txt
+          if-no-files-found: warn
