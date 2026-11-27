@@ -31,7 +31,7 @@ jobs:
           out=[]
           try:
               app=Application(backend="uia").start(r".\MasterSCADASetup.exe")
-              time.sleep(8)
+              time.sleep(55)
               wins=Desktop(backend="uia").windows()
               for w in wins:
                   try:
@@ -54,7 +54,8 @@ jobs:
           Path("installer_controls.txt").write_text("\n".join(out),encoding="utf-8")
           '@ | Set-Content probe.py -Encoding UTF8
           python probe.py
-          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA|setup|install'} | Select ProcessName,Id,MainWindowTitle,MainWindowHandle,Path | Format-List | Out-File processes.txt
+          Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | Sort-Object ParentProcessId,ProcessId | Format-Table -AutoSize | Out-File processes.txt -Width 500
+          Get-Process | Select-Object ProcessName,Id,MainWindowTitle,MainWindowHandle,Path | Sort-Object ProcessName | Format-Table -AutoSize | Out-File process_windows.txt -Width 500
           Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA|setup|install'} | Stop-Process -Force -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v4
         with:
@@ -63,6 +64,7 @@ jobs:
             verify.txt
             installer_controls.txt
             processes.txt
+            process_windows.txt
             installer_ui.png
             desktop_ui.png
           if-no-files-found: warn
