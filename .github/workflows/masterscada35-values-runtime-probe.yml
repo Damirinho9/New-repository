@@ -82,30 +82,87 @@ jobs:
               app=Application(backend="win32").start(EXE);pid=app.process;time.sleep(8)
               m=mainwin(pid)
               ds=dialogs(pid)
-              if ds:
-                  ds[0].type_keys("{ESC}");time.sleep(1)
-              m=mainwin(pid);m.set_focus();m.type_keys("^o");time.sleep(2)
-              ds=dialogs(pid)
-              if not ds:raise RuntimeError("open dialog missing")
-              d=ds[0];d.set_focus();d.type_keys("%n");time.sleep(.5);d.type_keys(VAV,with_spaces=True);d.type_keys("{ENTER}")
-              # Wait for project load. MasterSCADA may keep the bare title for several seconds.
-              deadline=time.time()+35
-              followup_handled=False
-              last_title=""
+              # Official MasterSCADA 3 workflow: startup dialog -> Existing project tab.
+              if not ds:
+                  m.set_focus();m.type_keys("^o");time.sleep(2);ds=dialogs(pid)
+              if not ds: raise RuntimeError("MasterSCADA project dialog missing")
+              d=ds[0]
+              log.append("PROJECT_DIALOG="+repr(d.window_text()))
+              # Select the "Existing" tab. Tabs are New, Previous, Existing, Samples.
+              tab_controls=[c for c in d.children() if c.class_name()=="SysTabControl32"]
+              if not tab_controls:
+                  tab_controls=[c for c in d.descendants() if c.class_name()=="SysTabControl32"]
+              if not tab_controls: raise RuntimeError("Project dialog tab control missing")
+              tab=tab_controls[0]
+              try:
+                  log.append("TAB_TEXTS="+repr([demoji(x) for x in tab.texts()]))
+              except Exception as e:
+                  log.append("TAB_TEXTS_ERR="+repr(e))
+              tab.select(2);time.sleep(2)
+              # Try selecting the project from the default-folder list.
+              selected=False
+              list_controls=[c for c in d.descendants() if c.class_name() in ("SysListView32","ListBox")]
+              for lc in list_controls:
+                  try:
+                      texts=[]
+                      if hasattr(lc,"texts"): texts=lc.texts()
+                      log.append("PROJECT_LIST="+repr([demoji(x) for x in texts]))
+                      if hasattr(lc,"get_item"):
+                          try:
+                              it=lc.get_item("7341100_MasterSCADA_Lab7")
+                              it.select(); selected=True; break
+                          except: pass
+                      # Fallback: click matching child/list item by text.
+                      for ch in lc.children():
+                          try:
+                              if "7341100_MasterSCADA_Lab7" in ch.window_text():
+                                  ch.click_input(); selected=True; break
+                          except: pass
+                      if selected: break
+                  except Exception as e:
+                      log.append("LIST_ERR="+repr(e))
+              # Find buttons and prefer Open if project selected; otherwise Browse.
+              buttons=[c for c in d.descendants() if c.class_name()=="Button" and c.is_visible()]
+              btn_info=[(demoji(b.window_text()).strip(),str(b.rectangle()),b.is_enabled()) for b in buttons]
+              log.append("PROJECT_BUTTONS="+repr(btn_info))
+              if selected:
+                  target=None
+                  for b in buttons:
+                      if demoji(b.window_text()).strip()=="Открыть" and b.is_enabled(): target=b;break
+                  if target is None:
+                      # Usually first enabled primary button after choosing project.
+                      enabled=[b for b in buttons if b.is_enabled() and demoji(b.window_text()).strip() not in ("Отмена","Удалить","Обзор")]
+                      if enabled: target=enabled[0]
+                  if target:
+                      target.click_input()
+                  else:
+                      d.type_keys("{ENTER}")
+              else:
+                  browse=None
+                  for b in buttons:
+                      if demoji(b.window_text()).strip()=="Обзор" and b.is_enabled(): browse=b;break
+                  if browse is None: raise RuntimeError("Existing project not listed and Browse button missing")
+                  browse.click_input();time.sleep(2)
+                  fds=dialogs(pid)
+                  fd=fds[-1]
+                  fd.set_focus();fd.type_keys("%n");time.sleep(.3);fd.type_keys(VAV,with_spaces=True);fd.type_keys("{ENTER}")
+              # Wait through optional project access dialog and complete editor load.
+              deadline=time.time()+45;last_title="";handled=set()
               while time.time()<deadline:
                   time.sleep(1)
-                  ds=dialogs(pid)
-                  if ds and not followup_handled:
-                      try: ds[0].type_keys("{ENTER}")
+                  for dd in dialogs(pid):
+                      try:
+                          h=dd.handle
+                          if h in handled: continue
+                          # Access dialog defaults are intentionally blank for this project.
+                          dd.type_keys("{ENTER}");handled.add(h);time.sleep(.8)
                       except: pass
-                      followup_handled=True
-                      time.sleep(1)
                   try:
-                      m=mainwin(pid); last_title=m.window_text()
+                      m=mainwin(pid);last_title=m.window_text()
                       if "7341100_MasterSCADA_Lab7" in last_title:
                           return pid,m
                   except: pass
-              raise RuntimeError("project title mismatch after wait "+last_title)
+              raise RuntimeError("project title mismatch after Existing-tab open "+last_title)
           def uiamain(m):return Desktop(backend="uia").window(handle=m.handle)
           def trees(m):
               return uiamain(m).descendants(control_type="TreeItem")
