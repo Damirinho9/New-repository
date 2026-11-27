@@ -114,14 +114,18 @@ jobs:
                           browse=b;break
                   except: pass
               if browse is None:
-                  # Fallback: the Browse button is the non-primary button to the right/bottom
-                  # whose decoded label is not Open/Delete/Cancel.
+                  # Russian labels are mojibake on the GitHub image. On the Existing tab,
+                  # the right-side buttons are vertically ordered Browse, Delete, Cancel.
+                  # Pick the topmost enabled non-OK button by geometry.
+                  candidates=[]
                   for b in buttons:
                       try:
                           lab=demoji(b.window_text()).strip()
-                          if b.is_enabled() and lab not in ("Открыть","Удалить","Отмена","OK",""):
-                              browse=b;break
+                          if b.is_enabled() and lab!="OK":
+                              candidates.append(b)
                       except: pass
+                  if candidates:
+                      browse=min(candidates,key=lambda x:x.rectangle().top)
               if browse is None: raise RuntimeError("Browse button missing on Existing tab")
               browse.click_input();time.sleep(2)
               fds=dialogs(pid)
@@ -300,6 +304,9 @@ jobs:
             uia_calc_open.json
             uia_reopened_values.json
             probe_log.txt
+            00_project_dialog_new.png
+            00_project_dialog_existing.png
+            00_file_dialog.png
             01_restored.png
             02_values_added.png
             03_calc_probe.png
