@@ -1,0 +1,74 @@
+name: MasterSCADA 3.5 blank project confirmed
+on:
+  push:
+    branches: [tmp-ms35-project]
+jobs:
+  create_blank:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Install
+        shell: pwsh
+        run: |
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
+          curl.exe -k -L --fail "$b/data.msi" -o data.msi
+          curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
+          $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "MSI failed"}
+          python -m pip install --disable-pip-version-check pywinauto pillow pyautogui
+      - name: Create native project
+        shell: pwsh
+        run: |
+          @'
+          from pywinauto import Application, Desktop, keyboard
+          from pathlib import Path
+          import time, traceback, pyautogui
+          log=[]
+          exe=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          try:
+              app=Application(backend="win32").start(exe)
+              time.sleep(12)
+              keyboard.send_keys("7341100_Lab7", with_spaces=True)
+              keyboard.send_keys("{ENTER}")
+              time.sleep(5)
+              pyautogui.screenshot("access_dialog.png")
+              # Project access dialog - blank fields are allowed for an unprotected educational project.
+              keyboard.send_keys("{ENTER}")
+              time.sleep(25)
+              pyautogui.screenshot("created_project.png")
+              keyboard.send_keys("^s")
+              time.sleep(8)
+              pyautogui.screenshot("saved_project.png")
+              for w in Desktop(backend="win32").windows():
+                  try:
+                      t=w.window_text()
+                      if t: log.append(f"{w.handle} {w.class_name()} {t!r}")
+                  except: pass
+          except Exception:
+              log.append(traceback.format_exc())
+          Path("create_log.txt").write_text("\n".join(log),encoding="utf-8")
+          '@ | Set-Content create_blank.py -Encoding UTF8
+          python create_blank.py
+          $pdir="C:\MasterSCADA Projects\Projects\7341100_Lab7"
+          if(Test-Path $pdir){
+            Get-ChildItem $pdir -Recurse -Force | Select FullName,Length,LastWriteTime,PSIsContainer | Format-Table -AutoSize | Out-File native_files.txt -Width 600
+            Compress-Archive -Path ($pdir+"\*") -DestinationPath 7341100_Lab7_blank_native.zip -Force
+            "FOUND" | Out-File native_status.txt
+          } else {
+            "NOT FOUND" | Out-File native_status.txt
+            Get-ChildItem "C:\MasterSCADA Projects\Projects" -Directory | Select FullName,LastWriteTime | Sort LastWriteTime -Descending | Format-Table -AutoSize | Out-File project_dirs.txt
+          }
+          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA'} | Stop-Process -Force -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ms35-blank-project-confirmed
+          path: |
+            access_dialog.png
+            created_project.png
+            saved_project.png
+            create_log.txt
+            native_status.txt
+            native_files.txt
+            project_dirs.txt
+            7341100_Lab7_blank_native.zip
+          if-no-files-found: warn
