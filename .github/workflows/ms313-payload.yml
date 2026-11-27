@@ -1,0 +1,48 @@
+name: MasterSCADA 3.13 payload extraction
+on:
+  push:
+    branches: [tmp-ms313-extract]
+jobs:
+  extract:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Download verified installer
+        shell: pwsh
+        run: |
+          $b="https://download.mps-soft.ru/demo/MasterSCADA_3.X_Free/MasterSCADA_Demo"
+          curl.exe -k -L --fail "$b/checksum.md5" -o checksum.md5
+          curl.exe -k -L --fail "$b/MasterSCADASetup.exe" -o setup.exe
+          $expected=((Get-Content checksum.md5)-split ' ')[0].Trim().ToUpper()
+          $actual=(Get-FileHash setup.exe -Algorithm MD5).Hash.ToUpper()
+          if($expected -ne $actual){throw "hash mismatch"}
+          "hash=$actual" | Out-File verify.txt
+      - name: Extract outer PE and inspect payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory outer -Force | Out-Null
+          7z.exe x setup.exe -oouter -y *> outer_extract.txt
+          Get-ChildItem outer -Recurse -File | Select-Object FullName,Length | Format-Table -AutoSize | Out-File outer_files.txt -Width 500
+          $payload=Get-ChildItem outer -File | Sort-Object Length -Descending | Select-Object -First 1
+          "PAYLOAD=$($payload.FullName) SIZE=$($payload.Length)" | Out-File payload_info.txt
+          Format-Hex -Path $payload.FullName -Count 512 | Out-File payload_head.txt
+          cmd /c "7z.exe l \"$($payload.FullName)\"" > payload_7z_list.txt 2>&1
+          New-Item -ItemType Directory payload -Force | Out-Null
+          cmd /c "7z.exe x \"$($payload.FullName)\" -opayload -y" > payload_7z_extract.txt 2>&1
+          Get-ChildItem payload -Recurse -File -ErrorAction SilentlyContinue | Select-Object FullName,Length | Sort-Object FullName | Format-Table -AutoSize | Out-File payload_files.txt -Width 600
+          Get-ChildItem payload -Recurse -File -Include *.msi,*.cab,*.exe,*.dll -ErrorAction SilentlyContinue | Select FullName,Length | Format-Table -AutoSize | Out-File payload_installers.txt -Width 600
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ms313-payload-inspection
+          path: |
+            verify.txt
+            outer_extract.txt
+            outer_files.txt
+            payload_info.txt
+            payload_head.txt
+            payload_7z_list.txt
+            payload_7z_extract.txt
+            payload_files.txt
+            payload_installers.txt
+          if-no-files-found: warn
