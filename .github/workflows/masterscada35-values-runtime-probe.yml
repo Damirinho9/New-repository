@@ -35,7 +35,7 @@ jobs:
             Accept="application/vnd.github+json"
             "X-GitHub-Api-Version"="2022-11-28"
           }
-          Invoke-WebRequest -Headers $headers -Uri "https://api.github.com/repos/Damirinho9/New-repository/actions/artifacts/15220312813/zip" -OutFile previous.zip
+          Invoke-WebRequest -Headers $headers -Uri "https://api.github.com/repos/Damirinho9/New-repository/actions/artifacts/15227142597/zip" -OutFile previous.zip
           Expand-Archive previous.zip -DestinationPath previous -Force
           $vav=Get-ChildItem previous -Recurse -Filter "7341100_MasterSCADA_Lab7.vav" | Select-Object -First 1
           if(!$vav){ throw "Previous VAV missing" }
@@ -227,12 +227,19 @@ jobs:
                   time.sleep(1.5)
                   obj=find_item(m,"Объект 1")
               if obj is None:raise RuntimeError("Object 1 missing after expanding root")
+              try: obj.expand()
+              except:
+                  try: obj.double_click_input()
+                  except: pass
+              time.sleep(1)
               existing=[demoji(x.window_text()).strip() for x in trees(m)]
               log.append("TREE_BEFORE="+repr(existing))
               for idx,name in enumerate(NAMES,1):
+                  if name in existing:
+                      log.append("ALREADY_EXISTS="+name)
+                      continue
                   obj=find_item(m,"Объект 1") or obj
                   obj.click_input();top_add(m,"Значение");time.sleep(.7)
-                  # Find newest default value entry.
                   candidates=[]
                   for it in trees(m):
                       try:
@@ -243,6 +250,7 @@ jobs:
                   target=candidates[-1]
                   rename_item(m,target,name)
                   log.append("RENAMED_TO="+name)
+                  existing=[demoji(x.window_text()).strip() for x in trees(m)]
               m.set_focus();m.type_keys("^s");time.sleep(4)
               rows=dump(m,"uia_values.json")
               names_after=[demoji(x.window_text()).strip() for x in trees(m)]
@@ -254,10 +262,27 @@ jobs:
               Path("mode_menu.json").write_text(json.dumps(mode,ensure_ascii=False,indent=2),encoding="utf-8")
               log.append("MODE_MENU="+repr(mode))
 
-              # Probe the first calculation editor/property view.
+              # Probe every property tab for Calculation 1 and Level.
+              def probe_tabs(item_name,prefix):
+                  it=find_item(m,item_name)
+                  if not it: return
+                  it.click_input();time.sleep(1)
+                  uu=uiamain(m)
+                  tabs=[x for x in uu.descendants(control_type="TabItem") if x.is_visible()]
+                  log.append(prefix+"_TAB_COUNT="+str(len(tabs)))
+                  for ti,t in enumerate(tabs):
+                      try:
+                          log.append(prefix+f"_TAB_{ti}="+repr(demoji(t.window_text()))+" RECT="+str(t.rectangle()))
+                          t.click_input();time.sleep(.7)
+                          dump(m,f"{prefix}_tab_{ti}.json")
+                          snap(m,f"{prefix}_tab_{ti}.png")
+                      except Exception as e:
+                          log.append(prefix+f"_TABERR_{ti}="+repr(e))
+              probe_tabs("Расчет 1","calc")
+              probe_tabs("Level","level")
               calc=find_item(m,"Расчет 1")
               if calc:
-                  calc.double_click_input();time.sleep(2)
+                  calc.click_input();time.sleep(1)
                   dump(m,"uia_calc_open.json")
                   snap(m,"03_calc_probe.png")
               m.set_focus();m.type_keys("^s");time.sleep(3)
@@ -270,6 +295,13 @@ jobs:
                   try: root.expand()
                   except:
                       try: root.double_click_input()
+                      except: pass
+                  time.sleep(1)
+              obj2=find_item(m,"Объект 1")
+              if obj2:
+                  try: obj2.expand()
+                  except:
+                      try: obj2.double_click_input()
                       except: pass
                   time.sleep(1)
               persisted=[demoji(x.window_text()).strip() for x in trees(m)]
@@ -305,6 +337,10 @@ jobs:
             tree_after_values.json
             uia_values.json
             uia_calc_open.json
+            calc_tab_*.json
+            calc_tab_*.png
+            level_tab_*.json
+            level_tab_*.png
             uia_reopened_values.json
             probe_log.txt
             00_project_dialog_new.png
