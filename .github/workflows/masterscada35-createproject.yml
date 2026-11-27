@@ -250,7 +250,7 @@ jobs:
               Path("add_object_result.txt").write_text("ADD_OBJECT=PASS\nNAME="+demoji(obj1.window_text()),encoding="utf-8")
 
               # Add the variable/event types required by the laboratory work.
-              for label in ["Команда","Расчет","Расчет","Событие","Событие","Событие"]:
+              for label in ["Команду","Расчет","Расчет","Событие","Событие","Событие"]:
                   obj1=find_tree_item("Объект 1") or obj1
                   obj1.click_input(); time.sleep(.4)
                   top_add(label)
