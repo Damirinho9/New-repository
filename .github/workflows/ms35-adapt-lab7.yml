@@ -11,8 +11,8 @@ jobs:
         shell: pwsh
         run: |
           $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
-          curl.exe -k -L --fail "$b/data.msi" -o data.msi
-          curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
+          curl.exe -k -L --fail --retry 6 --retry-delay 2 --retry-all-errors "$b/data.msi" -o data.msi
+          curl.exe -k -L --fail --retry 6 --retry-delay 2 --retry-all-errors "$b/Data1.cab" -o Data1.cab
           $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
           if($p.ExitCode -ne 0){throw "MSI failed"}
           python -m pip install --disable-pip-version-check pywinauto pillow pyautogui
