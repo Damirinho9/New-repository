@@ -1,0 +1,87 @@
+name: MasterSCADA 3.5 Demo tank load and runtime
+on:
+  push:
+    branches: [tmp-ms35-demo]
+jobs:
+  run:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Install
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
+          curl.exe -k -L --fail "$b/data.msi" -o data.msi
+          curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
+          $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "MSI failed"}
+          python -m pip install --disable-pip-version-check pywinauto pillow pyautogui
+      - name: Open converted demo and run
+        shell: pwsh
+        run: |
+          @'
+          from pywinauto import Application, Desktop, keyboard
+          from pathlib import Path
+          import time, traceback, pyautogui
+          log=[]
+          exe=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          proj=r"C:\MasterSCADA Projects\Projects\Tutorials\Demo_Бак\Demo_Бак.vav"
+          try:
+              app=Application(backend="win32").start(f'"{exe}" "{proj}"')
+              time.sleep(12)
+              # acknowledge conversion/info dialog if present
+              for w in Desktop(backend="win32").windows():
+                  try:
+                      if w.window_text()=="MasterSCADA" and w.class_name()=="#32770":
+                          log.append("dialog before load: "+repr(w.window_text()))
+                          btn=w.child_window(title="OK", class_name="Button")
+                          if btn.exists(timeout=1):
+                              btn.click()
+                              log.append("clicked OK")
+                  except Exception as e: log.append("dialog err "+repr(e))
+              time.sleep(25)
+              pyautogui.screenshot("loaded_editor.png")
+              for w in Desktop(backend="win32").windows():
+                  try:
+                      t=w.window_text()
+                      if t:
+                          log.append(f"LOADED {w.handle} {w.class_name()} {t!r}")
+                          if t=="MasterSCADA" and w.class_name()!="#32770":
+                              try:w.capture_as_image().save("loaded_editor_window.png")
+                              except Exception as e:log.append("cap "+repr(e))
+                  except: pass
+              keyboard.send_keys("^s")
+              time.sleep(5)
+              keyboard.send_keys("{F5}")
+              time.sleep(25)
+              pyautogui.screenshot("after_f5.png")
+              for w in Desktop(backend="win32").windows():
+                  try:
+                      t=w.window_text()
+                      if t:
+                          log.append(f"RUNTIME {w.handle} {w.class_name()} {t!r}")
+                          if "Master" in t or "Demo" in t or "Бак" in t:
+                              try:w.capture_as_image().save("runtime_"+str(w.handle)+".png")
+                              except: pass
+                  except: pass
+          except Exception:
+              log.append(traceback.format_exc())
+          Path("run_log.txt").write_text("\n".join(log),encoding="utf-8")
+          '@ | Set-Content run_demo.py -Encoding UTF8
+          python run_demo.py
+          Get-CimInstance Win32_Process | Where-Object {$_.Name -match 'MasterSCADA|MasterRT|RT'} | Select ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | Format-List | Out-File process_list.txt
+          Compress-Archive -Path "C:\MasterSCADA Projects\Projects\Tutorials\Demo_Бак\*" -DestinationPath Demo_Bak_converted.zip -Force
+          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA|MasterRT'} | Stop-Process -Force -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ms35-demo-tank-runtime
+          path: |
+            run_log.txt
+            process_list.txt
+            loaded_editor.png
+            loaded_editor_window.png
+            after_f5.png
+            runtime_*.png
+            Demo_Bak_converted.zip
+          if-no-files-found: warn
