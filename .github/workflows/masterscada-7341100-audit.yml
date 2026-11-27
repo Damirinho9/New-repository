@@ -1,300 +1,142 @@
-name: MasterSCADA FDB audit 7341100
+name: MasterSCADA 3.x native probe 7341100
 
 on:
   push:
     branches:
       - tmp-masterscada-7341100
-  workflow_dispatch:
 
 jobs:
-  audit-linux:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout scratch repository
-        uses: actions/checkout@v4
-
-      - name: Clone public MasterSCADA reference
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git clone --depth 1 https://github.com/No1KnowMe/MasterSCADA.git reference
-          find reference -maxdepth 3 -type f -printf '%p %s bytes\n' | sort > reference_files.txt
-          cat reference/README.md > reference_readme.md
-          cat "reference/Контроль уровня жидкостей/info.xml" > reference_info.xml
-          FDB="$(find "reference/Контроль уровня жидкостей" -maxdepth 1 -type f -name '*.fdb' -print -quit)"
-          echo "FDB=$FDB" >> "$GITHUB_ENV"
-          file "$FDB" | tee fdb_file.txt
-          stat "$FDB" | tee fdb_stat.txt
-          sha256sum "$FDB" | tee fdb_sha256.txt
-
-      - name: Install Firebird utilities
-        shell: bash
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          (sudo apt-get install -y firebird3.0-utils firebird3.0-server-core || sudo apt-get install -y firebird-utils firebird4.0-utils)
-          command -v gstat || true
-          command -v isql-fb || true
-          find /usr -type f \( -name gstat -o -name isql-fb -o -name gbak \) 2>/dev/null | head -50
-
-      - name: Firebird header and schema audit
-        shell: bash
-        run: |
-          set +e
-          GSTAT="$(command -v gstat || find /usr -type f -name gstat 2>/dev/null | head -1)"
-          ISQL="$(command -v isql-fb || find /usr -type f -name isql-fb 2>/dev/null | head -1)"
-          GBAK="$(command -v gbak || find /usr -type f -name gbak 2>/dev/null | head -1)"
-          echo "gstat=$GSTAT" | tee firebird_tools.txt
-          echo "isql=$ISQL" | tee -a firebird_tools.txt
-          echo "gbak=$GBAK" | tee -a firebird_tools.txt
-          if [ -n "$GSTAT" ]; then
-            "$GSTAT" -h "$FDB" > gstat_header.txt 2>&1
-            echo "GSTAT_RC=$?" >> gstat_header.txt
-          fi
-          if [ -n "$ISQL" ]; then
-            printf "show sql dialect;\nshow database;\nshow tables;\nquit;\n" > audit.sql
-            "$ISQL" -user SYSDBA -password masterkey "$FDB" -i audit.sql > isql_schema.txt 2>&1
-            echo "ISQL_RC=$?" >> isql_schema.txt
-          fi
-          if [ -n "$GBAK" ]; then
-            "$GBAK" -b -g -user SYSDBA -password masterkey "$FDB" /tmp/masterscada_reference.fbk > gbak_verify.txt 2>&1
-            echo "GBAK_RC=$?" >> gbak_verify.txt
-            ls -lh /tmp/masterscada_reference.fbk >> gbak_verify.txt 2>&1
-          fi
-          true
-
-      - name: Inventory cached MasterSCADA windows
-        shell: python
-        run: |
-          from pathlib import Path
-          import re, json, xml.etree.ElementTree as ET
-          root=Path("reference/Контроль уровня жидкостей/Cache/Windows")
-          out=[]
-          for p in sorted(root.rglob("*.xml")):
-              txt=p.read_text(encoding="utf-8-sig", errors="replace")
-              rus=[]
-              for m in re.findall(r"[А-Яа-яЁё][А-Яа-яЁё0-9 _.,:;()\-/]{2,100}", txt):
-                  s=" ".join(m.split())
-                  if len(s)>2 and s not in rus:
-                      rus.append(s)
-              out.append({"path":str(p),"bytes":p.stat().st_size,"strings":rus[:120]})
-          Path("cache_inventory.json").write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding="utf-8")
-          summary=[]
-          for x in out:
-              summary.append(x["path"])
-              summary.extend("  "+s for s in x["strings"][:40])
-          Path("cache_inventory.txt").write_text("\n".join(summary),encoding="utf-8")
-
-      - name: Package audit
-        uses: actions/upload-artifact@v4
-        with:
-          name: masterscada-7341100-fdb-audit
-          path: |
-            reference_files.txt
-            reference_readme.md
-            reference_info.xml
-            fdb_file.txt
-            fdb_stat.txt
-            fdb_sha256.txt
-            firebird_tools.txt
-            gstat_header.txt
-            isql_schema.txt
-            gbak_verify.txt
-            cache_inventory.json
-            cache_inventory.txt
-          if-no-files-found: warn
-
-  audit-windows:
+  classic-native:
     runs-on: windows-2025
+    timeout-minutes: 45
     steps:
-      - name: Download reference repository
-        shell: pwsh
-        run: |
-          git clone --depth 1 https://github.com/No1KnowMe/MasterSCADA.git reference
-          $fdb = Get-ChildItem -LiteralPath "reference\Контроль уровня жидкостей" -Filter *.fdb | Select-Object -First 1
-          $fdb.FullName | Out-File windows_fdb_path.txt
-          $fdb.Length | Out-File windows_fdb_size.txt
-          Get-FileHash -Algorithm SHA256 -LiteralPath $fdb.FullName | Format-List | Out-File windows_fdb_sha256.txt
-          Format-Hex -LiteralPath $fdb.FullName -Count 512 | Out-File windows_fdb_head.txt
-
-      - name: Check MasterSCADA availability
-        shell: pwsh
-        run: |
-          $candidates = @(
-            "C:\Program Files\MasterSCADA*",
-            "C:\Program Files (x86)\MasterSCADA*",
-            "C:\Program Files\MPS Soft*",
-            "C:\Program Files (x86)\MPS Soft*"
-          )
-          foreach ($c in $candidates) {
-            Get-ChildItem $c -ErrorAction SilentlyContinue | Out-File -Append masterscada_installed.txt
-          }
-          if (-not (Test-Path masterscada_installed.txt)) {
-            "MasterSCADA not preinstalled on GitHub hosted runner" | Out-File masterscada_installed.txt
-          }
-
-      - name: Package Windows audit
-        uses: actions/upload-artifact@v4
-        with:
-          name: masterscada-7341100-windows-audit
-          path: |
-            windows_fdb_path.txt
-            windows_fdb_size.txt
-            windows_fdb_sha256.txt
-            windows_fdb_head.txt
-            masterscada_installed.txt
-
-
-  audit-firebird25:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Clone reference project
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git clone --depth 1 https://github.com/No1KnowMe/MasterSCADA.git reference
-          cp "reference/Контроль уровня жидкостей/Контроль уровня жидкостей.fdb" db25.fdb
-          sha256sum db25.fdb > db25_sha256.txt
-
-      - name: Inspect with Firebird 2.5
-        shell: bash
-        run: |
-          set -euxo pipefail
-          docker pull jacobalberty/firebird:2.5-sc
-          docker run -d --name fb25 -e ISC_PASSWORD=masterkey -v "$PWD:/firebird/data" jacobalberty/firebird:2.5-sc
-          sleep 12
-          docker ps -a > docker_ps.txt
-          docker logs fb25 > docker_logs.txt 2>&1 || true
-          docker exec fb25 sh -lc 'find /usr/local/firebird -maxdepth 3 -type f \( -name gstat -o -name isql -o -name gbak \) -print' > fb25_tools.txt 2>&1 || true
-          docker exec fb25 /usr/local/firebird/bin/gstat -h /firebird/data/db25.fdb > gstat25_header.txt 2>&1 || true
-          printf "show sql dialect;\nshow database;\nshow tables;\nquit;\n" > audit25.sql
-          docker exec -i fb25 /usr/local/firebird/bin/isql localhost:/firebird/data/db25.fdb -user SYSDBA -password masterkey < audit25.sql > isql25_tables.txt 2>&1 || true
-          docker exec fb25 /usr/local/firebird/bin/isql -x localhost:/firebird/data/db25.fdb -user SYSDBA -password masterkey > isql25_ddl.sql 2> isql25_ddl_error.txt || true
-          docker exec fb25 /usr/local/firebird/bin/gbak -b -g -user SYSDBA -password masterkey localhost:/firebird/data/db25.fdb /firebird/data/db25_backup.fbk > gbak25.txt 2>&1 || true
-          ls -lh db25.fdb db25_backup.fbk > db25_sizes.txt 2>&1 || true
-          if [ -f db25_backup.fbk ]; then
-            cp db25_backup.fbk db25_backup_check.fbk
-            docker exec fb25 /usr/local/firebird/bin/gbak -c -user SYSDBA -password masterkey /firebird/data/db25_backup_check.fbk /firebird/data/db25_restored.fdb > gbak25_restore.txt 2>&1 || true
-            ls -lh db25_restored.fdb >> db25_sizes.txt 2>&1 || true
-          fi
-
-      - name: Extract MasterSCADA table inventory
-        shell: bash
-        run: |
-          set +e
-          cat > table_inventory.sql <<'SQL'
-          set list on;
-          select trim(rdb$relation_name) as relation_name
-          from rdb$relations
-          where coalesce(rdb$system_flag,0)=0
-          order by rdb$relation_name;
-          quit;
-          SQL
-          docker exec -i fb25 /usr/local/firebird/bin/isql localhost:/firebird/data/db25.fdb -user SYSDBA -password masterkey < table_inventory.sql > user_tables25.txt 2>&1
-          cat > field_inventory.sql <<'SQL'
-          set list on;
-          select trim(rf.rdb$relation_name) as relation_name,
-                 trim(rf.rdb$field_name) as field_name,
-                 f.rdb$field_type as field_type,
-                 f.rdb$field_length as field_length
-          from rdb$relation_fields rf
-          join rdb$fields f on f.rdb$field_name=rf.rdb$field_source
-          join rdb$relations r on r.rdb$relation_name=rf.rdb$relation_name
-          where coalesce(r.rdb$system_flag,0)=0
-          order by rf.rdb$relation_name, rf.rdb$field_position;
-          quit;
-          SQL
-          docker exec -i fb25 /usr/local/firebird/bin/isql localhost:/firebird/data/db25.fdb -user SYSDBA -password masterkey < field_inventory.sql > user_fields25.txt 2>&1
-          true
-
-      - name: Package Firebird 2.5 audit
-        uses: actions/upload-artifact@v4
-        with:
-          name: masterscada-7341100-firebird25-audit
-          path: |
-            db25_sha256.txt
-            docker_ps.txt
-            docker_logs.txt
-            fb25_tools.txt
-            gstat25_header.txt
-            isql25_tables.txt
-            isql25_ddl.sql
-            isql25_ddl_error.txt
-            gbak25.txt
-            gbak25_restore.txt
-            db25_sizes.txt
-            user_tables25.txt
-            user_fields25.txt
-          if-no-files-found: warn
-
-
-  probe-masterscada-installer:
-    runs-on: windows-2025
-    timeout-minutes: 40
-    steps:
-      - name: Download official demo metadata and installer
+      - name: Download official MasterSCADA 3.x Demo
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $base = "https://ftp.owen.ru/MasterSCADA_4D/00_MPS_SOFT/DT/Release/1.3.10/1.3.10.39213(1.3.10_20261122.1_Demo)"
-          curl.exe -L --fail --retry 3 "$base/version.txt" -o version_download.txt
-          Get-Content version_download.txt
-          curl.exe -L --fail --retry 3 --progress-bar "$base/MasterSCADA4D_x64.exe" -o MasterSCADA4D_x64.exe
-          Get-Item MasterSCADA4D_x64.exe | Format-List Name,Length,CreationTime,LastWriteTime | Out-File installer_file.txt
-          Get-FileHash -Algorithm SHA256 MasterSCADA4D_x64.exe | Format-List | Out-File installer_sha256.txt
-          (Get-Item MasterSCADA4D_x64.exe).VersionInfo | Format-List * | Out-File installer_versioninfo.txt
+          $base = "https://download.mps-soft.ru/demo/MasterSCADA_3.X_Free/MasterSCADA_Demo"
+          curl.exe -L --fail --retry 3 "$base/version.txt" -o version.txt
+          curl.exe -L --fail --retry 3 "$base/checksum.md5" -o checksum.md5
+          curl.exe -L --fail --retry 3 --progress-bar "$base/MasterSCADASetup.exe" -o MasterSCADASetup.exe
+          Get-Content version.txt | Tee-Object -FilePath version_out.txt
+          Get-Content checksum.md5 | Tee-Object -FilePath checksum_out.txt
+          Get-Item MasterSCADASetup.exe | Format-List Name,Length,CreationTime,LastWriteTime | Out-File installer_file.txt
+          Get-FileHash -Algorithm MD5 MasterSCADASetup.exe | Format-List | Out-File installer_md5.txt
+          Get-FileHash -Algorithm SHA256 MasterSCADASetup.exe | Format-List | Out-File installer_sha256.txt
+          Get-AuthenticodeSignature MasterSCADASetup.exe | Format-List * | Out-File authenticode.txt
+          (Get-Item MasterSCADASetup.exe).VersionInfo | Format-List * | Out-File installer_versioninfo.txt
 
-      - name: Identify installer package
-        shell: pwsh
-        run: |
-          $seven = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
-          "7z=$seven" | Out-File installer_probe.txt
-          if ($seven) {
-            & $seven l MasterSCADA4D_x64.exe *> installer_7z.txt
-          }
-          cmd /c "findstr /i /c:\"Inno Setup\" /c:\"NSIS\" /c:\"InstallShield\" /c:\"WiX\" /c:\"Advanced Installer\" MasterSCADA4D_x64.exe" > installer_strings.txt 2>&1
-          exit 0
-
-      - name: Start installer and inspect GUI
+      - name: Inspect installer
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-          $p = Start-Process -FilePath ".\MasterSCADA4D_x64.exe" -PassThru
-          "pid=$($p.Id)" | Out-File installer_process.txt
-          Start-Sleep -Seconds 20
-          Get-Process | Sort-Object ProcessName | Select-Object ProcessName,Id,MainWindowTitle,MainWindowHandle,Path | Format-Table -AutoSize | Out-File process_list.txt -Width 300
-          try {
-            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-            $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-            $bmp.Save((Join-Path $PWD "installer_desktop.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-            $g.Dispose(); $bmp.Dispose()
-            "desktop screenshot captured" | Out-File screenshot_status.txt
-          } catch {
-            "desktop screenshot failed: $($_.Exception.Message)" | Out-File screenshot_status.txt
-          }
-          Get-Process | Where-Object { $_.ProcessName -match 'Master|setup|install|ms4d' } | Select-Object ProcessName,Id,MainWindowTitle,MainWindowHandle,Path | Format-List | Out-File masterscada_processes.txt
-          Get-Process | Where-Object { $_.ProcessName -match 'MasterSCADA4D|setup' } | Stop-Process -Force -ErrorAction SilentlyContinue
+          $seven = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+          "7z=$seven" | Out-File installer_probe.txt
+          if ($seven) { & $seven l MasterSCADASetup.exe *> installer_7z.txt }
+          cmd /c "findstr /i /c:\"InstallShield\" /c:\"Inno Setup\" /c:\"Nullsoft\" /c:\"Windows Installer\" /c:\"MSI\" MasterSCADASetup.exe" > installer_strings.txt 2>&1
           exit 0
 
-      - name: Package installer probe
+      - name: Silent install attempt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $before = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+                    Get-ItemProperty -ErrorAction SilentlyContinue |
+                    Select-Object DisplayName,DisplayVersion,InstallLocation,UninstallString
+          $before | ConvertTo-Json -Depth 3 | Out-File installed_before.json
+
+          $args = '/s /v"/qn REBOOT=ReallySuppress"'
+          "Trying: MasterSCADASetup.exe $args" | Out-File install_attempt.txt
+          $p = Start-Process -FilePath ".\MasterSCADASetup.exe" -ArgumentList $args -PassThru
+          try {
+            Wait-Process -Id $p.Id -Timeout 600 -ErrorAction Stop
+            "ExitCode=$($p.ExitCode)" | Out-File -Append install_attempt.txt
+          } catch {
+            "Timeout or wait error: $($_.Exception.Message)" | Out-File -Append install_attempt.txt
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+          Start-Sleep -Seconds 20
+
+          $after = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+                   Get-ItemProperty -ErrorAction SilentlyContinue |
+                   Select-Object DisplayName,DisplayVersion,InstallLocation,UninstallString
+          $after | Where-Object { $_.DisplayName -match 'MasterSCADA|MPS|InSAT|IEK' } | Format-List * | Out-File installed_masterscada.txt
+
+          Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'Master|MPS|InSAT|IEK' } |
+            Select-Object FullName | Format-Table -AutoSize | Out-File candidate_dirs.txt
+
+          Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'MasterSCADA.*\.exe$|^MasterSCADA\.exe$|^ms.*scada.*\.exe$' } |
+            Select-Object FullName,Length,LastWriteTime |
+            Format-Table -AutoSize | Out-File candidate_exes.txt -Width 300
+          exit 0
+
+      - name: Probe installed GUI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          python -m pip install --disable-pip-version-check pywinauto pillow pyautogui
+          $exe = Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -match '^MasterSCADA.*\.exe$|^MasterSCADA\.exe$' -and $_.FullName -notmatch 'Uninstall|Setup' } |
+                 Select-Object -First 1
+          if (-not $exe) {
+            "No editor executable located" | Out-File gui_probe.txt
+            exit 0
+          }
+          "EXE=$($exe.FullName)" | Out-File gui_probe.txt
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 25
+          @'
+          from pywinauto import Desktop
+          from pathlib import Path
+          lines=[]
+          try:
+              wins=Desktop(backend="uia").windows()
+              for w in wins:
+                  try:
+                      title=w.window_text()
+                      if title:
+                          lines.append(f"{title} | class={w.element_info.class_name} | handle={w.handle}")
+                          if "Master" in title or "SCADA" in title:
+                              try:
+                                  w.capture_as_image().save("masterscada_window.png")
+                              except Exception as e:
+                                  lines.append("capture_error="+repr(e))
+                  except Exception as e:
+                      lines.append("window_error="+repr(e))
+          except Exception as e:
+              lines.append("desktop_error="+repr(e))
+          Path("uia_windows.txt").write_text("\n".join(lines),encoding="utf-8")
+          '@ | Set-Content gui_probe.py -Encoding UTF8
+          python gui_probe.py
+          Get-Process | Where-Object { $_.ProcessName -match 'Master|SCADA' } |
+            Select-Object ProcessName,Id,MainWindowTitle,MainWindowHandle,Path |
+            Format-List | Out-File masterscada_processes.txt
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          exit 0
+
+      - name: Upload native probe
         uses: actions/upload-artifact@v4
         with:
-          name: masterscada-7341100-installer-probe
+          name: masterscada-7341100-classic-native-probe
           path: |
-            version_download.txt
+            version_out.txt
+            checksum_out.txt
             installer_file.txt
+            installer_md5.txt
             installer_sha256.txt
+            authenticode.txt
             installer_versioninfo.txt
             installer_probe.txt
             installer_7z.txt
             installer_strings.txt
-            installer_process.txt
-            process_list.txt
+            install_attempt.txt
+            installed_masterscada.txt
+            candidate_dirs.txt
+            candidate_exes.txt
+            gui_probe.txt
+            uia_windows.txt
             masterscada_processes.txt
-            screenshot_status.txt
-            installer_desktop.png
+            masterscada_window.png
           if-no-files-found: warn
