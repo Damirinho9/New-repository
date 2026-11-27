@@ -1,7 +1,6 @@
 name: MasterSCADA 3.5 authoring 7341100
 on:
-  push:
-    branches: [tmp-masterscada-7341100]
+  workflow_dispatch:
 jobs:
   author:
     runs-on: windows-2025
