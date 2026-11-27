@@ -1,0 +1,90 @@
+name: MasterSCADA 3.5 create native project
+on:
+  push:
+    branches: [tmp-ms35-build]
+jobs:
+  create:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Install MasterSCADA 3.5 Demo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
+          curl.exe -k -L --fail "$b/data.msi" -o data.msi
+          curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
+          $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress','/L*V',('"' + (Join-Path $PWD 'install.log') + '"')) -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "MSI failed $($p.ExitCode)"}
+          python -m pip install --disable-pip-version-check pywinauto pillow pyautogui
+      - name: Create blank native project through GUI
+        shell: pwsh
+        run: |
+          @'
+          from pywinauto import Application, Desktop, keyboard
+          from pathlib import Path
+          import time, os, traceback, pyautogui
+          log=[]
+          exe=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          try:
+              app=Application(backend="win32").start(exe)
+              time.sleep(12)
+              wins=Desktop(backend="win32").windows()
+              for w in wins:
+                  try: log.append(f"BEFORE {w.handle} {w.class_name()} {w.window_text()!r}")
+                  except: pass
+              # Modal project-properties dialog is focused. First edit is project name.
+              keyboard.send_keys("7341100_Lab7", with_spaces=True)
+              time.sleep(2)
+              keyboard.send_keys("{ENTER}")
+              time.sleep(25)
+              pyautogui.screenshot("after_create.png")
+              # Save once using Ctrl+S.
+              keyboard.send_keys("^s")
+              time.sleep(8)
+              pyautogui.screenshot("after_save.png")
+              for w in Desktop(backend="win32").windows():
+                  try:
+                      log.append(f"AFTER {w.handle} {w.class_name()} {w.window_text()!r}")
+                      if "MasterSCADA" in w.window_text():
+                          try: w.capture_as_image().save("master_project.png")
+                          except Exception as e: log.append("capture err "+repr(e))
+                  except: pass
+          except Exception:
+              log.append(traceback.format_exc())
+          Path("gui_create_log.txt").write_text("\n".join(log),encoding="utf-8")
+          '@ | Set-Content create_project.py -Encoding UTF8
+          python create_project.py
+          Get-CimInstance Win32_Process | Where-Object {$_.Name -match 'MasterSCADA'} | Select ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | Format-List | Out-File processes.txt
+          Get-ChildItem "C:\MasterSCADA Projects" -Recurse -Force -ErrorAction SilentlyContinue | Select FullName,Length,LastWriteTime,PSIsContainer | Format-Table -AutoSize | Out-File project_files.txt -Width 500
+          Get-ChildItem "C:\MasterSCADA Projects\Projects" -Directory -ErrorAction SilentlyContinue | Select FullName | Out-File project_dirs.txt
+          if(Test-Path "C:\MasterSCADA Projects\Projects\7341100_Lab7"){
+            Compress-Archive -Path "C:\MasterSCADA Projects\Projects\7341100_Lab7\*" -DestinationPath blank_native_project.zip -Force
+          } else {
+            $dir=Get-ChildItem "C:\MasterSCADA Projects\Projects" -Directory -ErrorAction SilentlyContinue | Sort LastWriteTime -Descending | Select -First 1
+            if($dir){ Compress-Archive -Path ($dir.FullName+"\*") -DestinationPath blank_native_project.zip -Force }
+          }
+          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA'} | Stop-Process -Force -ErrorAction SilentlyContinue
+      - name: Copy official API examples
+        shell: pwsh
+        run: |
+          $api="C:\Program Files (x86)\InSAT\MasterSCADA\API\MasterSCADA"
+          if(Test-Path $api){
+            Get-ChildItem $api -Recurse -File | Select FullName,Length | Format-Table -AutoSize | Out-File api_files.txt -Width 500
+            Compress-Archive -Path ($api+"\*") -DestinationPath MasterSCADA_API.zip -Force
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ms35-blank-native-and-api
+          path: |
+            gui_create_log.txt
+            after_create.png
+            after_save.png
+            master_project.png
+            processes.txt
+            project_files.txt
+            project_dirs.txt
+            blank_native_project.zip
+            api_files.txt
+            MasterSCADA_API.zip
+          if-no-files-found: warn
