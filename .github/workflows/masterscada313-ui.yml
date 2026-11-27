@@ -1,0 +1,68 @@
+name: MasterSCADA 3.13 interactive installer UI 7341100
+on:
+  push:
+    branches: [tmp-masterscada-7341100]
+jobs:
+  ui:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Download verified installer
+        shell: pwsh
+        run: |
+          $base="https://download.mps-soft.ru/demo/MasterSCADA_3.X_Free/MasterSCADA_Demo"
+          curl.exe -k -L --fail "$base/MasterSCADASetup.exe" -o MasterSCADASetup.exe
+          curl.exe -k -L --fail "$base/checksum.md5" -o checksum.md5
+          $expected=((Get-Content checksum.md5) -split ' ')[0].Trim().ToUpper()
+          $actual=(Get-FileHash -Algorithm MD5 MasterSCADASetup.exe).Hash.ToUpper()
+          "expected=$expected actual=$actual" | Out-File verify.txt
+          if($expected -ne $actual){ throw "MD5 mismatch" }
+          $sig=Get-AuthenticodeSignature MasterSCADASetup.exe
+          "signature=$($sig.Status) signer=$($sig.SignerCertificate.Subject)" | Out-File -Append verify.txt
+          if($sig.Status -ne 'Valid'){ throw "Signature invalid" }
+          python -m pip install --disable-pip-version-check pywinauto pillow pyautogui
+      - name: Probe installer UI
+        shell: pwsh
+        run: |
+          @'
+          from pywinauto import Application, Desktop
+          from pathlib import Path
+          import time, traceback, pyautogui
+          out=[]
+          try:
+              app=Application(backend="uia").start(r".\MasterSCADASetup.exe")
+              time.sleep(8)
+              wins=Desktop(backend="uia").windows()
+              for w in wins:
+                  try:
+                      title=w.window_text()
+                      if title:
+                          out.append("WINDOW: "+repr(title)+" class="+str(w.element_info.class_name)+" handle="+str(w.handle))
+                          if "MasterSCADA" in title:
+                              try:
+                                  out.append("CONTROLS:")
+                                  for c in w.descendants():
+                                      try:
+                                          out.append(f"  type={c.element_info.control_type!r} name={c.window_text()!r} auto={c.element_info.automation_id!r} class={c.element_info.class_name!r} enabled={c.is_enabled()} visible={c.is_visible()}")
+                                      except Exception as e: out.append("  ERR "+repr(e))
+                                  w.capture_as_image().save("installer_ui.png")
+                              except Exception as e: out.append("WINDOW_DUMP_ERROR "+repr(e))
+                  except Exception as e: out.append("WINERR "+repr(e))
+              pyautogui.screenshot("desktop_ui.png")
+          except Exception:
+              out.append(traceback.format_exc())
+          Path("installer_controls.txt").write_text("\n".join(out),encoding="utf-8")
+          '@ | Set-Content probe.py -Encoding UTF8
+          python probe.py
+          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA|setup|install'} | Select ProcessName,Id,MainWindowTitle,MainWindowHandle,Path | Format-List | Out-File processes.txt
+          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA|setup|install'} | Stop-Process -Force -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masterscada313-installer-ui
+          path: |
+            verify.txt
+            installer_controls.txt
+            processes.txt
+            installer_ui.png
+            desktop_ui.png
+          if-no-files-found: warn
