@@ -95,10 +95,13 @@ jobs:
               if not tab_controls: raise RuntimeError("Project dialog tab control missing")
               tab=tab_controls[0]
               try:
+                  log.append("TAB_RECT="+str(tab.rectangle()))
                   log.append("TAB_TEXTS="+repr([demoji(x) for x in tab.texts()]))
               except Exception as e:
                   log.append("TAB_TEXTS_ERR="+repr(e))
-              tab.select(2);time.sleep(2)
+              # This legacy MFC tab is not reliably exposed by pywinauto's TabControlWrapper.
+              # Keyboard navigation is native and robust: New -> Previous -> Existing.
+              d.set_focus();d.type_keys("^{TAB}");time.sleep(.5);d.type_keys("^{TAB}");time.sleep(2)
               # Try selecting the project from the default-folder list.
               selected=False
               list_controls=[c for c in d.descendants() if c.class_name() in ("SysListView32","ListBox")]
