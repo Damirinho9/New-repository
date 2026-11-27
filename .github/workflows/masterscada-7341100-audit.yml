@@ -236,7 +236,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $base = "https://demo.mps-soft.ru/demo/MasterSCADA_4D_Free/DT"
+          $base = "https://ftp.owen.ru/MasterSCADA_4D/00_MPS_SOFT/DT/Release/1.3.10/1.3.10.39213(1.3.10_20261122.1_Demo)"
           curl.exe -L --fail --retry 3 "$base/version.txt" -o version_download.txt
           Get-Content version_download.txt
           curl.exe -L --fail --retry 3 --progress-bar "$base/MasterSCADA4D_x64.exe" -o MasterSCADA4D_x64.exe
