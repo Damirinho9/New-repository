@@ -205,15 +205,18 @@ jobs:
               addtop.click_input(); time.sleep(1)
               # Inspect visible popup menu items and click an entry decoded as "Объект".
               popitems=[]
-              for m in Desktop(backend="uia").descendants(control_type="MenuItem"):
+              all_menus=[]
+              for w in Desktop(backend="uia").windows():
                   try:
-                      if m.is_visible():
-                          raw=m.window_text(); dec=demoji(raw).strip()
-                          if dec: popitems.append({"raw":raw,"decoded":dec,"rect":str(m.rectangle())})
+                      for m in w.descendants(control_type="MenuItem"):
+                          all_menus.append(m)
+                          if m.is_visible():
+                              raw=m.window_text(); dec=demoji(raw).strip()
+                              if dec: popitems.append({"raw":raw,"decoded":dec,"rect":str(m.rectangle())})
                   except: pass
               Path("add_menu_items.json").write_text(json.dumps(popitems,ensure_ascii=False,indent=2),encoding="utf-8")
               target=None
-              for m in Desktop(backend="uia").descendants(control_type="MenuItem"):
+              for m in all_menus:
                   try:
                       dec=demoji(m.window_text()).strip()
                       if m.is_visible() and dec=="Объект": target=m; break
