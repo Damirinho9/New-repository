@@ -87,15 +87,25 @@ jobs:
               m=mainwin(pid);m.set_focus();m.type_keys("^o");time.sleep(2)
               ds=dialogs(pid)
               if not ds:raise RuntimeError("open dialog missing")
-              d=ds[0];d.set_focus();d.type_keys("%n");time.sleep(.3);d.type_keys(VAV,with_spaces=True);d.type_keys("{ENTER}");time.sleep(6)
-              ds=dialogs(pid)
-              if ds:
-                  try:ds[0].type_keys("{ENTER}")
-                  except:pass
-                  time.sleep(6)
-              m=mainwin(pid)
-              if "7341100_MasterSCADA_Lab7" not in m.window_text():raise RuntimeError("project title mismatch "+m.window_text())
-              return pid,m
+              d=ds[0];d.set_focus();d.type_keys("%n");time.sleep(.5);d.type_keys(VAV,with_spaces=True);d.type_keys("{ENTER}")
+              # Wait for project load. MasterSCADA may keep the bare title for several seconds.
+              deadline=time.time()+35
+              followup_handled=False
+              last_title=""
+              while time.time()<deadline:
+                  time.sleep(1)
+                  ds=dialogs(pid)
+                  if ds and not followup_handled:
+                      try: ds[0].type_keys("{ENTER}")
+                      except: pass
+                      followup_handled=True
+                      time.sleep(1)
+                  try:
+                      m=mainwin(pid); last_title=m.window_text()
+                      if "7341100_MasterSCADA_Lab7" in last_title:
+                          return pid,m
+                  except: pass
+              raise RuntimeError("project title mismatch after wait "+last_title)
           def uiamain(m):return Desktop(backend="uia").window(handle=m.handle)
           def trees(m):
               return uiamain(m).descendants(control_type="TreeItem")
