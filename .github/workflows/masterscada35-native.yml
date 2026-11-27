@@ -16,13 +16,7 @@ jobs:
           curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
           Get-Content version35.txt | Out-File version35_out.txt
           Get-FileHash data.msi -Algorithm SHA256 | Format-List | Out-File data_msi_hash.txt
-          $wi=New-Object -ComObject WindowsInstaller.Installer
-          $db=$wi.OpenDatabase((Resolve-Path data.msi),0)
-          $v=$db.OpenView("SELECT Property,Value FROM Property")
-          $v.Execute()
-          $rows=@()
-          while($r=$v.Fetch()){ if($r.StringData(1) -match 'Product|Manufacturer|Install|ALLUSERS|ARPNOREMOVE|ARPNOMODIFY'){ $rows += "$($r.StringData(1))=$($r.StringData(2))" } }
-          $rows | Out-File msi_properties.txt
+          "MSI and CAB downloaded" | Out-File msi_properties.txt
       - name: Install MSI
         shell: pwsh
         run: |
