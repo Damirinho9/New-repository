@@ -1,139 +1,242 @@
-name: MasterSCADA 3.5 create project 7341100
+name: MasterSCADA 3.5 authoring 7341100
 on:
   push:
     branches: [tmp-masterscada-7341100]
 jobs:
-  create-project:
+  author:
     runs-on: windows-2025
     timeout-minutes: 18
     steps:
+      - name: Restore MasterSCADA installer cache
+        id: mscache
+        uses: actions/cache@v4
+        with:
+          path: C:\Temp\MasterSCADA35
+          key: masterscada-demo-3.5.0-msi-v1
+
+      - name: Download MasterSCADA installer if needed
+        if: steps.mscache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path C:\Temp\MasterSCADA35 -Force | Out-Null
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
+          curl.exe -k -L --fail "$b/data.msi" -o C:\Temp\MasterSCADA35\data.msi
+          curl.exe -k -L --fail "$b/Data1.cab" -o C:\Temp\MasterSCADA35\Data1.cab
+
       - name: Install MasterSCADA 3.5
         shell: pwsh
         run: |
-          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
-          curl.exe -k -L --fail "$b/data.msi" -o data.msi
-          curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
+          Copy-Item C:\Temp\MasterSCADA35\data.msi . -Force
+          Copy-Item C:\Temp\MasterSCADA35\Data1.cab . -Force
           $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
           if($p.ExitCode -ne 0){ throw "MSI failed $($p.ExitCode)" }
 
-      - name: Create save and reopen project
+      - name: Native create save reopen and add tank object
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check pywinauto pillow psutil
           @'
           from pathlib import Path
           from pywinauto import Desktop, Application
-          import time, json, traceback, psutil, shutil, subprocess, os
+          import time, json, traceback, psutil, shutil, subprocess
 
           EXE=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
           NAME="7341100_MasterSCADA_Lab7"
-          PROJECT_DIR=Path(r"C:\MasterSCADA Projects\Projects")/NAME
+          ROOT=Path(r"C:\MasterSCADA Projects\Projects")
+          PROJECT_DIR=ROOT/NAME
           log=[]
 
+          def moji(s):
+              try: return s.encode("cp1251").decode("cp1252")
+              except Exception: return s
+          def demoji(s):
+              try: return s.encode("cp1252").decode("cp1251")
+              except Exception: return s
           def snap(w,p):
-              try:
-                  w.capture_as_image().save(p); log.append("SCREENSHOT "+p)
+              try: w.capture_as_image().save(p); log.append("SCREENSHOT "+p)
               except Exception as e: log.append("SCREENSHOT_ERROR "+p+" "+repr(e))
-          def visible_dialogs(pid):
-              return [w for w in Desktop(backend="win32").windows(process=pid)
-                      if w.class_name()=="#32770" and w.is_visible()]
-          def ctrl_dump(w,p):
-              a=[]
-              for i,c in enumerate(w.children()):
-                  try:a.append({"i":i,"text":c.window_text(),"class":c.class_name(),"enabled":c.is_enabled(),"rect":str(c.rectangle())})
-                  except Exception as e:a.append({"i":i,"error":repr(e)})
-              Path(p).write_text(json.dumps(a,ensure_ascii=False,indent=2),encoding="utf-8")
-          def find_main(pid=None):
-              wins=Desktop(backend="win32").windows(process=pid) if pid else Desktop(backend="win32").windows()
-              for w in wins:
-                  try:
-                      if w.is_visible() and w.window_text().startswith("MasterSCADA"):
-                          return w
-                  except: pass
-              raise RuntimeError("MasterSCADA main window not found")
           def kill_all():
               for p in psutil.process_iter(["name"]):
                   try:
                       if p.info["name"] and "masterscada" in p.info["name"].lower(): p.kill()
                   except: pass
+          def proc_pid():
+              ps=[p for p in psutil.process_iter(["pid","name"]) if p.info["name"] and "masterscada" in p.info["name"].lower()]
+              return ps[-1].pid if ps else None
+          def find_main(pid=None):
+              wins=Desktop(backend="win32").windows(process=pid) if pid else Desktop(backend="win32").windows()
+              for w in wins:
+                  try:
+                      if w.is_visible() and w.window_text().startswith("MasterSCADA"): return w
+                  except: pass
+              raise RuntimeError("MasterSCADA main window not found")
+          def dialogs(pid=None):
+              wins=Desktop(backend="win32").windows(process=pid) if pid else Desktop(backend="win32").windows()
+              return [w for w in wins if w.class_name()=="#32770" and w.is_visible()]
+          def click_ok(d):
+              bs=[c for c in d.children() if c.class_name()=="Button" and c.is_visible() and c.window_text().strip().upper()=="OK"]
+              if not bs: raise RuntimeError("OK button missing in dialog")
+              for _ in range(10):
+                  if bs[0].is_enabled(): break
+                  time.sleep(.3)
+              bs[0].click()
+          def dump_uia(main,path):
+              u=Desktop(backend="uia").window(handle=main.handle)
+              rows=[]
+              for i,c in enumerate(u.descendants()):
+                  try:
+                      raw=c.window_text()
+                      rows.append({"i":i,"type":c.element_info.control_type,"raw":raw,"decoded":demoji(raw),"autoid":c.element_info.automation_id,"rect":str(c.rectangle())})
+                  except: pass
+              Path(path).write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding="utf-8")
+              return u,rows
+          def save_snapshot(tag):
+              if PROJECT_DIR.exists():
+                  out=Path("native_project_snapshot")/NAME
+                  if out.exists(): shutil.rmtree(out)
+                  shutil.copytree(PROJECT_DIR,out)
+                  Path(f"{tag}_files.json").write_text(json.dumps([
+                      {"relative":str(p.relative_to(PROJECT_DIR)),"size":p.stat().st_size}
+                      for p in PROJECT_DIR.rglob("*") if p.is_file()
+                  ],ensure_ascii=False,indent=2),encoding="utf-8")
 
           try:
+              # CREATE
               app=Application(backend="win32").start(EXE)
-              pid=app.process
-              time.sleep(10)
+              pid=app.process; time.sleep(9)
               main=find_main(pid); snap(main,"01_started.png")
-
-              ds=visible_dialogs(pid)
+              ds=dialogs(pid)
               if not ds:
-                  main.set_focus(); main.type_keys("^n"); time.sleep(2); ds=visible_dialogs(pid)
+                  main.set_focus(); main.type_keys("^n"); time.sleep(2); ds=dialogs(pid)
               if not ds: raise RuntimeError("New project dialog missing")
-              dlg=ds[0]; ctrl_dump(dlg,"01_new_controls.json"); snap(dlg,"02_new_dialog.png")
-              edits=[c for c in dlg.children() if c.class_name()=="Edit" and c.is_visible()]
-              edits[0].set_edit_text(NAME); time.sleep(1)
-              oks=[c for c in dlg.children() if c.class_name()=="Button" and c.is_visible() and c.window_text().strip().upper()=="OK"]
-              if not oks or not oks[0].is_enabled(): raise RuntimeError("New project OK unavailable")
-              oks[0].click(); time.sleep(4)
+              d=ds[0]
+              edits=[c for c in d.children() if c.class_name()=="Edit" and c.is_visible()]
+              edits[0].set_edit_text(NAME); time.sleep(1); click_ok(d); time.sleep(4)
+              ds=dialogs(pid)
+              if ds: click_ok(ds[0])
+              time.sleep(14)
+              main=find_main(pid)
+              if NAME not in main.window_text(): raise RuntimeError("CREATE title mismatch "+main.window_text())
+              snap(main,"02_created.png")
+              main.set_focus(); main.type_keys("^s"); time.sleep(5)
+              vavs=list(PROJECT_DIR.glob("*.vav"))
+              if not vavs: raise RuntimeError("Native VAV missing")
+              vav=vavs[0]
+              Path("create_save.txt").write_text("CREATE=PASS\nSAVE=PASS\nVAV="+str(vav),encoding="utf-8")
+              save_snapshot("after_create")
+              snap(main,"03_saved.png")
+              kill_all(); time.sleep(3)
 
-              ds=visible_dialogs(pid)
+              # REOPEN THROUGH EDITOR CTRL+O, not runtime command line.
+              app2=Application(backend="win32").start(EXE)
+              pid=app2.process; time.sleep(8)
+              main=find_main(pid)
+              ds=dialogs(pid)
               if ds:
-                  access=ds[0]; ctrl_dump(access,"02_access_controls.json"); snap(access,"03_access_dialog.png")
-                  oks=[c for c in access.children() if c.class_name()=="Button" and c.is_visible() and c.window_text().strip().upper()=="OK"]
-                  if not oks: raise RuntimeError("Access dialog OK missing")
-                  oks[0].click()
-              time.sleep(15)
-
+                  canc=[c for c in ds[0].children() if c.class_name()=="Button" and c.is_visible() and c.window_text().strip().lower()=="cancel"]
+                  if canc: canc[0].click()
+                  else: ds[0].type_keys("{ESC}")
+                  time.sleep(2)
+              main=find_main(pid)
+              main.set_focus(); main.type_keys("^o"); time.sleep(3)
+              ds=dialogs(pid)
+              if not ds: raise RuntimeError("Open project dialog missing")
+              od=ds[0]
+              # English Windows common file dialog: Alt+N focuses File name.
+              od.set_focus(); od.type_keys("%n"); time.sleep(.5)
+              od.type_keys(str(vav),with_spaces=True); time.sleep(.5); od.type_keys("{ENTER}")
+              time.sleep(8)
+              # Project access dialog can follow open.
+              ds=dialogs(pid)
+              if ds:
+                  log.append("REOPEN_FOLLOWUP_DIALOG="+repr(ds[0].window_text()))
+                  try: click_ok(ds[0])
+                  except: ds[0].type_keys("{ENTER}")
+                  time.sleep(10)
               main=find_main(pid)
               title=main.window_text()
-              log.append("CREATED_TITLE="+title)
-              if NAME not in title: raise RuntimeError("Project name absent from main title: "+title)
-              snap(main,"04_project_created.png")
+              log.append("REOPEN_TITLE="+title)
+              if NAME not in title: raise RuntimeError("REOPEN title mismatch "+title)
+              Path("reopen_result.txt").write_text("REOPEN=PASS\nTITLE="+title,encoding="utf-8")
+              snap(main,"04_reopened.png")
 
-              main.set_focus(); main.type_keys("^s"); time.sleep(6)
-              log.append("SAVE_SENT")
+              # Identify object tree and context/top Add menu.
+              u,rows=dump_uia(main,"uia_after_reopen.json")
+              trees=u.descendants(control_type="Tree")
+              tree_report=[]
+              object_tree=None
+              object_root=None
+              for ti,t in enumerate(trees):
+                  items=t.descendants(control_type="TreeItem")
+                  names=[]
+                  for it in items[:30]:
+                      raw=it.window_text(); names.append({"raw":raw,"decoded":demoji(raw)})
+                  tree_report.append({"tree":ti,"items":names})
+                  if items and demoji(items[0].window_text()).strip().lower().startswith("объект"):
+                      object_tree=t; object_root=items[0]
+              Path("tree_report.json").write_text(json.dumps(tree_report,ensure_ascii=False,indent=2),encoding="utf-8")
+              if object_root is None: raise RuntimeError("Object tree root not found")
+              object_root.click_input(); time.sleep(1)
 
-              if not PROJECT_DIR.exists():
-                  raise RuntimeError("Expected project directory missing: "+str(PROJECT_DIR))
-              files=[]
-              for p in PROJECT_DIR.rglob("*"):
-                  if p.is_file(): files.append({"path":str(p),"relative":str(p.relative_to(PROJECT_DIR)),"size":p.stat().st_size})
-              Path("project_files.json").write_text(json.dumps(files,ensure_ascii=False,indent=2),encoding="utf-8")
-              vavs=[p for p in PROJECT_DIR.rglob("*.vav") if p.is_file()]
-              log.append("VAVS="+repr([str(p) for p in vavs]))
-              if not vavs: raise RuntimeError("Native .vav not found")
-              vav=vavs[0]
-              Path("native_vav_path.txt").write_text(str(vav),encoding="utf-8")
-              shutil.copytree(PROJECT_DIR,Path("native_project_snapshot")/NAME,dirs_exist_ok=True)
-              snap(main,"05_project_saved.png")
-              Path("create_save_result.txt").write_text("CREATE=PASS\nSAVE=PASS\nVAV="+str(vav)+"\n",encoding="utf-8")
+              # Use the top menu "Добавить" by UIA. Decode fallback handles ANSI mojibake.
+              menuitems=u.descendants(control_type="MenuItem")
+              addtop=None
+              for m in menuitems:
+                  txt=demoji(m.window_text()).strip()
+                  if txt=="Добавить": addtop=m; break
+              if addtop is None: raise RuntimeError("Top Add menu not found")
+              addtop.click_input(); time.sleep(1)
+              # Inspect visible popup menu items and click an entry decoded as "Объект".
+              popitems=[]
+              for m in Desktop(backend="uia").descendants(control_type="MenuItem"):
+                  try:
+                      if m.is_visible():
+                          raw=m.window_text(); dec=demoji(raw).strip()
+                          if dec: popitems.append({"raw":raw,"decoded":dec,"rect":str(m.rectangle())})
+                  except: pass
+              Path("add_menu_items.json").write_text(json.dumps(popitems,ensure_ascii=False,indent=2),encoding="utf-8")
+              target=None
+              for m in Desktop(backend="uia").descendants(control_type="MenuItem"):
+                  try:
+                      dec=demoji(m.window_text()).strip()
+                      if m.is_visible() and dec=="Объект": target=m; break
+                  except: pass
+              if target is None:
+                  main.type_keys("{ESC}")
+                  raise RuntimeError("Add->Object menu item not found")
+              target.click_input(); time.sleep(3)
 
-              # Dump editor UIA controls and Win32 menu labels for the next authoring step.
-              try:
-                  u=Desktop(backend="uia").window(process=pid,title_re="MasterSCADA.*")
-                  rows=[]
-                  for i,c in enumerate(u.descendants()):
-                      try: rows.append(f"{i}\t{c.element_info.control_type}\t{c.window_text()!r}\t{c.element_info.automation_id!r}")
-                      except: pass
-                  Path("editor_uia_tree.txt").write_text("\n".join(rows),encoding="utf-8")
-              except Exception as e: log.append("UIA_ERR="+repr(e))
-              try:
-                  m=main.menu()
-                  Path("editor_menu_dump.txt").write_text(str(m.get_menu_path("**")),encoding="utf-8")
-              except Exception as e: log.append("MENU_ERR="+repr(e))
+              # Either a naming dialog appears or a new tree item is in inline rename.
+              ds=dialogs(pid)
+              if ds:
+                  nd=ds[0]
+                  ed=[c for c in nd.children() if c.class_name()=="Edit" and c.is_visible()]
+                  if ed:
+                      ed[0].set_edit_text(moji("Емкость")); time.sleep(.5); click_ok(nd); time.sleep(6)
+              else:
+                  # Check tree, use F2 on newest child if needed.
+                  u=Desktop(backend="uia").window(handle=main.handle)
+                  trees=u.descendants(control_type="Tree")
+                  object_tree=None
+                  for t in trees:
+                      items=t.descendants(control_type="TreeItem")
+                      if items and demoji(items[0].window_text()).strip().lower().startswith("объект"):
+                          object_tree=t; break
+                  items=object_tree.descendants(control_type="TreeItem") if object_tree else []
+                  if len(items)>1:
+                      newitem=items[-1]; newitem.click_input(); newitem.type_keys("{F2}"); time.sleep(.5)
+                      newitem.type_keys(moji("Емкость"),with_spaces=True); newitem.type_keys("{ENTER}"); time.sleep(5)
 
-              # Terminate after a confirmed save, then reopen the exact native .vav.
-              kill_all(); time.sleep(3)
-              proc=subprocess.Popen([EXE,str(vav)])
-              time.sleep(15)
-              pid2=proc.pid
-              ms=[p for p in psutil.process_iter(["pid","name"]) if p.info["name"] and "masterscada" in p.info["name"].lower()]
-              if ms: pid2=ms[-1].pid
-              main2=find_main(pid2)
-              title2=main2.window_text()
-              log.append("REOPEN_TITLE="+title2)
-              snap(main2,"06_project_reopened.png")
-              if NAME not in title2:
-                  raise RuntimeError("Reopened title does not contain project name: "+title2)
-              Path("reopen_result.txt").write_text("REOPEN=PASS\nTITLE="+title2+"\n",encoding="utf-8")
+              # Verify object exists semantically after decoding.
+              u,rows=dump_uia(main,"uia_after_add_object.json")
+              decoded=[r["decoded"] for r in rows]
+              found=any("Емкость" in x for x in decoded)
+              Path("add_object_result.txt").write_text("ADD_OBJECT="+("PASS" if found else "FAIL"),encoding="utf-8")
+              if not found: raise RuntimeError("Tank object not found after add")
+              main.set_focus(); main.type_keys("^s"); time.sleep(5)
+              snap(main,"05_tank_object_added.png")
+              save_snapshot("after_add_object")
+              Path("native_cycle_result.txt").write_text("CREATE=PASS\nSAVE=PASS\nREOPEN=PASS\nADD_OBJECT=PASS\n",encoding="utf-8")
               kill_all()
           except Exception:
               log.append("FATAL\n"+traceback.format_exc())
@@ -141,47 +244,30 @@ jobs:
           finally:
               Path("run_log.txt").write_text("\n".join(log),encoding="utf-8")
               kill_all()
-          '@ | Set-Content native_cycle.py -Encoding UTF8
-          python native_cycle.py
+          '@ | Set-Content author.py -Encoding UTF8
+          python author.py
 
-      - name: Collect MasterSCADA API examples
-        if: always()
-        shell: pwsh
-        run: |
-          $api="C:\Program Files (x86)\InSAT\MasterSCADA\API\MasterSCADA"
-          if(Test-Path $api){
-            Get-ChildItem $api -Recurse -File | Select FullName,Length | ConvertTo-Json -Depth 3 | Out-File api_file_list.json
-            New-Item api_extract -Type Directory -Force | Out-Null
-            Get-ChildItem $api -Recurse -File -Include *.cs,*.vb,*.txt,*.xml,*.doc,*.chm | ForEach-Object {
-              $rel=$_.FullName.Substring($api.Length).TrimStart('\')
-              $dst=Join-Path "api_extract" $rel
-              New-Item (Split-Path $dst) -ItemType Directory -Force | Out-Null
-              Copy-Item $_.FullName $dst -Force
-            }
-          }
-
-      - name: Upload evidence and native project
+      - name: Upload native authoring evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: masterscada35-native-cycle-7341100
+          name: masterscada35-authoring-7341100
           path: |
-            create_save_result.txt
+            create_save.txt
             reopen_result.txt
-            native_vav_path.txt
-            project_files.json
+            native_cycle_result.txt
+            add_object_result.txt
             run_log.txt
-            editor_uia_tree.txt
-            editor_menu_dump.txt
-            01_new_controls.json
-            02_access_controls.json
+            tree_report.json
+            add_menu_items.json
+            uia_after_reopen.json
+            uia_after_add_object.json
+            after_create_files.json
+            after_add_object_files.json
             01_started.png
-            02_new_dialog.png
-            03_access_dialog.png
-            04_project_created.png
-            05_project_saved.png
-            06_project_reopened.png
+            02_created.png
+            03_saved.png
+            04_reopened.png
+            05_tank_object_added.png
             native_project_snapshot/**
-            api_file_list.json
-            api_extract/**
           if-no-files-found: warn
