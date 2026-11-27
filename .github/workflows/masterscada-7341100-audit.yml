@@ -15,9 +15,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $base = "https://download.mps-soft.ru/demo/MasterSCADA_3.X_Free/MasterSCADA_Demo"
-          curl.exe -L --fail --retry 3 "$base/version.txt" -o version.txt
-          curl.exe -L --fail --retry 3 "$base/checksum.md5" -o checksum.md5
-          curl.exe -L --fail --retry 3 --progress-bar "$base/MasterSCADASetup.exe" -o MasterSCADASetup.exe
+          curl.exe -k -L --fail --retry 3 "$base/version.txt" -o version.txt
+          curl.exe -k -L --fail --retry 3 "$base/checksum.md5" -o checksum.md5
+          curl.exe -k -L --fail --retry 3 --progress-bar "$base/MasterSCADASetup.exe" -o MasterSCADASetup.exe
           Get-Content version.txt | Tee-Object -FilePath version_out.txt
           Get-Content checksum.md5 | Tee-Object -FilePath checksum_out.txt
           Get-Item MasterSCADASetup.exe | Format-List Name,Length,CreationTime,LastWriteTime | Out-File installer_file.txt
