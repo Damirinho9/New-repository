@@ -1,0 +1,1 @@
+trigger native MasterSCADA 3.5 project build
