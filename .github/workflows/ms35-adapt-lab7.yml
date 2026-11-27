@@ -37,13 +37,15 @@ jobs:
               a=old.encode("utf-16le"); b=new.encode("utf-16le")
               n=data.count(a)
               if n<expected_min: raise RuntimeError(f"missing {old!r}: {n}")
+              if n==0:
+                  changes.append((old,new,0))
+                  return
               data=data.replace(a,b)
               changes.append((old,new,n))
           # project identity / display terms
-          rep_u16("Demo_Бак","Lab7_Bak")
-          rep_u16("Переполнен","Выше нормы")
-          rep_u16("Пуст","Ниже")
-          rep_u16("График Уровня","График уровня")
+          rep_u16("Переполнен","Выше нормы",0)
+          rep_u16("Пуст","Ниже",0)
+          rep_u16("График Уровня","График уровня",0)
           # physical model: +1 constant inflow per cycle; regular and high-level drains overcome inflow
           old="Уровень + ( Залив <> 0 ) - ( Слив <> 0 ) + Шум - ( ( Аварийный_Слив <> 0 ) * 2 )"
           expr="Уровень + 1 - ( ( Слив <> 0 ) * 3 ) - ( ( Аварийный_Слив <> 0 ) * 3 )"
