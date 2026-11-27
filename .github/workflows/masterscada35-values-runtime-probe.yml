@@ -107,34 +107,20 @@ jobs:
               buttons=[c for c in d.descendants() if c.class_name()=="Button" and c.is_visible()]
               btn_info=[(demoji(b.window_text()).strip(),str(b.rectangle()),b.is_enabled()) for b in buttons]
               log.append("EXISTING_BUTTONS="+repr(btn_info))
-              browse=None
-              for b in buttons:
+              # The copied project is already listed in the default project folder.
+              # Select the first project row and press the native OK button.
+              pyautogui.click(rr.left+180, rr.top+90)
+              time.sleep(.8)
+              ok=None
+              # Re-acquire after row selection.
+              ds=dialogs(pid); d=ds[0]
+              for b in d.descendants():
                   try:
-                      if demoji(b.window_text()).strip()=="Обзор" and b.is_enabled():
-                          browse=b;break
+                      if b.class_name()=="Button" and b.is_visible() and b.window_text().strip().upper()=="OK" and b.is_enabled():
+                          ok=b;break
                   except: pass
-              if browse is None:
-                  # Russian labels are mojibake on the GitHub image. On the Existing tab,
-                  # the right-side buttons are vertically ordered Browse, Delete, Cancel.
-                  # Pick the topmost enabled non-OK button by geometry.
-                  candidates=[]
-                  for b in buttons:
-                      try:
-                          lab=demoji(b.window_text()).strip()
-                          if b.is_enabled() and lab!="OK":
-                              candidates.append(b)
-                      except: pass
-                  if candidates:
-                      browse=min(candidates,key=lambda x:x.rectangle().top)
-              if browse is None: raise RuntimeError("Browse button missing on Existing tab")
-              browse.click_input();time.sleep(2)
-              fds=dialogs(pid)
-              if not fds: raise RuntimeError("Common file dialog missing after Browse")
-              fd=fds[-1]
-              try: pyautogui.screenshot("00_file_dialog.png")
-              except: pass
-              # Common Windows file dialog: Alt+N focuses File name.
-              fd.type_keys("%n");time.sleep(.3);fd.type_keys(VAV,with_spaces=True);time.sleep(.3);fd.type_keys("{ENTER}")
+              if ok is None: raise RuntimeError("Existing-project OK button missing")
+              ok.click_input();time.sleep(2)
               # Wait through optional project access dialog and complete editor load.
               deadline=time.time()+45;last_title="";handled=set()
               while time.time()<deadline:
