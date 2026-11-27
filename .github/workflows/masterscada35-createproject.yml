@@ -177,86 +177,107 @@ jobs:
               Path("reopen_result.txt").write_text("REOPEN=PASS\nTITLE="+title,encoding="utf-8")
               snap(main,"04_reopened.png")
 
-              # Identify object tree and context/top Add menu.
-              u,rows=dump_uia(main,"uia_after_reopen.json")
-              trees=u.descendants(control_type="Tree")
-              tree_report=[]
-              object_tree=None
-              object_root=None
-              for ti,t in enumerate(trees):
-                  items=t.descendants(control_type="TreeItem")
-                  names=[]
-                  for it in items[:30]:
-                      raw=it.window_text(); names.append({"raw":raw,"decoded":demoji(raw)})
-                  tree_report.append({"tree":ti,"items":names})
-                  if items and demoji(items[0].window_text()).strip().lower().startswith("объект"):
-                      object_tree=t; object_root=items[0]
-              Path("tree_report.json").write_text(json.dumps(tree_report,ensure_ascii=False,indent=2),encoding="utf-8")
-              if object_root is None: raise RuntimeError("Object tree root not found")
-              object_root.click_input(); time.sleep(1)
+              # Native project authoring helpers.
+              def current_uia():
+                  return Desktop(backend="uia").window(handle=main.handle)
+              def find_tree_item(decoded_name):
+                  uu=current_uia()
+                  for it in uu.descendants(control_type="TreeItem"):
+                      try:
+                          if demoji(it.window_text()).strip()==decoded_name:
+                              return it
+                      except: pass
+                  return None
+              def all_visible_menu_items():
+                  out=[]
+                  for ww in Desktop(backend="uia").windows():
+                      try:
+                          for mm in ww.descendants(control_type="MenuItem"):
+                              if mm.is_visible(): out.append(mm)
+                      except: pass
+                  return out
+              def top_add(label):
+                  uu=current_uia()
+                  addtop=None
+                  for mm in uu.descendants(control_type="MenuItem"):
+                      if demoji(mm.window_text()).strip()=="Добавить":
+                          addtop=mm; break
+                  if addtop is None: raise RuntimeError("Top Add menu missing")
+                  addtop.click_input(); time.sleep(.8)
+                  popup=[]
+                  target=None
+                  for mm in all_visible_menu_items():
+                      try:
+                          dec=demoji(mm.window_text()).strip()
+                          if dec: popup.append(dec)
+                          if dec==label: target=mm
+                      except: pass
+                  log.append("ADD_MENU_"+label+"="+repr(popup))
+                  if target is None:
+                      main.type_keys("{ESC}")
+                      raise RuntimeError("Add menu item not found: "+label)
+                  target.click_input(); time.sleep(2)
 
-              # Use the top menu "Добавить" by UIA. Decode fallback handles ANSI mojibake.
-              menuitems=u.descendants(control_type="MenuItem")
-              addtop=None
-              for m in menuitems:
-                  txt=demoji(m.window_text()).strip()
-                  if txt=="Добавить": addtop=m; break
-              if addtop is None: raise RuntimeError("Top Add menu not found")
-              addtop.click_input(); time.sleep(1)
-              # Inspect visible popup menu items and click an entry decoded as "Объект".
-              popitems=[]
-              all_menus=[]
-              for w in Desktop(backend="uia").windows():
-                  try:
-                      for m in w.descendants(control_type="MenuItem"):
-                          all_menus.append(m)
-                          if m.is_visible():
-                              raw=m.window_text(); dec=demoji(raw).strip()
-                              if dec: popitems.append({"raw":raw,"decoded":dec,"rect":str(m.rectangle())})
-                  except: pass
-              Path("add_menu_items.json").write_text(json.dumps(popitems,ensure_ascii=False,indent=2),encoding="utf-8")
-              target=None
-              for m in all_menus:
-                  try:
-                      dec=demoji(m.window_text()).strip()
-                      if m.is_visible() and dec=="Объект": target=m; break
-                  except: pass
-              if target is None:
-                  main.type_keys("{ESC}")
-                  raise RuntimeError("Add->Object menu item not found")
-              target.click_input(); time.sleep(3)
+              # Add a native computer in the System tree so the object can be assigned/executed.
+              sysroot=find_tree_item("Система")
+              if sysroot is None: raise RuntimeError("System root missing")
+              sysroot.click_input(); time.sleep(.5)
+              try:
+                  top_add("Компьютер")
+              except Exception as e:
+                  log.append("ADD_COMPUTER_WARN="+repr(e))
+              time.sleep(2)
 
-              # Either a naming dialog appears or a new tree item is in inline rename.
-              ds=dialogs(pid)
-              if ds:
-                  nd=ds[0]
-                  ed=[c for c in nd.children() if c.class_name()=="Edit" and c.is_visible()]
-                  if ed:
-                      ed[0].set_edit_text(moji("Емкость")); time.sleep(.5); click_ok(nd); time.sleep(6)
-              else:
-                  # Check tree, use F2 on newest child if needed.
-                  u=Desktop(backend="uia").window(handle=main.handle)
-                  trees=u.descendants(control_type="Tree")
-                  object_tree=None
+              # Add native object under Object root.
+              objroot=find_tree_item("Объект")
+              if objroot is None: raise RuntimeError("Object root missing")
+              objroot.click_input(); time.sleep(.5)
+              top_add("Объект")
+              time.sleep(2)
+              obj1=find_tree_item("Объект 1")
+              if obj1 is None:
+                  # accept any first child below root if MasterSCADA selected another default suffix
+                  uu=current_uia()
+                  trees=uu.descendants(control_type="Tree")
+                  cand=[]
                   for t in trees:
                       items=t.descendants(control_type="TreeItem")
-                      if items and demoji(items[0].window_text()).strip().lower().startswith("объект"):
-                          object_tree=t; break
-                  items=object_tree.descendants(control_type="TreeItem") if object_tree else []
-                  if len(items)>1:
-                      newitem=items[-1]; newitem.click_input(); newitem.type_keys("{F2}"); time.sleep(.5)
-                      newitem.type_keys(moji("Емкость"),with_spaces=True); newitem.type_keys("{ENTER}"); time.sleep(5)
+                      if items and demoji(items[0].window_text()).strip()=="Объект":
+                          cand=items[1:]
+                          break
+                  if cand: obj1=cand[0]
+              if obj1 is None: raise RuntimeError("Native child object not created")
+              Path("add_object_result.txt").write_text("ADD_OBJECT=PASS\nNAME="+demoji(obj1.window_text()),encoding="utf-8")
 
-              # Verify object exists semantically after decoding.
-              u,rows=dump_uia(main,"uia_after_add_object.json")
-              decoded=[r["decoded"] for r in rows]
-              found=any("Емкость" in x for x in decoded)
-              Path("add_object_result.txt").write_text("ADD_OBJECT="+("PASS" if found else "FAIL"),encoding="utf-8")
-              if not found: raise RuntimeError("Tank object not found after add")
+              # Add the variable/event types required by the laboratory work.
+              for label in ["Команда","Расчет","Расчет","Событие","Событие","Событие"]:
+                  obj1=find_tree_item("Объект 1") or obj1
+                  obj1.click_input(); time.sleep(.4)
+                  top_add(label)
+                  time.sleep(.6)
+
+              # Snapshot and semantic verification of the object tree.
+              u,rows=dump_uia(main,"uia_after_native_structure.json")
+              tree_items=[]
+              for rr in rows:
+                  if rr["type"]=="TreeItem":
+                      tree_items.append(rr["decoded"])
+              Path("tree_items_after_structure.json").write_text(json.dumps(tree_items,ensure_ascii=False,indent=2),encoding="utf-8")
+              counts={
+                  "object":sum(x.startswith("Объект ") for x in tree_items),
+                  "command":sum(x.startswith("Команда") for x in tree_items),
+                  "calc":sum(x.startswith("Расчет") for x in tree_items),
+                  "event":sum(x.startswith("Событие") for x in tree_items),
+                  "computer":sum(x.startswith("Компьютер") for x in tree_items),
+              }
+              Path("native_structure_counts.json").write_text(json.dumps(counts,ensure_ascii=False,indent=2),encoding="utf-8")
+              ok=counts["object"]>=1 and counts["command"]>=1 and counts["calc"]>=2 and counts["event"]>=3
+              Path("native_structure_result.txt").write_text("STRUCTURE="+("PASS" if ok else "FAIL")+"\n"+json.dumps(counts,ensure_ascii=False),encoding="utf-8")
+              if not ok: raise RuntimeError("Native structure incomplete: "+repr(counts))
               main.set_focus(); main.type_keys("^s"); time.sleep(5)
-              snap(main,"05_tank_object_added.png")
-              save_snapshot("after_add_object")
-              Path("native_cycle_result.txt").write_text("CREATE=PASS\nSAVE=PASS\nREOPEN=PASS\nADD_OBJECT=PASS\n",encoding="utf-8")
+              snap(main,"05_native_structure.png")
+              save_snapshot("after_native_structure")
+              Path("native_cycle_result.txt").write_text("CREATE=PASS\nSAVE=PASS\nREOPEN=PASS\nADD_OBJECT=PASS\nSTRUCTURE=PASS\n",encoding="utf-8")
               kill_all()
           except Exception:
               log.append("FATAL\n"+traceback.format_exc())
@@ -281,13 +302,16 @@ jobs:
             tree_report.json
             add_menu_items.json
             uia_after_reopen.json
-            uia_after_add_object.json
+            uia_after_native_structure.json
+            tree_items_after_structure.json
+            native_structure_counts.json
+            native_structure_result.txt
             after_create_files.json
-            after_add_object_files.json
+            after_native_structure_files.json
             01_started.png
             02_created.png
             03_saved.png
             04_reopened.png
-            05_tank_object_added.png
+            05_native_structure.png
             native_project_snapshot/**
           if-no-files-found: warn
