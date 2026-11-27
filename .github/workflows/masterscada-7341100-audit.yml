@@ -1,142 +1,39 @@
-name: MasterSCADA 3.x native probe 7341100
-
+name: MasterSCADA 3.x installer identify 7341100
 on:
   push:
-    branches:
-      - tmp-masterscada-7341100
-
+    branches: [tmp-masterscada-7341100]
 jobs:
-  classic-native:
+  identify:
     runs-on: windows-2025
-    timeout-minutes: 45
     steps:
-      - name: Download official MasterSCADA 3.x Demo
+      - name: Download and inspect
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $base = "https://download.mps-soft.ru/demo/MasterSCADA_3.X_Free/MasterSCADA_Demo"
-          curl.exe -k -L --fail --retry 3 "$base/version.txt" -o version.txt
-          curl.exe -k -L --fail --retry 3 "$base/checksum.md5" -o checksum.md5
-          curl.exe -k -L --fail --retry 3 --progress-bar "$base/MasterSCADASetup.exe" -o MasterSCADASetup.exe
-          Get-Content version.txt | Tee-Object -FilePath version_out.txt
-          Get-Content checksum.md5 | Tee-Object -FilePath checksum_out.txt
-          Get-Item MasterSCADASetup.exe | Format-List Name,Length,CreationTime,LastWriteTime | Out-File installer_file.txt
-          Get-FileHash -Algorithm MD5 MasterSCADASetup.exe | Format-List | Out-File installer_md5.txt
-          Get-FileHash -Algorithm SHA256 MasterSCADASetup.exe | Format-List | Out-File installer_sha256.txt
-          Get-AuthenticodeSignature MasterSCADASetup.exe | Format-List * | Out-File authenticode.txt
-          (Get-Item MasterSCADASetup.exe).VersionInfo | Format-List * | Out-File installer_versioninfo.txt
-
-      - name: Inspect installer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          $seven = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
-          "7z=$seven" | Out-File installer_probe.txt
-          if ($seven) { & $seven l MasterSCADASetup.exe *> installer_7z.txt }
-          cmd /c "findstr /i /c:\"InstallShield\" /c:\"Inno Setup\" /c:\"Nullsoft\" /c:\"Windows Installer\" /c:\"MSI\" MasterSCADASetup.exe" > installer_strings.txt 2>&1
+          $base="https://download.mps-soft.ru/demo/MasterSCADA_3.X_Free/MasterSCADA_Demo"
+          curl.exe -k -L --fail "$base/version.txt" -o version.txt
+          curl.exe -k -L --fail "$base/checksum.md5" -o checksum.md5
+          curl.exe -k -L --fail "$base/MasterSCADASetup.exe" -o MasterSCADASetup.exe
+          Get-Content version.txt | Tee-Object version_out.txt
+          Get-Content checksum.md5 | Tee-Object checksum_out.txt
+          Get-FileHash -Algorithm MD5 MasterSCADASetup.exe | Format-List | Out-File md5_actual.txt
+          Get-AuthenticodeSignature MasterSCADASetup.exe | Format-List * | Out-File signature.txt
+          (Get-Item MasterSCADASetup.exe).VersionInfo | Format-List * | Out-File versioninfo.txt
+          7z.exe l MasterSCADASetup.exe *> sevenzip.txt
+          & .\MasterSCADASetup.exe /? *> setup_help.txt
+          Start-Sleep 5
+          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA|setup|install'} | Select-Object ProcessName,Id,MainWindowTitle,Path | Format-List | Out-File setup_processes.txt
+          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA|setup|install'} | Stop-Process -Force -ErrorAction SilentlyContinue
           exit 0
-
-      - name: Silent install attempt
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          $before = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
-                    Get-ItemProperty -ErrorAction SilentlyContinue |
-                    Select-Object DisplayName,DisplayVersion,InstallLocation,UninstallString
-          $before | ConvertTo-Json -Depth 3 | Out-File installed_before.json
-
-          $args = '/s /v"/qn REBOOT=ReallySuppress"'
-          "Trying: MasterSCADASetup.exe $args" | Out-File install_attempt.txt
-          $p = Start-Process -FilePath ".\MasterSCADASetup.exe" -ArgumentList $args -PassThru
-          try {
-            Wait-Process -Id $p.Id -Timeout 600 -ErrorAction Stop
-            "ExitCode=$($p.ExitCode)" | Out-File -Append install_attempt.txt
-          } catch {
-            "Timeout or wait error: $($_.Exception.Message)" | Out-File -Append install_attempt.txt
-            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          }
-          Start-Sleep -Seconds 20
-
-          $after = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
-                   Get-ItemProperty -ErrorAction SilentlyContinue |
-                   Select-Object DisplayName,DisplayVersion,InstallLocation,UninstallString
-          $after | Where-Object { $_.DisplayName -match 'MasterSCADA|MPS|InSAT|IEK' } | Format-List * | Out-File installed_masterscada.txt
-
-          Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match 'Master|MPS|InSAT|IEK' } |
-            Select-Object FullName | Format-Table -AutoSize | Out-File candidate_dirs.txt
-
-          Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match 'MasterSCADA.*\.exe$|^MasterSCADA\.exe$|^ms.*scada.*\.exe$' } |
-            Select-Object FullName,Length,LastWriteTime |
-            Format-Table -AutoSize | Out-File candidate_exes.txt -Width 300
-          exit 0
-
-      - name: Probe installed GUI
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          python -m pip install --disable-pip-version-check pywinauto pillow pyautogui
-          $exe = Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -File -ErrorAction SilentlyContinue |
-                 Where-Object { $_.Name -match '^MasterSCADA.*\.exe$|^MasterSCADA\.exe$' -and $_.FullName -notmatch 'Uninstall|Setup' } |
-                 Select-Object -First 1
-          if (-not $exe) {
-            "No editor executable located" | Out-File gui_probe.txt
-            exit 0
-          }
-          "EXE=$($exe.FullName)" | Out-File gui_probe.txt
-          $p = Start-Process -FilePath $exe.FullName -PassThru
-          Start-Sleep -Seconds 25
-          @'
-          from pywinauto import Desktop
-          from pathlib import Path
-          lines=[]
-          try:
-              wins=Desktop(backend="uia").windows()
-              for w in wins:
-                  try:
-                      title=w.window_text()
-                      if title:
-                          lines.append(f"{title} | class={w.element_info.class_name} | handle={w.handle}")
-                          if "Master" in title or "SCADA" in title:
-                              try:
-                                  w.capture_as_image().save("masterscada_window.png")
-                              except Exception as e:
-                                  lines.append("capture_error="+repr(e))
-                  except Exception as e:
-                      lines.append("window_error="+repr(e))
-          except Exception as e:
-              lines.append("desktop_error="+repr(e))
-          Path("uia_windows.txt").write_text("\n".join(lines),encoding="utf-8")
-          '@ | Set-Content gui_probe.py -Encoding UTF8
-          python gui_probe.py
-          Get-Process | Where-Object { $_.ProcessName -match 'Master|SCADA' } |
-            Select-Object ProcessName,Id,MainWindowTitle,MainWindowHandle,Path |
-            Format-List | Out-File masterscada_processes.txt
-          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          exit 0
-
-      - name: Upload native probe
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: masterscada-7341100-classic-native-probe
+          name: masterscada3-installer-identify
           path: |
             version_out.txt
             checksum_out.txt
-            installer_file.txt
-            installer_md5.txt
-            installer_sha256.txt
-            authenticode.txt
-            installer_versioninfo.txt
-            installer_probe.txt
-            installer_7z.txt
-            installer_strings.txt
-            install_attempt.txt
-            installed_masterscada.txt
-            candidate_dirs.txt
-            candidate_exes.txt
-            gui_probe.txt
-            uia_windows.txt
-            masterscada_processes.txt
-            masterscada_window.png
+            md5_actual.txt
+            signature.txt
+            versioninfo.txt
+            sevenzip.txt
+            setup_help.txt
+            setup_processes.txt
           if-no-files-found: warn
