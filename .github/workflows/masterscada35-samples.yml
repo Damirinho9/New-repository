@@ -1,0 +1,30 @@
+name: MasterSCADA 3.x official sample fetch 7341100
+on:
+  push:
+    branches: [tmp-masterscada-7341100]
+jobs:
+  fetch-samples:
+    runs-on: windows-2025
+    timeout-minutes: 6
+    steps:
+      - name: Download official MasterSCADA training projects
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          curl.exe -k -L --fail "https://insat.ru/files/documentation/masterscada/First_MasterSCADA_Project.zip" -o First_MasterSCADA_Project.zip
+          curl.exe -k -L --fail "https://insat.ru/files/documentation/masterscada/Second/Project.ZIP" -o Second_Project.zip
+          curl.exe -k -L --fail "https://insat.ru/metodicheskie-materialy/%D0%9F%D1%80%D0%B8%D0%BC%D0%B5%D1%80%D1%8B%20%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D0%BE%D0%B2.zip" -o Method_Examples.zip
+          New-Item first,second,methods -ItemType Directory -Force | Out-Null
+          Expand-Archive First_MasterSCADA_Project.zip first -Force
+          Expand-Archive Second_Project.zip second -Force
+          Expand-Archive Method_Examples.zip methods -Force
+          Get-ChildItem first,second,methods -Recurse -File | Select FullName,Length | ConvertTo-Json -Depth 3 | Out-File sample_inventory.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-official-samples-7341100
+          path: |
+            first/**
+            second/**
+            methods/**
+            sample_inventory.json
+          if-no-files-found: error
