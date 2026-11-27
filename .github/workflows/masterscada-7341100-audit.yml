@@ -226,3 +226,75 @@ jobs:
             user_tables25.txt
             user_fields25.txt
           if-no-files-found: warn
+
+
+  probe-masterscada-installer:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - name: Download official demo metadata and installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $base = "https://demo.mps-soft.ru/demo/MasterSCADA_4D_Free/DT"
+          curl.exe -L --fail --retry 3 "$base/version.txt" -o version_download.txt
+          Get-Content version_download.txt
+          curl.exe -L --fail --retry 3 --progress-bar "$base/MasterSCADA4D_x64.exe" -o MasterSCADA4D_x64.exe
+          Get-Item MasterSCADA4D_x64.exe | Format-List Name,Length,CreationTime,LastWriteTime | Out-File installer_file.txt
+          Get-FileHash -Algorithm SHA256 MasterSCADA4D_x64.exe | Format-List | Out-File installer_sha256.txt
+          (Get-Item MasterSCADA4D_x64.exe).VersionInfo | Format-List * | Out-File installer_versioninfo.txt
+
+      - name: Identify installer package
+        shell: pwsh
+        run: |
+          $seven = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+          "7z=$seven" | Out-File installer_probe.txt
+          if ($seven) {
+            & $seven l MasterSCADA4D_x64.exe *> installer_7z.txt
+          }
+          cmd /c "findstr /i /c:\"Inno Setup\" /c:\"NSIS\" /c:\"InstallShield\" /c:\"WiX\" /c:\"Advanced Installer\" MasterSCADA4D_x64.exe" > installer_strings.txt 2>&1
+          exit 0
+
+      - name: Start installer and inspect GUI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $p = Start-Process -FilePath ".\MasterSCADA4D_x64.exe" -PassThru
+          "pid=$($p.Id)" | Out-File installer_process.txt
+          Start-Sleep -Seconds 20
+          Get-Process | Sort-Object ProcessName | Select-Object ProcessName,Id,MainWindowTitle,MainWindowHandle,Path | Format-Table -AutoSize | Out-File process_list.txt -Width 300
+          try {
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $bmp.Save((Join-Path $PWD "installer_desktop.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+            "desktop screenshot captured" | Out-File screenshot_status.txt
+          } catch {
+            "desktop screenshot failed: $($_.Exception.Message)" | Out-File screenshot_status.txt
+          }
+          Get-Process | Where-Object { $_.ProcessName -match 'Master|setup|install|ms4d' } | Select-Object ProcessName,Id,MainWindowTitle,MainWindowHandle,Path | Format-List | Out-File masterscada_processes.txt
+          Get-Process | Where-Object { $_.ProcessName -match 'MasterSCADA4D|setup' } | Stop-Process -Force -ErrorAction SilentlyContinue
+          exit 0
+
+      - name: Package installer probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341100-installer-probe
+          path: |
+            version_download.txt
+            installer_file.txt
+            installer_sha256.txt
+            installer_versioninfo.txt
+            installer_probe.txt
+            installer_7z.txt
+            installer_strings.txt
+            installer_process.txt
+            process_list.txt
+            masterscada_processes.txt
+            screenshot_status.txt
+            installer_desktop.png
+          if-no-files-found: warn
