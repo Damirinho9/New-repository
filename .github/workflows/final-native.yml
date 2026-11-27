@@ -35,16 +35,19 @@ jobs:
           try:
               app=Application(backend="win32").start(f'"{exe}" "{proj}"')
               time.sleep(14)
-              for w in Desktop(backend="win32").windows():
-                  try:
-                      if w.class_name()=="#32770" and w.window_text()=="MasterSCADA":
-                          children=[(c.class_name(),c.window_text()) for c in w.children()]
-                          log.append("CONVERT_MODAL "+repr(children))
-                          for c in w.children():
-                              if c.class_name()=="Button" and c.window_text() in ("OK","Да","Yes"):
-                                  c.click(); log.append("CLICKED "+c.window_text()); break
-                  except Exception as e: log.append("MODALERR "+repr(e))
-              time.sleep(25)
+              for cycle in range(8):
+                  clicked=False
+                  for w in Desktop(backend="win32").windows():
+                      try:
+                          if w.class_name()=="#32770" and w.window_text()=="MasterSCADA":
+                              children=[(cc.class_name(),cc.window_text()) for cc in w.children()]
+                              log.append(f"CONVERT_MODAL_{cycle} "+repr(children))
+                              for cc in w.children():
+                                  if cc.class_name()=="Button" and cc.window_text() in ("OK","Да","Yes"):
+                                      cc.click(); log.append("CLICKED "+cc.window_text()); clicked=True; break
+                      except Exception as e: log.append("MODALERR "+repr(e))
+                  time.sleep(5 if clicked else 2)
+              time.sleep(15)
               keyboard.send_keys("^s")
               time.sleep(8)
               pyautogui.screenshot("converted_editor.png")
@@ -128,29 +131,35 @@ jobs:
               app=Application(backend="win32").start(f'"{exe}" "{proj}"')
               time.sleep(30)
               pyautogui.screenshot("native_reopen_editor.png")
-              for w in Desktop(backend="win32").windows():
-                  try:
-                      if w.class_name()=="#32770":
-                          children=[(c.class_name(),c.window_text()) for c in w.children()]
-                          log.append("REOPEN_MODAL "+repr(children))
-                          for c in w.children():
-                              if c.class_name()=="Button" and c.window_text() in ("OK","Да","Yes"):
-                                  c.click(); log.append("REOPEN_CLICK "+c.window_text()); break
-                  except Exception as e:log.append("REOPEN_MODALERR "+repr(e))
+              for cycle in range(6):
+                  clicked=False
+                  for w in Desktop(backend="win32").windows():
+                      try:
+                          if w.class_name()=="#32770" and w.window_text()=="MasterSCADA":
+                              children=[(cc.class_name(),cc.window_text()) for cc in w.children()]
+                              log.append(f"REOPEN_MODAL_{cycle} "+repr(children))
+                              for cc in w.children():
+                                  if cc.class_name()=="Button" and cc.window_text() in ("OK","Да","Yes"):
+                                      cc.click(); log.append("REOPEN_CLICK "+cc.window_text()); clicked=True; break
+                      except Exception as e:log.append("REOPEN_MODALERR "+repr(e))
+                  time.sleep(4 if clicked else 2)
               time.sleep(8)
               keyboard.send_keys("^s")
               time.sleep(5)
               keyboard.send_keys("{F5}")
               time.sleep(10)
-              for w in Desktop(backend="win32").windows():
-                  try:
-                      if w.class_name()=="#32770":
-                          children=[(c.class_name(),c.window_text()) for c in w.children()]
-                          log.append("F5_MODAL "+repr(children))
-                          for c in w.children():
-                              if c.class_name()=="Button" and c.window_text() in ("OK","Да","Yes"):
-                                  c.click(); log.append("F5_CLICK "+c.window_text()); break
-                  except Exception as e:log.append("F5_MODALERR "+repr(e))
+              for cycle in range(6):
+                  clicked=False
+                  for w in Desktop(backend="win32").windows():
+                      try:
+                          if w.class_name()=="#32770" and w.window_text()=="MasterSCADA":
+                              children=[(cc.class_name(),cc.window_text()) for cc in w.children()]
+                              log.append(f"F5_MODAL_{cycle} "+repr(children))
+                              for cc in w.children():
+                                  if cc.class_name()=="Button" and cc.window_text() in ("OK","Да","Yes"):
+                                      cc.click(); log.append("F5_CLICK "+cc.window_text()); clicked=True; break
+                      except Exception as e:log.append("F5_MODALERR "+repr(e))
+                  time.sleep(4 if clicked else 2)
               time.sleep(12)
               pyautogui.screenshot("runtime_t0.png")
               time.sleep(12)
