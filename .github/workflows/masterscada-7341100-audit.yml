@@ -1,0 +1,145 @@
+name: MasterSCADA FDB audit 7341100
+
+on:
+  push:
+    branches:
+      - tmp-masterscada-7341100
+  workflow_dispatch:
+
+jobs:
+  audit-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout scratch repository
+        uses: actions/checkout@v4
+
+      - name: Clone public MasterSCADA reference
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/No1KnowMe/MasterSCADA.git reference
+          find reference -maxdepth 3 -type f -printf '%p %s bytes\n' | sort > reference_files.txt
+          cat reference/README.md > reference_readme.md
+          cat "reference/Контроль уровня жидкостей/info.xml" > reference_info.xml
+          FDB="$(find "reference/Контроль уровня жидкостей" -maxdepth 1 -type f -name '*.fdb' -print -quit)"
+          echo "FDB=$FDB" >> "$GITHUB_ENV"
+          file "$FDB" | tee fdb_file.txt
+          stat "$FDB" | tee fdb_stat.txt
+          sha256sum "$FDB" | tee fdb_sha256.txt
+
+      - name: Install Firebird utilities
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          (sudo apt-get install -y firebird3.0-utils firebird3.0-server-core || sudo apt-get install -y firebird-utils firebird4.0-utils)
+          command -v gstat || true
+          command -v isql-fb || true
+          find /usr -type f \( -name gstat -o -name isql-fb -o -name gbak \) 2>/dev/null | head -50
+
+      - name: Firebird header and schema audit
+        shell: bash
+        run: |
+          set +e
+          GSTAT="$(command -v gstat || find /usr -type f -name gstat 2>/dev/null | head -1)"
+          ISQL="$(command -v isql-fb || find /usr -type f -name isql-fb 2>/dev/null | head -1)"
+          GBAK="$(command -v gbak || find /usr -type f -name gbak 2>/dev/null | head -1)"
+          echo "gstat=$GSTAT" | tee firebird_tools.txt
+          echo "isql=$ISQL" | tee -a firebird_tools.txt
+          echo "gbak=$GBAK" | tee -a firebird_tools.txt
+          if [ -n "$GSTAT" ]; then
+            "$GSTAT" -h "$FDB" > gstat_header.txt 2>&1
+            echo "GSTAT_RC=$?" >> gstat_header.txt
+          fi
+          if [ -n "$ISQL" ]; then
+            printf "show sql dialect;\nshow database;\nshow tables;\nquit;\n" > audit.sql
+            "$ISQL" -user SYSDBA -password masterkey "$FDB" -i audit.sql > isql_schema.txt 2>&1
+            echo "ISQL_RC=$?" >> isql_schema.txt
+          fi
+          if [ -n "$GBAK" ]; then
+            "$GBAK" -b -g -user SYSDBA -password masterkey "$FDB" /tmp/masterscada_reference.fbk > gbak_verify.txt 2>&1
+            echo "GBAK_RC=$?" >> gbak_verify.txt
+            ls -lh /tmp/masterscada_reference.fbk >> gbak_verify.txt 2>&1
+          fi
+          true
+
+      - name: Inventory cached MasterSCADA windows
+        shell: python
+        run: |
+          from pathlib import Path
+          import re, json, xml.etree.ElementTree as ET
+          root=Path("reference/Контроль уровня жидкостей/Cache/Windows")
+          out=[]
+          for p in sorted(root.rglob("*.xml")):
+              txt=p.read_text(encoding="utf-8-sig", errors="replace")
+              rus=[]
+              for m in re.findall(r"[А-Яа-яЁё][А-Яа-яЁё0-9 _.,:;()\-/]{2,100}", txt):
+                  s=" ".join(m.split())
+                  if len(s)>2 and s not in rus:
+                      rus.append(s)
+              out.append({"path":str(p),"bytes":p.stat().st_size,"strings":rus[:120]})
+          Path("cache_inventory.json").write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding="utf-8")
+          summary=[]
+          for x in out:
+              summary.append(x["path"])
+              summary.extend("  "+s for s in x["strings"][:40])
+          Path("cache_inventory.txt").write_text("\n".join(summary),encoding="utf-8")
+
+      - name: Package audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341100-fdb-audit
+          path: |
+            reference_files.txt
+            reference_readme.md
+            reference_info.xml
+            fdb_file.txt
+            fdb_stat.txt
+            fdb_sha256.txt
+            firebird_tools.txt
+            gstat_header.txt
+            isql_schema.txt
+            gbak_verify.txt
+            cache_inventory.json
+            cache_inventory.txt
+          if-no-files-found: warn
+
+  audit-windows:
+    runs-on: windows-2025
+    steps:
+      - name: Download reference repository
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/No1KnowMe/MasterSCADA.git reference
+          $fdb = Get-ChildItem -LiteralPath "reference\Контроль уровня жидкостей" -Filter *.fdb | Select-Object -First 1
+          $fdb.FullName | Out-File windows_fdb_path.txt
+          $fdb.Length | Out-File windows_fdb_size.txt
+          Get-FileHash -Algorithm SHA256 -LiteralPath $fdb.FullName | Format-List | Out-File windows_fdb_sha256.txt
+          Format-Hex -LiteralPath $fdb.FullName -Count 512 | Out-File windows_fdb_head.txt
+
+      - name: Check MasterSCADA availability
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "C:\Program Files\MasterSCADA*",
+            "C:\Program Files (x86)\MasterSCADA*",
+            "C:\Program Files\MPS Soft*",
+            "C:\Program Files (x86)\MPS Soft*"
+          )
+          foreach ($c in $candidates) {
+            Get-ChildItem $c -ErrorAction SilentlyContinue | Out-File -Append masterscada_installed.txt
+          }
+          if (-not (Test-Path masterscada_installed.txt)) {
+            "MasterSCADA not preinstalled on GitHub hosted runner" | Out-File masterscada_installed.txt
+          }
+
+      - name: Package Windows audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341100-windows-audit
+          path: |
+            windows_fdb_path.txt
+            windows_fdb_size.txt
+            windows_fdb_sha256.txt
+            windows_fdb_head.txt
+            masterscada_installed.txt
