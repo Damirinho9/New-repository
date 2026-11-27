@@ -215,8 +215,18 @@ jobs:
               return vals
           try:
               pid,m=open_project();snap(m,"01_restored.png")
+              # Project roots open collapsed on a clean machine.
               obj=find_item(m,"Объект 1")
-              if obj is None:raise RuntimeError("Object 1 missing")
+              if obj is None:
+                  root=find_item(m,"Объект")
+                  if root is None: raise RuntimeError("Object root missing")
+                  try: root.expand()
+                  except:
+                      try: root.double_click_input()
+                      except: pass
+                  time.sleep(1.5)
+                  obj=find_item(m,"Объект 1")
+              if obj is None:raise RuntimeError("Object 1 missing after expanding root")
               existing=[demoji(x.window_text()).strip() for x in trees(m)]
               log.append("TREE_BEFORE="+repr(existing))
               for idx,name in enumerate(NAMES,1):
@@ -255,6 +265,13 @@ jobs:
 
               # Reopen and verify native persistence.
               pid,m=open_project();time.sleep(2)
+              root=find_item(m,"Объект")
+              if root:
+                  try: root.expand()
+                  except:
+                      try: root.double_click_input()
+                      except: pass
+                  time.sleep(1)
               persisted=[demoji(x.window_text()).strip() for x in trees(m)]
               miss2=[n for n in NAMES if n not in persisted]
               Path("values_reopen_result.txt").write_text("VALUES_REOPEN="+("PASS" if not miss2 else "FAIL")+"\nMISSING="+repr(miss2)+"\n",encoding="utf-8")
