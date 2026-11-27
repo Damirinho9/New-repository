@@ -5,7 +5,7 @@ on:
 jobs:
   create-project:
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 22
     steps:
       - name: Download and install MasterSCADA 3.5
         shell: pwsh
@@ -15,141 +15,212 @@ jobs:
           curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
           $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
           if($p.ExitCode -ne 0){ throw "MSI install failed: $($p.ExitCode)" }
-          New-Item -ItemType Directory -Path "C:\work" -Force | Out-Null
 
-      - name: Create native project through Win32 GUI
+      - name: Create save and reopen native project through Win32 GUI
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check pywinauto pillow psutil
           @'
           from pathlib import Path
           from pywinauto import Desktop, Application
-          import time, os, json, traceback, psutil
+          import time, os, json, traceback, psutil, shutil, subprocess
 
           EXE=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
           NAME="7341100_MasterSCADA_Lab7"
+          BASE=Path(r"C:\MasterSCADA Projects")
+          start_ts=time.time()
           log=[]
+
           def snap(win,path):
               try:
                   win.capture_as_image().save(path)
                   log.append("SCREENSHOT "+path)
               except Exception as e:
                   log.append("SCREENSHOT_ERROR "+repr(e))
-          try:
-              app=Application(backend="win32").start(EXE)
-              time.sleep(10)
-              pid=app.process
-              log.append(f"PID={pid}")
-              main=Desktop(backend="win32").window(title="MasterSCADA")
-              main.wait("visible",timeout=20)
-              snap(main,"01_main_started.png")
 
-              # Find an owned dialog from the MasterSCADA process.
-              dialogs=[w for w in Desktop(backend="win32").windows(process=pid)
-                       if w.class_name()=="#32770" and w.is_visible()]
-              if not dialogs:
-                  log.append("NO_DIALOG_ON_START; TRY_CTRL_N")
-                  main.set_focus(); main.type_keys("^n")
-                  time.sleep(3)
-                  dialogs=[w for w in Desktop(backend="win32").windows(process=pid)
-                           if w.class_name()=="#32770" and w.is_visible()]
-              if not dialogs:
-                  raise RuntimeError("New project dialog not found")
-
-              dlg=dialogs[0]
-              snap(dlg,"02_new_project_dialog.png")
-              controls=[]
-              for i,c in enumerate(dlg.children()):
-                  try:
-                      controls.append({
-                          "i":i,"text":c.window_text(),"class":c.class_name(),
-                          "rect":str(c.rectangle()),"enabled":c.is_enabled(),
-                          "visible":c.is_visible()
-                      })
-                  except Exception as e:
-                      controls.append({"i":i,"err":repr(e)})
-              Path("new_project_controls.json").write_text(
-                  json.dumps(controls,ensure_ascii=False,indent=2),encoding="utf-8")
-
-              edits=[c for c in dlg.children() if c.class_name()=="Edit" and c.is_visible()]
-              buttons=[c for c in dlg.children() if c.class_name()=="Button" and c.is_visible()]
-              log.append(f"EDITS={len(edits)} BUTTONS={len(buttons)}")
-              for i,e in enumerate(edits):
-                  log.append(f"EDIT{i}={e.window_text()!r} RECT={e.rectangle()}")
-              for i,b in enumerate(buttons):
-                  log.append(f"BUTTON{i}={b.window_text()!r} ENABLED={b.is_enabled()} RECT={b.rectangle()}")
-
-              if len(edits)<1 or len(buttons)<1:
-                  raise RuntimeError("Expected Edit/Button controls not found")
-              edits[0].set_edit_text(NAME)
-              time.sleep(1)
-              log.append("PROJECT_NAME_SET="+edits[0].window_text())
-              snap(dlg,"03_project_name_filled.png")
-
-              # First visible button is OK in this standard dialog.
-              buttons[0].click()
-              time.sleep(15)
-
-              # Enumerate resulting windows and possible error dialogs.
+          def dump_windows(pid,path):
               wins=[]
               for w in Desktop(backend="win32").windows(process=pid):
                   try:
                       wins.append({"text":w.window_text(),"class":w.class_name(),
-                                   "visible":w.is_visible(),"rect":str(w.rectangle())})
+                                   "visible":w.is_visible(),"enabled":w.is_enabled(),
+                                   "rect":str(w.rectangle())})
                   except Exception as e:
                       wins.append({"err":repr(e)})
-              Path("after_create_windows.json").write_text(
-                  json.dumps(wins,ensure_ascii=False,indent=2),encoding="utf-8")
-              snap(main,"04_after_create.png")
+              Path(path).write_text(json.dumps(wins,ensure_ascii=False,indent=2),encoding="utf-8")
 
-              # Save through Ctrl+S.
+          def dump_controls(dlg,path):
+              controls=[]
+              for i,c in enumerate(dlg.children()):
+                  try:
+                      controls.append({"i":i,"text":c.window_text(),"class":c.class_name(),
+                                       "rect":str(c.rectangle()),"enabled":c.is_enabled(),
+                                       "visible":c.is_visible()})
+                  except Exception as e:
+                      controls.append({"i":i,"err":repr(e)})
+              Path(path).write_text(json.dumps(controls,ensure_ascii=False,indent=2),encoding="utf-8")
+              return controls
+
+          def kill_ms():
+              for p in psutil.process_iter(["pid","name"]):
+                  try:
+                      if p.info["name"] and "masterscada" in p.info["name"].lower():
+                          p.kill()
+                  except Exception:
+                      pass
+
+          try:
+              app=Application(backend="win32").start(EXE)
+              pid=app.process
+              time.sleep(10)
+              main=Desktop(backend="win32").window(title="MasterSCADA")
+              main.wait("visible",timeout=20)
+              snap(main,"01_main_started.png")
+
+              dialogs=[w for w in Desktop(backend="win32").windows(process=pid)
+                       if w.class_name()=="#32770" and w.is_visible()]
+              if not dialogs:
+                  main.set_focus(); main.type_keys("^n"); time.sleep(3)
+                  dialogs=[w for w in Desktop(backend="win32").windows(process=pid)
+                           if w.class_name()=="#32770" and w.is_visible()]
+              if not dialogs:
+                  raise RuntimeError("New project dialog not found")
+              dlg=dialogs[0]
+              dump_controls(dlg,"new_project_controls_before.json")
+              snap(dlg,"02_new_project_dialog.png")
+
+              edits=[c for c in dlg.children() if c.class_name()=="Edit" and c.is_visible()]
+              if not edits:
+                  raise RuntimeError("Project name Edit not found")
+              edits[0].set_edit_text(NAME)
+              time.sleep(2)
+              dump_controls(dlg,"new_project_controls_after_name.json")
+              snap(dlg,"03_project_name_filled.png")
+
+              # IMPORTANT: select literal OK, not the browse button.
+              buttons=[c for c in dlg.children() if c.class_name()=="Button" and c.is_visible()]
+              ok=[b for b in buttons if b.window_text().strip().upper()=="OK"]
+              if not ok:
+                  raise RuntimeError("Literal OK button not found")
+              ok=ok[0]
+              log.append(f"OK_ENABLED={ok.is_enabled()} RECT={ok.rectangle()}")
+              for _ in range(10):
+                  if ok.is_enabled(): break
+                  time.sleep(0.5)
+              if not ok.is_enabled():
+                  raise RuntimeError("OK button remained disabled")
+              ok.click()
+              time.sleep(20)
+
+              dump_windows(pid,"after_create_windows.json")
+              if dlg.exists(timeout=1) and dlg.is_visible():
+                  log.append("NEW_DIALOG_STILL_VISIBLE")
+              main=Desktop(backend="win32").window(title="MasterSCADA")
+              snap(main,"04_after_create.png")
+              log.append("MAIN_ENABLED_AFTER_CREATE="+str(main.is_enabled()))
+
+              # Native save.
               main.set_focus(); main.type_keys("^s")
               time.sleep(8)
               snap(main,"05_after_save.png")
 
-              # Inventory likely project locations.
-              roots=[Path(r"C:\MasterSCADA Projects"),Path(r"C:\work"),
-                     Path.home()/"Documents",Path(r"C:\ProgramData")]
-              lines=[]
+              # Inventory project files, including timestamps and likely native project files.
+              roots=[BASE,Path.home()/"Documents",Path(r"C:\ProgramData")]
+              items=[]
+              candidates=[]
               for root in roots:
                   if root.exists():
-                      lines.append("ROOT "+str(root))
                       for p in root.rglob("*"):
                           try:
-                              if p.is_file():
-                                  lines.append(f"{p}\t{p.stat().st_size}")
+                              st=p.stat()
+                              rec={"path":str(p),"is_file":p.is_file(),"size":st.st_size if p.is_file() else 0,
+                                   "mtime":st.st_mtime}
+                              if st.st_mtime >= start_ts-120 or NAME.lower() in str(p).lower():
+                                  items.append(rec)
+                              if p.is_file() and (NAME.lower() in str(p).lower() or st.st_mtime >= start_ts):
+                                  candidates.append(str(p))
                           except Exception:
                               pass
-              Path("project_inventory.txt").write_text("\n".join(lines),encoding="utf-8")
-              matches=[x for x in lines if NAME.lower() in x.lower()]
-              Path("project_matches.txt").write_text("\n".join(matches),encoding="utf-8")
-              log.append("MATCHES="+repr(matches[:50]))
+              Path("project_inventory.json").write_text(json.dumps(items,ensure_ascii=False,indent=2),encoding="utf-8")
+              Path("project_candidates.txt").write_text("\n".join(candidates),encoding="utf-8")
+              log.append("CANDIDATES="+repr(candidates[:100]))
 
-              # Dump UIA tree of the resulting main window.
+              # Copy all objects named after the project into an artifact folder.
+              export=Path("native_project_snapshot")
+              export.mkdir(exist_ok=True)
+              named=[]
+              if BASE.exists():
+                  for p in BASE.rglob("*"):
+                      if NAME.lower() in p.name.lower():
+                          named.append(p)
+              # Prefer top-level matching directory, otherwise copy matching files.
+              dirs=[p for p in named if p.is_dir()]
+              if dirs:
+                  src=sorted(dirs,key=lambda p:len(p.parts))[0]
+                  shutil.copytree(src,export/src.name,dirs_exist_ok=True)
+                  log.append("COPIED_PROJECT_DIR="+str(src))
+              else:
+                  for p in named:
+                      if p.is_file():
+                          shutil.copy2(p,export/p.name)
+                          log.append("COPIED_PROJECT_FILE="+str(p))
+
+              # Close cleanly after save.
               try:
-                  uia=Desktop(backend="uia").window(title="MasterSCADA")
-                  Path("uia_summary.txt").write_text(
-                      "\n".join(
-                          f"{i}: {c.element_info.control_type} | {c.window_text()!r} | {c.element_info.automation_id!r}"
-                          for i,c in enumerate(uia.descendants())
-                      ),encoding="utf-8")
+                  main.close()
+                  time.sleep(8)
               except Exception as e:
-                  log.append("UIA_DUMP_ERROR "+repr(e))
+                  log.append("CLOSE_ERROR "+repr(e))
+              # If a save confirmation appears, press Enter on the first active dialog.
+              try:
+                  for w in Desktop(backend="win32").windows(process=pid):
+                      if w.class_name()=="#32770" and w.is_visible():
+                          log.append("CLOSE_DIALOG="+repr(w.window_text()))
+                          w.set_focus(); w.type_keys("{ENTER}"); time.sleep(3)
+              except Exception as e:
+                  log.append("CLOSE_DIALOG_ERROR "+repr(e))
+              kill_ms(); time.sleep(3)
 
+              # Reopen attempt: launch MasterSCADA with the most plausible native candidate.
+              cand_paths=[Path(x) for x in candidates if Path(x).exists()]
+              ranked=sorted(cand_paths,key=lambda p:(0 if p.suffix.lower() in {".msp",".prj",".fdb",".mdb",".xml"} else 1, len(str(p))))
+              reopen_target=str(ranked[0]) if ranked else ""
+              Path("reopen_target.txt").write_text(reopen_target,encoding="utf-8")
+              log.append("REOPEN_TARGET="+repr(reopen_target))
+
+              args=[EXE]+([reopen_target] if reopen_target else [])
+              proc=subprocess.Popen(args)
+              time.sleep(15)
+              newpid=proc.pid
+              # Main app may spawn/replace process; find MasterSCADA process with window.
+              msprocs=[p for p in psutil.process_iter(["pid","name"]) if p.info["name"] and "masterscada" in p.info["name"].lower()]
+              if msprocs:
+                  newpid=msprocs[-1].pid
+              dump_windows(newpid,"after_reopen_windows.json")
+              try:
+                  main2=Desktop(backend="win32").window(title="MasterSCADA")
+                  main2.wait("visible",timeout=10)
+                  snap(main2,"06_after_reopen.png")
+                  dialogs2=[w for w in Desktop(backend="win32").windows(process=newpid)
+                            if w.class_name()=="#32770" and w.is_visible()]
+                  Path("reopen_result.txt").write_text(
+                      "REOPEN=PASS_CANDIDATE\nTARGET="+reopen_target+"\nDIALOGS="+str(len(dialogs2))+"\n",
+                      encoding="utf-8")
+              except Exception as e:
+                  Path("reopen_result.txt").write_text("REOPEN=FAIL\n"+repr(e),encoding="utf-8")
+              kill_ms()
+
+              create_ok=bool(named or candidates)
               Path("create_project_result.txt").write_text(
-                  "CREATE=PASS\nSAVE=ATTEMPTED\nNAME="+NAME+"\n",encoding="utf-8")
+                  "CREATE="+("PASS" if create_ok else "UNCERTAIN")+"\nSAVE=PASS_ATTEMPT\nNAME="+NAME+"\n",
+                  encoding="utf-8")
           except Exception:
               log.append("FATAL\n"+traceback.format_exc())
               Path("create_project_result.txt").write_text("CREATE=FAIL\n",encoding="utf-8")
               raise
           finally:
               Path("create_project_log.txt").write_text("\n".join(log),encoding="utf-8")
-              try:
-                  for p in psutil.process_iter(["pid","name"]):
-                      if p.info["name"] and "masterscada" in p.info["name"].lower():
-                          p.kill()
-              except Exception:
-                  pass
+              kill_ms()
           '@ | Set-Content create_project.py -Encoding UTF8
           python create_project.py
 
@@ -161,14 +232,19 @@ jobs:
           path: |
             create_project_result.txt
             create_project_log.txt
-            new_project_controls.json
+            new_project_controls_before.json
+            new_project_controls_after_name.json
             after_create_windows.json
-            project_inventory.txt
-            project_matches.txt
-            uia_summary.txt
+            project_inventory.json
+            project_candidates.txt
+            reopen_target.txt
+            reopen_result.txt
+            after_reopen_windows.json
+            native_project_snapshot/**
             01_main_started.png
             02_new_project_dialog.png
             03_project_name_filled.png
             04_after_create.png
             05_after_save.png
+            06_after_reopen.png
           if-no-files-found: warn
