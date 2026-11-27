@@ -143,3 +143,86 @@ jobs:
             windows_fdb_sha256.txt
             windows_fdb_head.txt
             masterscada_installed.txt
+
+
+  audit-firebird25:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Clone reference project
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/No1KnowMe/MasterSCADA.git reference
+          cp "reference/Контроль уровня жидкостей/Контроль уровня жидкостей.fdb" db25.fdb
+          sha256sum db25.fdb > db25_sha256.txt
+
+      - name: Inspect with Firebird 2.5
+        shell: bash
+        run: |
+          set -euxo pipefail
+          docker pull jacobalberty/firebird:2.5-sc
+          docker run -d --name fb25 -e ISC_PASSWORD=masterkey -v "$PWD:/firebird/data" jacobalberty/firebird:2.5-sc
+          sleep 12
+          docker ps -a > docker_ps.txt
+          docker logs fb25 > docker_logs.txt 2>&1 || true
+          docker exec fb25 sh -lc 'find /usr/local/firebird -maxdepth 3 -type f \( -name gstat -o -name isql -o -name gbak \) -print' > fb25_tools.txt 2>&1 || true
+          docker exec fb25 /usr/local/firebird/bin/gstat -h /firebird/data/db25.fdb > gstat25_header.txt 2>&1 || true
+          printf "show sql dialect;\nshow database;\nshow tables;\nquit;\n" > audit25.sql
+          docker exec -i fb25 /usr/local/firebird/bin/isql localhost:/firebird/data/db25.fdb -user SYSDBA -password masterkey < audit25.sql > isql25_tables.txt 2>&1 || true
+          docker exec fb25 /usr/local/firebird/bin/isql -x localhost:/firebird/data/db25.fdb -user SYSDBA -password masterkey > isql25_ddl.sql 2> isql25_ddl_error.txt || true
+          docker exec fb25 /usr/local/firebird/bin/gbak -b -g -user SYSDBA -password masterkey localhost:/firebird/data/db25.fdb /firebird/data/db25_backup.fbk > gbak25.txt 2>&1 || true
+          ls -lh db25.fdb db25_backup.fbk > db25_sizes.txt 2>&1 || true
+          if [ -f db25_backup.fbk ]; then
+            cp db25_backup.fbk db25_backup_check.fbk
+            docker exec fb25 /usr/local/firebird/bin/gbak -c -user SYSDBA -password masterkey /firebird/data/db25_backup_check.fbk /firebird/data/db25_restored.fdb > gbak25_restore.txt 2>&1 || true
+            ls -lh db25_restored.fdb >> db25_sizes.txt 2>&1 || true
+          fi
+
+      - name: Extract MasterSCADA table inventory
+        shell: bash
+        run: |
+          set +e
+          cat > table_inventory.sql <<'SQL'
+          set list on;
+          select trim(rdb$relation_name) as relation_name
+          from rdb$relations
+          where coalesce(rdb$system_flag,0)=0
+          order by rdb$relation_name;
+          quit;
+          SQL
+          docker exec -i fb25 /usr/local/firebird/bin/isql localhost:/firebird/data/db25.fdb -user SYSDBA -password masterkey < table_inventory.sql > user_tables25.txt 2>&1
+          cat > field_inventory.sql <<'SQL'
+          set list on;
+          select trim(rf.rdb$relation_name) as relation_name,
+                 trim(rf.rdb$field_name) as field_name,
+                 f.rdb$field_type as field_type,
+                 f.rdb$field_length as field_length
+          from rdb$relation_fields rf
+          join rdb$fields f on f.rdb$field_name=rf.rdb$field_source
+          join rdb$relations r on r.rdb$relation_name=rf.rdb$relation_name
+          where coalesce(r.rdb$system_flag,0)=0
+          order by rf.rdb$relation_name, rf.rdb$field_position;
+          quit;
+          SQL
+          docker exec -i fb25 /usr/local/firebird/bin/isql localhost:/firebird/data/db25.fdb -user SYSDBA -password masterkey < field_inventory.sql > user_fields25.txt 2>&1
+          true
+
+      - name: Package Firebird 2.5 audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada-7341100-firebird25-audit
+          path: |
+            db25_sha256.txt
+            docker_ps.txt
+            docker_logs.txt
+            fb25_tools.txt
+            gstat25_header.txt
+            isql25_tables.txt
+            isql25_ddl.sql
+            isql25_ddl_error.txt
+            gbak25.txt
+            gbak25_restore.txt
+            db25_sizes.txt
+            user_tables25.txt
+            user_fields25.txt
+          if-no-files-found: warn
