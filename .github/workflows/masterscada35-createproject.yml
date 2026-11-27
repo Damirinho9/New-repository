@@ -110,19 +110,35 @@ jobs:
               if not ok.is_enabled():
                   raise RuntimeError("OK button remained disabled")
               ok.click()
-              time.sleep(20)
+              time.sleep(5)
+
+              # MasterSCADA 3.x opens a second "project access configuration" dialog.
+              # For this educational project leave password/access fields empty and press OK.
+              access_dialogs=[w for w in Desktop(backend="win32").windows(process=pid)
+                              if w.class_name()=="#32770" and w.is_visible()]
+              if access_dialogs:
+                  access=access_dialogs[0]
+                  dump_controls(access,"access_dialog_controls.json")
+                  snap(access,"04_access_dialog.png")
+                  access_buttons=[b for b in access.children() if b.class_name()=="Button" and b.is_visible()]
+                  access_ok=[b for b in access_buttons if b.window_text().strip().upper()=="OK"]
+                  if not access_ok:
+                      raise RuntimeError("Access configuration OK button not found")
+                  log.append("ACCESS_OK_ENABLED="+str(access_ok[0].is_enabled()))
+                  access_ok[0].click()
+                  time.sleep(20)
 
               dump_windows(pid,"after_create_windows.json")
-              if dlg.exists(timeout=1) and dlg.is_visible():
-                  log.append("NEW_DIALOG_STILL_VISIBLE")
               main=Desktop(backend="win32").window(title="MasterSCADA")
-              snap(main,"04_after_create.png")
+              snap(main,"05_after_create.png")
               log.append("MAIN_ENABLED_AFTER_CREATE="+str(main.is_enabled()))
+              if not main.is_enabled():
+                  raise RuntimeError("Main window still disabled after access dialog")
 
               # Native save.
               main.set_focus(); main.type_keys("^s")
               time.sleep(8)
-              snap(main,"05_after_save.png")
+              snap(main,"06_after_save.png")
 
               # Inventory project files, including timestamps and likely native project files.
               roots=[BASE,Path.home()/"Documents",Path(r"C:\ProgramData")]
@@ -200,7 +216,7 @@ jobs:
               try:
                   main2=Desktop(backend="win32").window(title="MasterSCADA")
                   main2.wait("visible",timeout=10)
-                  snap(main2,"06_after_reopen.png")
+                  snap(main2,"07_after_reopen.png")
                   dialogs2=[w for w in Desktop(backend="win32").windows(process=newpid)
                             if w.class_name()=="#32770" and w.is_visible()]
                   Path("reopen_result.txt").write_text(
