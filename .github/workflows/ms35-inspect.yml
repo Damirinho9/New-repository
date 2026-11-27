@@ -72,8 +72,8 @@ jobs:
                           except Exception as e: log.append("ROOTERR "+repr(e))
                   except Exception as e: log.append("CTRLERR "+repr(e))
           Path("ui_inventory.txt").write_text("\n".join(log),encoding="utf-8")
-          '@ | Set-Content inspect.py -Encoding UTF8
-          python inspect.py
+          '@ | Set-Content dump_ui.py -Encoding UTF8
+          python dump_ui.py
           Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA'} | Stop-Process -Force -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v4
         with:
