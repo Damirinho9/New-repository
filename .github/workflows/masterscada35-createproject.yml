@@ -9,10 +9,10 @@ jobs:
     steps:
       - name: Restore MasterSCADA installer cache
         id: mscache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: C:\Temp\MasterSCADA35
-          key: masterscada-demo-3.5.0-msi-v1
+          key: masterscada-demo-3.5.0-msi-v2
 
       - name: Download MasterSCADA installer if needed
         if: steps.mscache.outputs.cache-hit != 'true'
@@ -20,8 +20,25 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path C:\Temp\MasterSCADA35 -Force | Out-Null
           $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
-          curl.exe -k -L --fail "$b/data.msi" -o C:\Temp\MasterSCADA35\data.msi
-          curl.exe -k -L --fail "$b/Data1.cab" -o C:\Temp\MasterSCADA35\Data1.cab
+          function Get-WithRetry([string]$url,[string]$out) {
+            for($i=1;$i -le 7;$i++) {
+              Write-Host "Download attempt $i : $url"
+              curl.exe -k -L --fail --connect-timeout 30 --max-time 180 "$url" -o "$out"
+              if($LASTEXITCODE -eq 0 -and (Test-Path $out) -and ((Get-Item $out).Length -gt 100000)) { return }
+              Start-Sleep -Seconds (3*$i)
+            }
+            throw "Failed to download $url after retries"
+          }
+          Get-WithRetry "$b/data.msi" "C:\Temp\MasterSCADA35\data.msi"
+          Get-WithRetry "$b/Data1.cab" "C:\Temp\MasterSCADA35\Data1.cab"
+          Get-FileHash C:\Temp\MasterSCADA35\data.msi,C:\Temp\MasterSCADA35\Data1.cab -Algorithm SHA256 | Format-List | Out-File installer_hashes.txt
+
+      - name: Save MasterSCADA installer cache immediately
+        if: steps.mscache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: C:\Temp\MasterSCADA35
+          key: masterscada-demo-3.5.0-msi-v2
 
       - name: Install MasterSCADA 3.5
         shell: pwsh
