@@ -1,0 +1,84 @@
+name: MasterSCADA 3.5 loaded UI inventory
+on:
+  push:
+    branches: [tmp-ms35-inspect]
+jobs:
+  inspect:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Install
+        shell: pwsh
+        run: |
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
+          curl.exe -k -L --fail "$b/data.msi" -o data.msi
+          curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
+          $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
+          if($p.ExitCode -ne 0){throw "MSI failed"}
+          python -m pip install --disable-pip-version-check pywinauto pillow pyautogui
+      - name: Load demo and dump controls
+        shell: pwsh
+        run: |
+          @'
+          from pywinauto import Application, Desktop
+          from pathlib import Path
+          import time, traceback, pyautogui
+          log=[]
+          exe=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          proj=r"C:\MasterSCADA Projects\Projects\Tutorials\Demo_Бак\Demo_Бак.vav"
+          app=Application(backend="win32").start(f'"{exe}" "{proj}"')
+          time.sleep(12)
+          # click every visible modal OK button attached to MasterSCADA
+          for w in Desktop(backend="win32").windows():
+              try:
+                  if w.class_name()=="#32770" and w.window_text()=="MasterSCADA":
+                      for c in w.children():
+                          log.append(f"MODALCHILD {c.handle} {c.class_name()} {c.window_text()!r}")
+                          if c.class_name()=="Button" and c.window_text()=="OK":
+                              c.click()
+                              log.append("CLICKED OK")
+              except Exception as e: log.append("MODALERR "+repr(e))
+          time.sleep(30)
+          pyautogui.screenshot("loaded.png")
+          wins=Desktop(backend="win32").windows()
+          main=None
+          for w in wins:
+              try:
+                  log.append(f"TOP {w.handle} {w.class_name()} {w.window_text()!r} {w.rectangle()}")
+                  if w.window_text().startswith("MasterSCADA") and w.class_name()!="#32770":
+                      main=w
+              except: pass
+          if main:
+              try:
+                  log.append("MENU="+repr(main.menu().get_menu_path("Проект")))
+              except Exception as e: log.append("MENUERR "+repr(e))
+              for i,c in enumerate(main.descendants()):
+                  try:
+                      log.append(f"CTRL {i} {c.handle} {c.class_name()} {c.window_text()!r} {c.rectangle()}")
+                      if c.class_name()=="SysTreeView32":
+                          log.append("TREEFOUND "+str(c.handle))
+                          try:
+                              roots=c.roots()
+                              for r in roots:
+                                  log.append(" ROOT "+repr(r.text()))
+                                  def walk(it,depth=1):
+                                      if depth>8:return
+                                      try:
+                                          for ch in it.children():
+                                              log.append("  "*depth+"ITEM "+repr(ch.text()))
+                                              walk(ch,depth+1)
+                                      except Exception as e: log.append("TREEERR "+repr(e))
+                                  walk(r)
+                          except Exception as e: log.append("ROOTERR "+repr(e))
+                  except Exception as e: log.append("CTRLERR "+repr(e))
+          Path("ui_inventory.txt").write_text("\n".join(log),encoding="utf-8")
+          '@ | Set-Content inspect.py -Encoding UTF8
+          python inspect.py
+          Get-Process | Where-Object {$_.ProcessName -match 'MasterSCADA'} | Stop-Process -Force -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ms35-loaded-ui-inventory
+          path: |
+            ui_inventory.txt
+            loaded.png
+          if-no-files-found: warn
