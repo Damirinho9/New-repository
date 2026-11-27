@@ -1,0 +1,90 @@
+name: MasterSCADA 3.5 environment inventory
+on:
+  push:
+    branches: [tmp-ms35-build]
+jobs:
+  inventory:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Install classic MasterSCADA 3.5 Demo
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Stop"
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
+          curl.exe -k -L --fail "$b/version.txt" -o version.txt
+          curl.exe -k -L --fail "$b/data.msi" -o data.msi
+          curl.exe -k -L --fail "$b/Data1.cab" -o Data1.cab
+          $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress','/L*V',('"' + (Join-Path $PWD 'install.log') + '"')) -PassThru -Wait
+          "ExitCode=$($p.ExitCode)" | Out-File install_result.txt
+          if($p.ExitCode -ne 0){throw "MSI failed"}
+      - name: Inventory installed product
+        shell: pwsh
+        run: |
+          $ErrorActionPreference="Continue"
+          Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+            Get-ItemProperty -ErrorAction SilentlyContinue |
+            Where-Object {$_.DisplayName -match 'MasterSCADA|Master SCADA|MPS|InSAT'} |
+            Select DisplayName,DisplayVersion,Publisher,InstallLocation,InstallSource,UninstallString,ModifyPath |
+            Format-List | Out-File registry.txt
+
+          $roots=@("C:\Program Files","C:\Program Files (x86)","C:\ProgramData","C:\Users\Public\Documents","C:\Users\runneradmin\Documents")
+          $matches=@()
+          foreach($root in $roots){
+            if(Test-Path $root){
+              $matches += Get-ChildItem $root -Recurse -Force -ErrorAction SilentlyContinue |
+                Where-Object {$_.FullName -match 'MasterSCADA|Master SCADA|MPS Soft|INSAT|InSAT|MasterSCADA Projects|ДемонстрацияСкрипта'}
+            }
+          }
+          $matches | Select FullName,Length,LastWriteTime,PSIsContainer | Sort FullName | Format-Table -AutoSize | Out-File matched_paths.txt -Width 600
+
+          Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {$_.Name -match 'MasterSCADA|MStudio|Designer|Editor|Runtime|RT|Script' -or $_.DirectoryName -match 'MasterSCADA'} |
+            Select FullName,Length,VersionInfo | Format-List | Out-File installed_files.txt -Width 600
+
+          Get-ChildItem $roots -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {$_.Name -match 'ДемонстрацияСкрипта|Script|Demo|Example' -or $_.Extension -match '^\.(vav|msrt|xml|vbf|fb|dll|chm|pdf|txt)$'} |
+            Where-Object {$_.FullName -match 'MasterSCADA|Master SCADA|MPS|INSAT|InSAT'} |
+            Select FullName,Length,LastWriteTime | Sort FullName | Format-Table -AutoSize | Out-File project_and_docs_candidates.txt -Width 600
+
+          Get-ChildItem "C:\Program Files","C:\Program Files (x86)","C:\ProgramData","C:\Users\Public\Documents" -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {$_.FullName -match 'MasterSCADA|Master SCADA|MPS|INSAT|InSAT'} |
+            Where-Object {$_.Name -match 'Object|Model|Script|Скрипт|Объект|Демонстрац|Readme|Help'} |
+            Select FullName,Length | Sort FullName | Format-Table -AutoSize | Out-File object_model_candidates.txt -Width 600
+
+          Get-Process | Sort ProcessName | Select ProcessName,Id,Path | Format-Table -AutoSize | Out-File process_snapshot.txt -Width 400
+          exit 0
+
+      - name: Package small installed examples and metadata
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory selected -Force | Out-Null
+          $roots=@("C:\Program Files","C:\Program Files (x86)","C:\ProgramData","C:\Users\Public\Documents")
+          $cand=Get-ChildItem $roots -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {$_.FullName -match 'MasterSCADA|Master SCADA|MPS|INSAT|InSAT'} |
+            Where-Object {$_.Length -lt 5000000} |
+            Where-Object {$_.Name -match 'ДемонстрацияСкрипта|Script|Скрипт|Object|Model|Readme|Demo|Example|\.vav$|\.xml$|\.txt$'}
+          foreach($x in $cand){
+            try {
+              $safe=($x.FullName -replace '[:\\/ ]','_')
+              Copy-Item -LiteralPath $x.FullName -Destination (Join-Path selected $safe) -Force
+            } catch {}
+          }
+          Compress-Archive -Path selected\* -DestinationPath selected_examples.zip -Force -ErrorAction SilentlyContinue
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ms35-environment-inventory
+          path: |
+            version.txt
+            install_result.txt
+            install.log
+            registry.txt
+            matched_paths.txt
+            installed_files.txt
+            project_and_docs_candidates.txt
+            object_model_candidates.txt
+            process_snapshot.txt
+            selected_examples.zip
+          if-no-files-found: warn
