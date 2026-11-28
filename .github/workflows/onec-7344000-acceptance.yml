@@ -95,7 +95,7 @@ jobs:
             chmod -R a+rwX /tmp
           '
           cat "$WORK/tmp/7344000-seed.ok" | tee "$OUT/04-seed.txt"
-          echo "TEST_DATA=PASS" >> "$OUT/native-status.txt"
+          echo "TEST_DATA=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
 
       - name: Run detailed functional acceptance inside 1C
         shell: bash
@@ -126,7 +126,7 @@ jobs:
           cat "$OUT/05-functional-acceptance.txt"
           for marker in TEST_DATA AUTOSUM THRESHOLD_LOGIC BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT; do
             grep -q "$marker=PASS" "$OUT/05-functional-acceptance.txt" || { echo "MISSING_MARKER=$marker"; exit 1; }
-            echo "$marker=PASS" >> "$OUT/native-status.txt"
+            echo "$marker=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
           done
           terminate_sessions
 
@@ -157,7 +157,7 @@ jobs:
           capture_one shot-services 08-services.png 96 18
           capture_one shot-threshold 09-threshold.png 95 20
           identify "$OUT/"0*.png | tee "$OUT/evidence-images.txt"
-          echo "GUI_SCREENSHOTS=PASS" >> "$OUT/native-status.txt"
+          echo "GUI_SCREENSHOTS=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
 
       - name: Dump CF and DT then restore DT
         shell: bash
@@ -182,8 +182,8 @@ jobs:
             sha256sum /out/7344000_Variant10.cf /out/7344000_Variant10.dt | tee /out/sha256.txt
             chmod -R a+rwX /out /work
           '
-          echo "DUMP_IB=PASS" >> "$OUT/native-status.txt"
-          echo "RESTORE_IB=PASS" >> "$OUT/native-status.txt"
+          echo "DUMP_IB=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
+          echo "RESTORE_IB=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
 
       - name: Verify restored DT through real 1C thin client
         shell: bash
@@ -210,8 +210,8 @@ jobs:
           for marker in TEST_DATA AUTOSUM THRESHOLD_LOGIC BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT; do
             grep -q "$marker=PASS" "$OUT/10-restored-functional-acceptance.txt" || exit 1
           done
-          echo "RESTORED_RUNTIME=PASS" >> "$OUT/native-status.txt"
-          echo "PLATFORM_INSTALL=PASS_DOCKER_1C_8.3.27.1508" >> "$OUT/native-status.txt"
+          echo "RESTORED_RUNTIME=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
+          echo "PLATFORM_INSTALL=PASS_DOCKER_1C_8.3.27.1508" | sudo tee -a "$OUT/native-status.txt" >/dev/null
           cat "$OUT/native-status.txt"
 
       - name: Cleanup
