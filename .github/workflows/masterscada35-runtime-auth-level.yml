@@ -1,16 +1,17 @@
-name: MasterSCADA 3.5 debug Level dynamics proof 7341100
+name: MasterSCADA 3.5 native recursive calculation proof 7341100
 
 on:
   push:
     branches: [tmp-masterscada-7341100]
 
 jobs:
-  debug-level:
+  calc-proof:
     runs-on: windows-2025
-    timeout-minutes: 16
+    timeout-minutes: 18
     permissions:
       actions: read
       contents: read
+
     steps:
       - uses: actions/cache/restore@v4
         with:
@@ -25,7 +26,7 @@ jobs:
           $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
           if($p.ExitCode -ne 0){throw "MSI failed $($p.ExitCode)"}
 
-      - name: Restore native checkpoint
+      - name: Restore stable native checkpoint
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,11 +35,12 @@ jobs:
           Invoke-WebRequest -Headers $h -Uri "https://api.github.com/repos/Damirinho9/New-repository/actions/artifacts/15227142597/zip" -OutFile known.zip
           Expand-Archive known.zip -DestinationPath known -Force
           $v=Get-ChildItem known -Recurse -Filter "7341100_MasterSCADA_Lab7.vav"|Select-Object -First 1
+          if(!$v){throw "VAV missing"}
           $d="C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7"
           New-Item -ItemType Directory $d -Force|Out-Null
           Copy-Item $v.FullName "$d\7341100_MasterSCADA_Lab7.vav" -Force
 
-      - name: Configure native simulation source and observe Level in Debug mode
+      - name: Configure recursive native Calculation and observe it in Debug
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check pywinauto pillow psutil pyautogui
@@ -69,7 +71,7 @@ jobs:
           def ui(m):return Desktop(backend="uia").window(handle=m.handle)
           def snap(w,p):
               try:w.capture_as_image().save(p);log.append("SHOT "+p)
-              except Exception as e:log.append("SHOTERR "+repr(e))
+              except Exception as e:log.append("SHOTERR "+p+" "+repr(e))
           def dump(w,p):
               rows=[]
               for i,x in enumerate(w.descendants()):
@@ -79,7 +81,9 @@ jobs:
               return rows
           def open_editor():
               app=Application(backend="win32").start(EXE);pid=app.process;time.sleep(8)
-              d=dialogs(pid)[0];r=d.rectangle()
+              ds=dialogs(pid)
+              if not ds:raise RuntimeError("startup dialog missing")
+              d=ds[0];r=d.rectangle()
               pyautogui.click(r.left+200,r.top+48);time.sleep(1.5)
               d=dialogs(pid)[0];pyautogui.click(r.left+180,r.top+90);time.sleep(.5)
               ok=None
@@ -114,15 +118,18 @@ jobs:
                   try:
                       if dec(x.window_text()).strip()==nm:return x
                   except:pass
-          def byid(m,cid):
-              return [x for x in m.descendants() if (lambda: True)()] if False else _byid(m,cid)
-          def _byid(m,cid):
-              out=[]
-              for x in m.descendants():
+          def rename(m,it,newname):
+              it.click_input();time.sleep(.3);m.type_keys("{F2}");time.sleep(.4)
+              edits=[]
+              for c in m.descendants():
                   try:
-                      if x.is_visible() and x.control_id()==cid:out.append(x)
+                      if c.class_name()=="Edit" and c.is_visible(): edits.append(c)
                   except:pass
-              return out
+              if not edits:raise RuntimeError("rename edit missing for "+newname)
+              ed=edits[-1];ed.set_edit_text(newname);ed.type_keys("{ENTER}");time.sleep(.8)
+          def formula_tab(m):
+              # Known formula tab position from prior native probe.
+              r=m.rectangle(); pyautogui.click(r.left+590,r.top+88);time.sleep(1.5)
           def find_auth():
               for w in Desktop(backend="uia").windows():
                   try:
@@ -152,7 +159,6 @@ jobs:
                   changed=False
                   for d in dialogs(pid):
                       try:
-                          # Login message browser has an IDOK=1 close button.
                           btn=None
                           for c in d.descendants():
                               if c.class_name()=="Button" and c.control_id()==1:btn=c;break
@@ -160,65 +166,91 @@ jobs:
                       except:pass
                   if not changed:break
           def mode(m,label):
-              try:m.menu_select("Режим->"+label);log.append("MODE="+label)
+              try:m.menu_select("Режим->"+label)
               except:
-                  r=m.rectangle();pyautogui.click(r.left+85,r.top+40);time.sleep(.5)
-                  # Stop, Start, Simulation, Debug.
+                  r=m.rectangle();pyautogui.click(r.left+208,r.top+40);time.sleep(.5)
                   n={"Стоп":1,"Пуск":2,"Имитация":3,"Отладка":4}[label]
                   pyautogui.press("down",presses=n,interval=.15);pyautogui.press("enter")
               time.sleep(4)
           try:
               pid,m=open_editor();expand(m)
-              lv=item(m,"Level")
-              if not lv:raise RuntimeError("Level missing")
-              lv.click_input();time.sleep(1)
-              sim,law,mn,mx=_byid(m,215),_byid(m,264),_byid(m,265),_byid(m,266)
-              if not(sim and law and mn and mx):raise RuntimeError("simulation controls missing")
-              sim[0].click()
-              try:law[0].select(1)
-              except:
-                  law[0].set_focus();law[0].type_keys("{HOME}{DOWN}{ENTER}")
-              mn[0].set_edit_text("20");mx[0].set_edit_text("80")
-              m.set_focus();m.type_keys("^s");time.sleep(3)
-              snap(m,"01_configured.png")
+              src=item(m,"Level");calc=item(m,"Расчет 1")
+              if not(src and calc):raise RuntimeError("Level or Calculation 1 missing")
+              rename(m,src,"LevelSource");expand(m)
+              calc=item(m,"Расчет 1")
+              rename(m,calc,"Level");expand(m)
+              calc=item(m,"Level")
+              if not calc:raise RuntimeError("renamed Level calculation missing")
+              calc.click_input();time.sleep(.6);formula_tab(m)
+              snap(m,"01_formula_empty.png")
+              # Drag calculation itself into formula variable table for recursive previous-value access.
+              calc=item(m,"Level")
+              rr=calc.rectangle();sx=(rr.left+rr.right)//2;sy=(rr.top+rr.bottom)//2
+              pyautogui.moveTo(sx,sy);pyautogui.dragTo(650,320,duration=1.0,button="left");time.sleep(2)
+              snap(m,"02_formula_self_variable.png")
+              # Set native formula.
+              edits=[c for c in m.descendants() if c.class_name()=="Edit" and c.is_visible() and c.control_id()==206]
+              if not edits:raise RuntimeError("formula edit control id 206 missing")
+              edits[0].set_edit_text("Level + 1")
+              time.sleep(1)
+              snap(m,"03_formula_level_plus_one.png")
+              # Inspect formula variable list and save.
+              lists=[c for c in m.descendants() if c.class_name()=="SysListView32" and c.control_id()==202]
+              listrows=[]
+              if lists:
+                  try:
+                      for i in range(lists[0].item_count()):
+                          it=lists[0].get_item(i);listrows.append(it.texts())
+                  except Exception as e:listrows.append(["ERR",repr(e)])
+              Path("formula_variables.json").write_text(json.dumps(listrows,ensure_ascii=False,indent=2),encoding="utf-8")
+              m.set_focus();m.type_keys("^s");time.sleep(4)
+              # Reopen formula after save to prove persistence.
+              calc=item(m,"Level");calc.click_input();formula_tab(m);time.sleep(1)
+              edits=[c for c in m.descendants() if c.class_name()=="Edit" and c.is_visible() and c.control_id()==206]
+              formula=edits[0].window_text() if edits else ""
+              Path("formula_persistence.txt").write_text("FORMULA="+formula+"\n",encoding="utf-8")
+              if "Level" not in formula or "+ 1" not in formula.replace("  "," "):
+                  raise RuntimeError("formula did not persist: "+repr(formula))
 
               mode(m,"Отладка")
-              na=clear_auth();time.sleep(2)
-              m=main(pid)
+              na=clear_auth();time.sleep(2);m=main(pid)
               if not m:raise RuntimeError("debug main missing")
-              close_messages(pid);time.sleep(1)
-              m=main(pid)
-              expand(m);lv=item(m,"Level")
+              close_messages(pid);time.sleep(1);m=main(pid);expand(m)
+              lv=item(m,"Level")
               if lv:lv.click_input()
-              snap(m,"02_debug_t1.png");dump(ui(m),"02_debug_t1_uia.json")
+              snap(m,"04_calc_debug_t1.png");dump(ui(m),"04_calc_debug_t1_uia.json")
               t1=time.time();time.sleep(8)
               m=main(pid);expand(m);lv=item(m,"Level")
               if lv:lv.click_input()
-              snap(m,"03_debug_t2.png");dump(ui(m),"03_debug_t2_uia.json")
+              snap(m,"05_calc_debug_t2.png");dump(ui(m),"05_calc_debug_t2_uia.json")
               t2=time.time()
-              Path("debug_result.txt").write_text("DEBUG_MODE=PASS\nAUTH_DIALOGS_HANDLED="+str(na)+"\nT1="+str(t1)+"\nT2="+str(t2)+"\n",encoding="utf-8")
-              src=Path(VAV).parent;dst=Path("native_project_snapshot")/src.name
+              Path("calc_debug_result.txt").write_text("CALC_DEBUG=PASS\nAUTH_DIALOGS_HANDLED="+str(na)+"\nT1="+str(t1)+"\nT2="+str(t2)+"\n",encoding="utf-8")
+              srcdir=Path(VAV).parent;dst=Path("native_project_snapshot")/srcdir.name
               if dst.exists():shutil.rmtree(dst)
-              shutil.copytree(src,dst)
+              shutil.copytree(srcdir,dst)
           except Exception:
               log.append("FATAL\n"+traceback.format_exc());raise
           finally:
               Path("run_log.txt").write_text("\n".join(log),encoding="utf-8");kill()
-          '@ | Set-Content debug_level.py -Encoding UTF8
-          python debug_level.py
+          '@ | Set-Content calc_probe.py -Encoding UTF8
+          python calc_probe.py
 
-      - name: Upload debug proof
+      - name: Upload native calculation proof
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: masterscada35-debug-level-7341100
+          name: masterscada35-native-calc-proof-7341100
           path: |
-            debug_result.txt
-            01_configured.png
-            02_debug_t1.png
-            03_debug_t2.png
-            02_debug_t1_uia.json
-            03_debug_t2_uia.json
+            formula_variables.json
+            formula_persistence.txt
+            calc_debug_result.txt
+            01_formula_empty.png
+            02_formula_self_variable.png
+            03_formula_level_plus_one.png
+            04_calc_debug_t1.png
+            04_calc_debug_t1_uia.json
+            05_calc_debug_t2.png
+            05_calc_debug_t2_uia.json
             run_log.txt
             native_project_snapshot/**
           if-no-files-found: warn
