@@ -1,0 +1,134 @@
+name: onec-7344000-native
+on:
+  push:
+    branches: [onec-7344000-hotel]
+    paths:
+      - 'onec-7344000/**'
+      - '.github/workflows/onec-7344000-native.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      ONEC_TRAINING_URL: ${{ secrets.ONEC_TRAINING_URL }}
+      TARGET_VERSION: 8.3.27.1508
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preflight - require official training download URL
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ONEC_TRAINING_URL)) {
+            throw "BLOCKER_ONEC_TRAINING_URL_MISSING: add a fresh official online.1c.ru training download URL as repository secret ONEC_TRAINING_URL"
+          }
+          Write-Host "Official training download URL is configured."
+
+      - name: Download and install 1C training platform
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $work = Join-Path $env:RUNNER_TEMP "onec-training"
+          $zip = Join-Path $work "training_8_3_27_1508_Windows.zip"
+          $unpack = Join-Path $work "unpack"
+          New-Item -ItemType Directory -Force -Path $work, $unpack | Out-Null
+          Write-Host "Downloading official 1C training distribution..."
+          Invoke-WebRequest -Uri $env:ONEC_TRAINING_URL -OutFile $zip -UseBasicParsing
+          $zipInfo = Get-Item $zip
+          if ($zipInfo.Length -lt 1000000) { throw "Downloaded file is unexpectedly small: $($zipInfo.Length) bytes" }
+          $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "TRAINING_ZIP_SIZE=$($zipInfo.Length)"
+          Write-Host "TRAINING_ZIP_SHA256=$zipHash"
+          Expand-Archive -Path $zip -DestinationPath $unpack -Force
+          $setup = Get-ChildItem -Path $unpack -Filter setup.exe -Recurse -File | Select-Object -First 1
+          if (-not $setup) { throw "setup.exe not found in training distribution" }
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "1C setup failed with exit code $($p.ExitCode)" }
+          $roots = @("C:\Program Files\1cv8t", "C:\Program Files (x86)\1cv8t", "C:\Program Files\1cv8", "C:\Program Files (x86)\1cv8") | Where-Object { Test-Path $_ }
+          $v8 = $null
+          foreach ($root in $roots) {
+            $candidate = Get-ChildItem -Path $root -Filter 1cv8t.exe -Recurse -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+            if ($candidate) { $v8 = $candidate; break }
+          }
+          if (-not $v8) {
+            foreach ($root in $roots) {
+              $candidate = Get-ChildItem -Path $root -Filter 1cv8.exe -Recurse -File -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+              if ($candidate) { $v8 = $candidate; break }
+            }
+          }
+          if (-not $v8) { throw "1cv8t.exe/1cv8.exe not found after installation" }
+          $fileVersion = $v8.VersionInfo.FileVersion
+          Write-Host "ONEC_EXE=$($v8.FullName)"
+          Write-Host "ONEC_FILE_VERSION=$fileVersion"
+          "V8_EXE=$($v8.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "V8_FILE_VERSION=$fileVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "TRAINING_ZIP_SHA256=$zipHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Generate hotel XML configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tools = Join-Path $env:RUNNER_TEMP 'cc-1c-skills'
+          git clone --quiet https://github.com/Nikolay-Shirokov/cc-1c-skills.git $tools
+          if ($LASTEXITCODE -ne 0) { throw 'clone failed' }
+          git -C $tools checkout --quiet 4fc37e1f992057847228a69837337bd3c141c059
+          if ($LASTEXITCODE -ne 0) { throw 'checkout failed' }
+          python -m pip install lxml
+          if ($LASTEXITCODE -ne 0) { throw 'pip failed' }
+          $src = Join-Path $env:RUNNER_TEMP 'hotel-xml'
+          python onec-7344000/generate.py $tools $src
+          if ($LASTEXITCODE -ne 0) { throw 'XML generation failed' }
+          "SRC_PATH=$src" >> $env:GITHUB_ENV
+      - name: Native configuration load and check
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'onec-7344000/native-output'
+          $ib = Join-Path $env:RUNNER_TEMP 'hotel-db'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          function Invoke-1C($arguments, $log) {
+            $fullArgs = "$arguments /DisableStartupDialogs /Out""$log"""
+            $p = Start-Process -FilePath $env:V8_EXE -ArgumentList $fullArgs -PassThru
+            if (-not $p.WaitForExit(240000)) { Stop-Process -Id $p.Id -Force; throw '1C timeout' }
+            if ($p.ExitCode -ne 0) { throw "1C exit $($p.ExitCode): $log" }
+          }
+          Invoke-1C "CREATEINFOBASE ""File=$ib;""" (Join-Path $out '01-create.log')
+          if (!(Test-Path (Join-Path $ib '1Cv8.1CD'))) { throw 'Database file absent' }
+          Invoke-1C "DESIGNER /F""$ib"" /LoadConfigFromFiles ""$env:SRC_PATH""" (Join-Path $out '02-load.log')
+          Invoke-1C "DESIGNER /F""$ib"" /UpdateDBCfg" (Join-Path $out '03-update.log')
+          Invoke-1C "DESIGNER /F""$ib"" /CheckConfig" (Join-Path $out '04-check.log')
+          "IB_PATH=$ib" >> $env:GITHUB_ENV
+          "OUT_PATH=$out" >> $env:GITHUB_ENV
+      - name: Seed and export database
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Invoke-1C($arguments, $log) {
+            $p = Start-Process -FilePath $env:V8_EXE -ArgumentList "$arguments /DisableStartupDialogs /Out""$log""" -PassThru
+            if (-not $p.WaitForExit(240000)) { Stop-Process -Id $p.Id -Force; throw '1C timeout' }
+            if ($p.ExitCode -ne 0) { throw "1C exit $($p.ExitCode)" }
+          }
+          $marker = Join-Path $env:TEMP '7344000-seed.ok'
+          if (Test-Path $marker) { Remove-Item $marker -Force }
+          Invoke-1C "ENTERPRISE /F""$env:IB_PATH"" /Cseed-hotel" (Join-Path $env:OUT_PATH '05-seed.log')
+          if (!(Test-Path $marker)) { throw 'Native data seed marker absent' }
+          Copy-Item $marker (Join-Path $env:OUT_PATH 'seed.ok')
+          $dt = Join-Path $env:OUT_PATH '7344000_Variant10.dt'
+          $cf = Join-Path $env:OUT_PATH '7344000_Variant10.cf'
+          Invoke-1C "DESIGNER /F""$env:IB_PATH"" /DumpIB ""$dt""" (Join-Path $env:OUT_PATH '06-dump.log')
+          Invoke-1C "DESIGNER /F""$env:IB_PATH"" /DumpCfg ""$cf""" (Join-Path $env:OUT_PATH '07-cf.log')
+          if (!(Test-Path $dt) -or !(Test-Path $cf)) { throw 'Native export absent' }
+          $restore = Join-Path $env:RUNNER_TEMP 'hotel-restored'
+          Invoke-1C "CREATEINFOBASE ""File=$restore;""" (Join-Path $env:OUT_PATH '08-create-restore.log')
+          Invoke-1C "DESIGNER /F""$restore"" /RestoreIB ""$dt""" (Join-Path $env:OUT_PATH '09-restore.log')
+          Invoke-1C "DESIGNER /F""$restore"" /CheckConfig" (Join-Path $env:OUT_PATH '10-restored-check.log')
+          Get-FileHash $dt,$cf -Algorithm SHA256 | Format-List | Out-File (Join-Path $env:OUT_PATH 'sha256.txt')
+      - name: Upload native diagnostics and outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onec-7344000-native
+          path: onec-7344000/native-output/
+          if-no-files-found: warn
+          retention-days: 7
