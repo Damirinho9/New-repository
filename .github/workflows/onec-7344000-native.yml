@@ -1,10 +1,5 @@
 name: onec-7344000-native
 on:
-  push:
-    branches: [onec-7344000-hotel]
-    paths:
-      - 'onec-7344000/**'
-      - '.github/workflows/onec-7344000-native.yml'
   workflow_dispatch:
 permissions:
   contents: read
