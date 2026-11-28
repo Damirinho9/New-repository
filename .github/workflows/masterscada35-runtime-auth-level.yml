@@ -119,14 +119,11 @@ jobs:
                       if dec(x.window_text()).strip()==nm:return x
                   except:pass
           def rename(m,it,newname):
-              it.click_input();time.sleep(.3);m.type_keys("{F2}");time.sleep(.4)
-              edits=[]
-              for c in m.descendants():
-                  try:
-                      if c.class_name()=="Edit" and c.is_visible(): edits.append(c)
-                  except:pass
-              if not edits:raise RuntimeError("rename edit missing for "+newname)
-              ed=edits[-1];ed.set_edit_text(newname);ed.type_keys("{ENTER}");time.sleep(.8)
+              it.click_input();time.sleep(.3)
+              it.type_keys("{F2}");time.sleep(.5)
+              pyautogui.hotkey("ctrl","a");time.sleep(.15)
+              pyautogui.write(newname,interval=.04)
+              pyautogui.press("enter");time.sleep(1.0)
           def formula_tab(m):
               # Known formula tab position from prior native probe.
               r=m.rectangle(); pyautogui.click(r.left+590,r.top+88);time.sleep(1.5)
