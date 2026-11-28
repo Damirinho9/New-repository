@@ -19,11 +19,7 @@ def dump(name,data):
 run("cf-init","cf-init.py","-Name","БронированиеНомеровГостиницы","-Synonym","Бронирование номеров гостиницы","-OutputDir",src,"-Version","1.0","-CompatibilityMode","Version8_3_27","-FormatVersion","2.20")
 meta=json.loads((project/"metadata.json").read_text(encoding="utf-8"))
 meta.append({"type":"CommonModule","name":"НачальноеЗаполнение","context":"server"})
-meta.append({"type":"CommonModule","name":"Приемка7344000","context":"server"})
 run("meta-compile","meta-compile.py","-JsonPath",dump("metadata-build.json",meta),"-OutputDir",src)
-acceptance_target=src/"CommonModules"/"Приемка7344000"/"Ext"/"Module.bsl"
-acceptance_target.parent.mkdir(parents=True,exist_ok=True)
-acceptance_target.write_text((project/"acceptance.bsl").read_text(encoding="utf-8"),encoding="utf-8-sig")
 for p in (project/"modules").glob("*.bsl"):
     target=src/"Documents"/p.stem/"Ext"/"ObjectModule.bsl"
     target.parent.mkdir(parents=True,exist_ok=True)
@@ -125,7 +121,7 @@ lines += [
     "КонецФункции",
     ""
 ]
-(src/"CommonModules"/"НачальноеЗаполнение"/"Ext"/"Module.bsl").write_text("\n".join(lines),encoding="utf-8-sig")
+base_module="\\n".join(lines)\nacceptance_module=(project/"acceptance.bsl").read_text(encoding="utf-8")\n(src/"CommonModules"/"НачальноеЗаполнение"/"Ext"/"Module.bsl").write_text(base_module+"\\n"+acceptance_module,encoding="utf-8-sig")
 managed_module = '''Процедура ПриНачалеРаботыСистемы()
     Если ПараметрЗапуска = "seed-hotel" Тогда
         НачальноеЗаполнение.Заполнить();
@@ -136,7 +132,7 @@ managed_module = '''Процедура ПриНачалеРаботыСисте�
     ИначеЕсли ПараметрЗапуска = "verify-hotel" Тогда
         Попытка
             БазоваяПроверка = НачальноеЗаполнение.Проверить();
-            ФункциональнаяПроверка = Приемка7344000.Выполнить();
+            ФункциональнаяПроверка = НачальноеЗаполнение.ПроверитьФункциональность();
             ТекстПроверки = БазоваяПроверка + Символы.ПС + ФункциональнаяПроверка;
         Исключение
             ТекстПроверки = "VERIFY_ERROR=" + ОписаниеОшибки();
@@ -152,17 +148,17 @@ managed_module = '''Процедура ПриНачалеРаботыСисте�
     ИначеЕсли ПараметрЗапуска = "shot-bookings" Тогда
         ОткрытьФорму("Документ.БронированиеНомера.ФормаСписка");
     ИначеЕсли ПараметрЗапуска = "shot-booking-object" Тогда
-        СсылкаБрони = Приемка7344000.ДорогаяБронь();
+        СсылкаБрони = НачальноеЗаполнение.ДорогаяБронь();
         Если СсылкаБрони <> Неопределено Тогда
             ОткрытьФорму("Документ.БронированиеНомера.ФормаОбъекта", Новый Структура("Ключ", СсылкаБрони));
         КонецЕсли;
     ИначеЕсли ПараметрЗапуска = "shot-threshold" Тогда
-        СсылкаБрони = Приемка7344000.ДорогаяБроньССообщением();
+        СсылкаБрони = НачальноеЗаполнение.ДорогаяБроньССообщением();
         Если СсылкаБрони <> Неопределено Тогда
             ОткрытьФорму("Документ.БронированиеНомера.ФормаОбъекта", Новый Структура("Ключ", СсылкаБрони));
         КонецЕсли;
     ИначеЕсли ПараметрЗапуска = "shot-services" Тогда
-        СсылкаУслуг = Приемка7344000.ПервоеОказаниеУслуг();
+        СсылкаУслуг = НачальноеЗаполнение.ПервоеОказаниеУслуг();
         Если СсылкаУслуг <> Неопределено Тогда
             ОткрытьФорму("Документ.ОказаниеУслуг.ФормаОбъекта", Новый Структура("Ключ", СсылкаУслуг));
         КонецЕсли;
