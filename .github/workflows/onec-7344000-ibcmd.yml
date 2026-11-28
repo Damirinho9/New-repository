@@ -1,0 +1,111 @@
+name: onec-7344000-ibcmd
+on:
+  push:
+    branches: [onec-7344000-hotel]
+    paths:
+      - '.github/workflows/onec-7344000-ibcmd.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ibcmd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate hotel XML
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/cc-1c-skills"
+          git clone --quiet https://github.com/Nikolay-Shirokov/cc-1c-skills.git "$tools"
+          git -C "$tools" checkout --quiet 4fc37e1f992057847228a69837337bd3c141c059
+          python -m pip install -q lxml
+          src="$RUNNER_TEMP/hotel-xml"
+          python onec-7344000/generate.py "$tools" "$src"
+          echo "SRC=$src" >> "$GITHUB_ENV"
+      - name: Pull 1C server image with ibcmd
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull logobobah/onec-server11_xvfb:8.3.27.1508
+          docker image inspect logobobah/onec-server11_xvfb:8.3.27.1508 --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+      - name: Native ibcmd build, check, CF and DT roundtrip
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/onec-7344000/ibcmd-output"
+          mkdir -p "$out"
+          chmod 777 "$out"
+          docker run --rm --entrypoint /bin/bash \
+            -v "$SRC:/src:ro" -v "$out:/out" \
+            logobobah/onec-server11_xvfb:8.3.27.1508 -lc '
+              set -euo pipefail
+              IBCMD="$(find /opt/1cv8 -type f -name ibcmd -perm -111 | head -n1)"
+              test -n "$IBCMD"
+              echo "IBCMD=$IBCMD" | tee /out/platform.txt
+              "$IBCMD" --version 2>&1 | tee -a /out/platform.txt || true
+              "$IBCMD" infobase create --help > /out/help-create.txt 2>&1 || true
+              "$IBCMD" infobase config save --help > /out/help-save.txt 2>&1 || true
+              "$IBCMD" infobase dump --help > /out/help-dump.txt 2>&1 || true
+
+              mkdir -p /tmp/ss-data /tmp/hotel-db
+              "$IBCMD" infobase create \
+                --data=/tmp/ss-data \
+                --db-path=/tmp/hotel-db \
+                --create-database \
+                --import=/src \
+                --apply --force 2>&1 | tee /out/01-create-import-apply.log
+
+              test -f /tmp/hotel-db/1Cv8.1CD
+              echo "CREATE_IMPORT_APPLY=PASS" | tee /out/result.txt
+
+              "$IBCMD" infobase config generation-id \
+                --data=/tmp/ss-data --db-path=/tmp/hotel-db \
+                2>&1 | tee /out/02-generation-id.log
+
+              "$IBCMD" infobase config check \
+                --data=/tmp/ss-data --db-path=/tmp/hotel-db \
+                2>&1 | tee /out/03-config-check.log
+              echo "CONFIG_CHECK=PASS" | tee -a /out/result.txt
+
+              "$IBCMD" infobase config save \
+                --data=/tmp/ss-data --db-path=/tmp/hotel-db \
+                /out/7344000_Variant10.cf 2>&1 | tee /out/04-save-cf.log
+              test -s /out/7344000_Variant10.cf
+              echo "CF_SAVE=PASS" | tee -a /out/result.txt
+
+              "$IBCMD" infobase dump \
+                --data=/tmp/ss-data --db-path=/tmp/hotel-db \
+                /out/7344000_Variant10.dt 2>&1 | tee /out/05-dump-dt.log
+              test -s /out/7344000_Variant10.dt
+              echo "DT_DUMP=PASS" | tee -a /out/result.txt
+
+              mkdir -p /tmp/restore-data /tmp/restored-db
+              "$IBCMD" infobase create \
+                --data=/tmp/restore-data \
+                --db-path=/tmp/restored-db \
+                --create-database \
+                --restore=/out/7344000_Variant10.dt \
+                2>&1 | tee /out/06-restore-dt.log
+              test -f /tmp/restored-db/1Cv8.1CD
+              "$IBCMD" infobase config generation-id \
+                --data=/tmp/restore-data --db-path=/tmp/restored-db \
+                2>&1 | tee /out/07-restored-generation-id.log
+              "$IBCMD" infobase config check \
+                --data=/tmp/restore-data --db-path=/tmp/restored-db \
+                2>&1 | tee /out/08-restored-check.log
+              echo "DT_RESTORE_CHECK=PASS" | tee -a /out/result.txt
+
+              sha256sum /out/7344000_Variant10.cf /out/7344000_Variant10.dt | tee /out/sha256.txt
+              cp /tmp/hotel-db/1Cv8.1CD /out/7344000_1Cv8.1CD
+              chmod -R a+rwX /out
+            '
+      - name: Upload native ibcmd outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onec-7344000-ibcmd-native
+          path: onec-7344000/ibcmd-output/
+          if-no-files-found: error
+          retention-days: 7
