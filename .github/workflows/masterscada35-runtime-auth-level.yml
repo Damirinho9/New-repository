@@ -1,0 +1,399 @@
+name: MasterSCADA 3.5 runtime auth and level dynamics 7341100
+
+on:
+  push:
+    branches: [tmp-masterscada-7341100]
+
+jobs:
+  runtime-level:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Restore MasterSCADA installer cache
+        id: mscache
+        uses: actions/cache/restore@v4
+        with:
+          path: C:\Temp\MasterSCADA35
+          key: masterscada-demo-3.5.0-msi-v2
+
+      - name: Install MasterSCADA 3.5
+        shell: pwsh
+        run: |
+          if (!(Test-Path C:\Temp\MasterSCADA35\data.msi)) { throw "Installer cache missing" }
+          Copy-Item C:\Temp\MasterSCADA35\data.msi . -Force
+          Copy-Item C:\Temp\MasterSCADA35\Data1.cab . -Force
+          $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
+          if($p.ExitCode -ne 0){ throw "MSI failed $($p.ExitCode)" }
+
+      - name: Restore latest persisted native project
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers=@{
+            Authorization="Bearer $env:GH_TOKEN"
+            Accept="application/vnd.github+json"
+            "X-GitHub-Api-Version"="2022-11-28"
+          }
+          Invoke-WebRequest -Headers $headers -Uri "https://api.github.com/repos/Damirinho9/New-repository/actions/artifacts/15227742052/zip" -OutFile previous.zip
+          Expand-Archive previous.zip -DestinationPath previous -Force
+          $vav=Get-ChildItem previous -Recurse -Filter "7341100_MasterSCADA_Lab7.vav" | Select-Object -First 1
+          if(!$vav){ throw "Persisted VAV missing" }
+          $dest="C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7"
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          Copy-Item $vav.FullName (Join-Path $dest $vav.Name) -Force
+          Get-ChildItem $dest | Select Name,Length | Format-Table | Out-File restored_project.txt
+
+      - name: Configure native Level simulation, authenticate Runtime and measure dynamics
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pywinauto pillow psutil
+          @'
+          from pathlib import Path
+          from pywinauto import Desktop, Application
+          import time, json, traceback, psutil, shutil, re
+
+          EXE=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
+          VAV=r"C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7\7341100_MasterSCADA_Lab7.vav"
+          log=[]
+
+          def demoji(s):
+              try: return s.encode("cp1252").decode("cp1251")
+              except Exception: return s
+
+          def kill_all():
+              for p in psutil.process_iter(["name"]):
+                  try:
+                      if p.info["name"] and "masterscada" in p.info["name"].lower():
+                          p.kill()
+                  except: pass
+
+          def snap(w,path):
+              try:
+                  w.capture_as_image().save(path)
+                  log.append("SHOT "+path)
+              except Exception as e:
+                  log.append("SHOTERR "+path+" "+repr(e))
+
+          def win32_windows(pid=None):
+              return Desktop(backend="win32").windows(process=pid) if pid else Desktop(backend="win32").windows()
+
+          def mainwin(pid=None):
+              for w in win32_windows(pid):
+                  try:
+                      if w.is_visible() and w.window_text().startswith("MasterSCADA"):
+                          return w
+                  except: pass
+              raise RuntimeError("MasterSCADA main window missing")
+
+          def dialogs(pid=None):
+              return [w for w in win32_windows(pid) if w.class_name()=="#32770" and w.is_visible()]
+
+          def open_project():
+              app=Application(backend="win32").start(EXE)
+              pid=app.process
+              time.sleep(8)
+              m=mainwin(pid)
+              ds=dialogs(pid)
+              if ds:
+                  ds[0].type_keys("{ESC}")
+                  time.sleep(1)
+              m=mainwin(pid)
+              m.set_focus(); m.type_keys("^o"); time.sleep(2)
+              ds=dialogs(pid)
+              if not ds: raise RuntimeError("Open project dialog missing")
+              od=ds[0]; od.set_focus(); od.type_keys("%n"); time.sleep(.3)
+              od.type_keys(VAV,with_spaces=True); od.type_keys("{ENTER}")
+              time.sleep(6)
+              ds=dialogs(pid)
+              if ds:
+                  try: ds[0].type_keys("{ENTER}")
+                  except: pass
+                  time.sleep(6)
+              m=mainwin(pid)
+              if "7341100_MasterSCADA_Lab7" not in m.window_text():
+                  raise RuntimeError("Project did not open: "+m.window_text())
+              return pid,m
+
+          def uiamain(m):
+              return Desktop(backend="uia").window(handle=m.handle)
+
+          def find_tree(m,name):
+              for it in uiamain(m).descendants(control_type="TreeItem"):
+                  try:
+                      raw=it.window_text().strip()
+                      if raw==name or demoji(raw).strip()==name:
+                          return it
+                  except: pass
+              return None
+
+          def dump_window_uia(w,path):
+              rows=[]
+              try:
+                  for i,c in enumerate(w.descendants()):
+                      try:
+                          rows.append({
+                            "i":i,
+                            "type":c.element_info.control_type,
+                            "raw":c.window_text(),
+                            "dec":demoji(c.window_text()),
+                            "autoid":c.element_info.automation_id,
+                            "class":c.element_info.class_name,
+                            "rect":str(c.rectangle()),
+                            "enabled":c.is_enabled(),
+                            "visible":c.is_visible()
+                          })
+                      except: pass
+              finally:
+                  Path(path).write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding="utf-8")
+              return rows
+
+          def find_by_id_win32(m,cid):
+              found=[]
+              try:
+                  for c in m.descendants():
+                      try:
+                          if c.control_id()==cid and c.is_visible():
+                              found.append(c)
+                      except: pass
+              except: pass
+              return found
+
+          def click_mode_item(m,label):
+              uu=uiamain(m)
+              mode=None
+              for x in uu.descendants(control_type="MenuItem"):
+                  try:
+                      if demoji(x.window_text()).strip()=="Режим":
+                          mode=x; break
+                  except: pass
+              if mode is None: raise RuntimeError("Mode menu missing")
+              mode.click_input(); time.sleep(.6)
+              target=None; vals=[]
+              for w in Desktop(backend="uia").windows():
+                  try:
+                      for x in w.descendants(control_type="MenuItem"):
+                          if not x.is_visible(): continue
+                          s=demoji(x.window_text()).strip()
+                          if s: vals.append(s)
+                          if s==label: target=x
+                  except: pass
+              log.append("MODE_POPUP="+repr(vals))
+              if target is None:
+                  m.type_keys("{ESC}")
+                  raise RuntimeError("Mode item missing: "+label)
+              target.click_input()
+              time.sleep(4)
+
+          def numeric_snapshot(m,tag):
+              # Select Level and second property tab, expected to be runtime Data page.
+              level=find_tree(m,"Level")
+              if level:
+                  level.click_input(); time.sleep(.5)
+              uu=uiamain(m)
+              tabs=uu.descendants(control_type="TabItem")
+              if len(tabs)>=2:
+                  try: tabs[1].click_input(); time.sleep(.8)
+                  except: pass
+              rows=dump_window_uia(uiamain(m),f"{tag}_uia.json")
+              nums=[]
+              for r in rows:
+                  if r["type"] in ("Edit","Text","ComboBox"):
+                      txt=(r.get("dec") or r.get("raw") or "").strip().replace(",",".")
+                      if re.fullmatch(r"[-+]?\d+(?:\.\d+)?",txt):
+                          try: nums.append({"autoid":r["autoid"],"value":float(txt),"text":txt,"rect":r["rect"],"type":r["type"]})
+                          except: pass
+              snap(m,f"{tag}.png")
+              return nums
+
+          try:
+              pid,m=open_project()
+              snap(m,"01_project_restored.png")
+
+              # Configure Level using MasterSCADA's native Simulation option.
+              level=find_tree(m,"Level")
+              if level is None: raise RuntimeError("Level tree item missing")
+              level.click_input(); time.sleep(1)
+
+              sim=find_by_id_win32(m,215)
+              law=find_by_id_win32(m,264)
+              minv=find_by_id_win32(m,265)
+              maxv=find_by_id_win32(m,266)
+              log.append(f"SIM_CTRLS radio215={len(sim)} combo264={len(law)} min265={len(minv)} max266={len(maxv)}")
+              if not (sim and law and minv and maxv):
+                  dump_window_uia(uiamain(m),"level_config_probe.json")
+                  raise RuntimeError("Simulation controls incomplete")
+
+              sim[0].click()
+              time.sleep(.5)
+              # First available law is sufficient for native changing Level. Prefer first item, normally saw/sine family.
+              try:
+                  law[0].select(0)
+              except:
+                  law[0].type_keys("{HOME}{ENTER}")
+              minv[0].set_edit_text("20")
+              maxv[0].set_edit_text("80")
+              time.sleep(.5)
+              snap(m,"02_level_simulation_configured.png")
+              m.set_focus(); m.type_keys("^s"); time.sleep(4)
+              Path("level_simulation_config.txt").write_text(
+                  "LEVEL_SOURCE=NATIVE_MASTER_SCADA_SIMULATION\nMIN=20\nMAX=80\n",
+                  encoding="utf-8"
+              )
+
+              # Start Runtime.
+              click_mode_item(m,"Пуск")
+              time.sleep(4)
+
+              # Locate actual WinForms authentication dialog.
+              auth=None
+              for _ in range(20):
+                  for w in Desktop(backend="uia").windows():
+                      try:
+                          if w.is_visible() and w.window_text()=="Идентификация оператора":
+                              auth=w; break
+                      except: pass
+                  if auth: break
+                  time.sleep(.5)
+              if auth is None:
+                  raise RuntimeError("Runtime auth dialog missing")
+              dump_window_uia(auth,"runtime_auth_uia.json")
+              snap(auth,"03_runtime_auth.png")
+
+              # Official/educational MasterSCADA 3.x examples use the built-in 'sa' operator with blank password.
+              namecombo=auth.child_window(auto_id="comboBoxName",control_type="ComboBox")
+              try:
+                  e=namecombo.child_window(control_type="Edit")
+                  e.set_edit_text("sa")
+              except:
+                  namecombo.type_keys("^a")
+                  namecombo.type_keys("sa")
+              pwd=auth.child_window(auto_id="textBoxPassword",control_type="Edit")
+              pwd.set_edit_text("")
+              auth.child_window(auto_id="buttonOK",control_type="Button").click_input()
+              time.sleep(5)
+
+              # Determine whether auth dialog closed and whether an error message appeared.
+              still=False
+              for w in Desktop(backend="uia").windows():
+                  try:
+                      if w.is_visible() and w.window_text()=="Идентификация оператора":
+                          still=True
+                  except: pass
+              allwins=[]
+              for w in Desktop(backend="uia").windows():
+                  try:
+                      if w.is_visible():
+                          allwins.append({"title":w.window_text(),"class":w.element_info.class_name,"rect":str(w.rectangle())})
+                  except: pass
+              Path("windows_after_auth.json").write_text(json.dumps(allwins,ensure_ascii=False,indent=2),encoding="utf-8")
+              if still:
+                  Path("runtime_auth_result.txt").write_text("RUNTIME_AUTH=FAIL\nLOGIN=sa\nPASSWORD=<blank>\n",encoding="utf-8")
+                  # Capture any visible messages.
+                  for i,w in enumerate(Desktop(backend="uia").windows()):
+                      try:
+                          if w.is_visible(): snap(w,f"auth_failure_window_{i}.png")
+                      except: pass
+                  raise RuntimeError("sa blank authentication did not close dialog")
+              Path("runtime_auth_result.txt").write_text(
+                  "RUNTIME_AUTH=PASS\nLOGIN=sa\nPASSWORD=<blank>\nAUTH_DIALOG_CLOSED=YES\n",
+                  encoding="utf-8"
+              )
+
+              # The editor remains the Runtime host in MasterSCADA 3.x. Reacquire it after mode change.
+              time.sleep(3)
+              m=mainwin(pid)
+              snap(m,"04_runtime_authenticated.png")
+              dump_window_uia(uiamain(m),"runtime_after_auth_uia.json")
+
+              # Read current-data page twice and compare all numeric controls.
+              t1=time.time()
+              n1=numeric_snapshot(m,"05_level_t1")
+              time.sleep(6)
+              t2=time.time()
+              n2=numeric_snapshot(m,"06_level_t2")
+              Path("numeric_t1.json").write_text(json.dumps(n1,ensure_ascii=False,indent=2),encoding="utf-8")
+              Path("numeric_t2.json").write_text(json.dumps(n2,ensure_ascii=False,indent=2),encoding="utf-8")
+
+              by1={(x["autoid"],x["rect"],x["type"]):x["value"] for x in n1}
+              by2={(x["autoid"],x["rect"],x["type"]):x["value"] for x in n2}
+              changed=[]
+              for k,v1 in by1.items():
+                  if k in by2 and abs(by2[k]-v1)>1e-9:
+                      changed.append({"key":k,"v1":v1,"v2":by2[k],"delta":by2[k]-v1})
+              Path("numeric_changed.json").write_text(json.dumps(changed,ensure_ascii=False,indent=2),encoding="utf-8")
+
+              if changed:
+                  # At least one current numeric value on Level's runtime page changed under native MasterSCADA simulation.
+                  Path("level_dynamics_result.txt").write_text(
+                      "LEVEL_DYNAMICS=PASS\n"
+                      f"T1={t1}\nT2={t2}\n"
+                      "SOURCE=NATIVE_MASTER_SCADA_SIMULATION\n"
+                      "CHANGED="+json.dumps(changed,ensure_ascii=False)+"\n",
+                      encoding="utf-8"
+                  )
+              else:
+                  Path("level_dynamics_result.txt").write_text(
+                      "LEVEL_DYNAMICS=NOT_VERIFIED\n"
+                      f"T1={t1}\nT2={t2}\n"
+                      "SOURCE=NATIVE_MASTER_SCADA_SIMULATION\n"
+                      "NUMERIC_T1="+json.dumps(n1,ensure_ascii=False)+"\n"
+                      "NUMERIC_T2="+json.dumps(n2,ensure_ascii=False)+"\n",
+                      encoding="utf-8"
+                  )
+
+              # Stop Runtime cleanly if possible, then save native project snapshot.
+              try:
+                  click_mode_item(m,"Стоп")
+                  time.sleep(3)
+              except Exception as e:
+                  log.append("STOP_WARN="+repr(e))
+              try:
+                  m.set_focus(); m.type_keys("^s"); time.sleep(2)
+              except: pass
+
+              src=Path(VAV).parent
+              dst=Path("native_project_snapshot")/src.name
+              if dst.exists(): shutil.rmtree(dst)
+              shutil.copytree(src,dst)
+
+          except Exception:
+              log.append("FATAL\n"+traceback.format_exc())
+              raise
+          finally:
+              Path("run_log.txt").write_text("\n".join(log),encoding="utf-8")
+              kill_all()
+          '@ | Set-Content runtime_level.py -Encoding UTF8
+          python runtime_level.py
+
+      - name: Upload Runtime auth and Level dynamics evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: masterscada35-runtime-auth-level-7341100
+          path: |
+            restored_project.txt
+            level_simulation_config.txt
+            runtime_auth_result.txt
+            level_dynamics_result.txt
+            windows_after_auth.json
+            runtime_auth_uia.json
+            runtime_after_auth_uia.json
+            level_config_probe.json
+            numeric_t1.json
+            numeric_t2.json
+            numeric_changed.json
+            01_project_restored.png
+            02_level_simulation_configured.png
+            03_runtime_auth.png
+            04_runtime_authenticated.png
+            05_level_t1.png
+            06_level_t2.png
+            auth_failure_window_*.png
+            run_log.txt
+            native_project_snapshot/**
+          if-no-files-found: warn
