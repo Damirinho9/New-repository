@@ -95,7 +95,7 @@
     "posting": "Deny",
     "attributes": [
       "Гость: CatalogRef.Гости | req",
-      "Номер: CatalogRef.Номера | req",
+      "Комната: CatalogRef.Номера | req",
       "ДатаЗаезда: Date | req",
       "ДатаВыезда: Date | req",
       "КоличествоСуток: Number(5,0) | nonneg",

@@ -1,0 +1,96 @@
+"""Build XML sources from pinned cc-1c-skills; no native validation here."""
+import json
+import sys
+import subprocess
+from pathlib import Path
+
+project=Path(__file__).resolve().parent
+skills=Path(sys.argv[1]).resolve()/".claude"/"skills"
+src=Path(sys.argv[2]).resolve()
+
+def run(skill,script,*args):
+    subprocess.run([sys.executable,str(skills/skill/"scripts"/script),*map(str,args)],check=True)
+
+def dump(name,data):
+    p=src.parent/name
+    p.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8")
+    return p
+
+run("cf-init","cf-init.py","-Name","БронированиеНомеровГостиницы","-Synonym","Бронирование номеров гостиницы","-OutputDir",src,"-Version","1.0","-CompatibilityMode","Version8_3_27","-FormatVersion","2.20")
+meta=json.loads((project/"metadata.json").read_text(encoding="utf-8"))
+meta.append({"type":"CommonModule","name":"НачальноеЗаполнение","context":"server"})
+run("meta-compile","meta-compile.py","-JsonPath",dump("metadata-build.json",meta),"-OutputDir",src)
+for p in (project/"modules").glob("*.bsl"):
+    target=src/"Documents"/p.stem/"Ext"/"ObjectModule.bsl"
+    target.parent.mkdir(parents=True,exist_ok=True)
+    target.write_text(p.read_text(encoding="utf-8"),encoding="utf-8-sig")
+
+sections={
+"Бронирование":["Document.БронированиеНомера","Catalog.Тарифы","Catalog.ИсточникиБронирования"],
+"НомернойФонд":["Catalog.Номера","Catalog.КатегорииНомеров"],
+"Клиенты":["Catalog.Гости","Catalog.Сотрудники"],
+"Услуги":["Catalog.ДополнительныеУслуги","Document.ОказаниеУслуг"],
+"Финансы":["Document.Оплата"],
+"Отчеты":["Report.БронированиеИВыручка"]}
+for name,content in sections.items():
+    run("subsystem-compile","subsystem-compile.py","-DefinitionFile",dump("subsystem.json",{"name":name,"content":content}),"-OutputDir",src)
+
+report="БронированиеИВыручка"
+template="ОсновнаяСхемаКомпоновкиДанных"
+run("template-add","add-template.py","-ObjectName",report,"-TemplateName",template,"-TemplateType","DataCompositionSchema","-SrcDir",src/"Reports","-SetMainSKD")
+fields=["Бронирование","Гость","Номер","Категория","ДатаЗаезда","ДатаВыезда","КоличествоСуток","Проживание","Услуги","Начислено","Оплачено","Задолженность"]
+skd={"dataSets":[{"name":"Бронирования","query":(project/"report-query.txt").read_text(encoding="utf-8"),"fields":fields}],
+"parameters":["Период [Отчетный период]: StandardPeriod = ThisMonth @autoDates"],
+"totalFields":[{"dataPath":f,"expression":"Сумма("+f+")"} for f in ["КоличествоСуток","Проживание","Услуги","Начислено","Оплачено","Задолженность"]],
+"settingsVariants":[{"name":"Основной","title":"Бронирование и выручка","settings":{"selection":fields,"dataParameters":["Период = ThisMonth @user"],"structure":"details"}}]}
+run("skd-compile","skd-compile.py","-DefinitionFile",dump("skd.json",skd),"-OutputPath",src/"Reports"/report/"Templates"/template/"Ext"/"Template.xml")
+
+data=json.loads((project/"test-data.json").read_text(encoding="utf-8"))
+def q(v):return '"'+str(v).replace('"','""')+'"'
+def literal(v): return q(v) if isinstance(v,str) else str(v)
+def find(cat,name):return "Справочники."+cat+".НайтиПоНаименованию("+q(name)+", Истина)"
+attrs={"КатегорииНомеров":["СтоимостьСуток","Описание"],"Гости":["ЭлектроннаяПочта"],"ДополнительныеУслуги":["Стоимость"],"Сотрудники":["Должность"],"Тарифы":["Коэффициент"],"ИсточникиБронирования":["Описание"]}
+lines=["Процедура Заполнить() Экспорт"]
+for cat,rows in data.items():
+    for row in rows:
+        name=row[0]
+        lines += [f"    Если {find(cat,name)}.Пустая() Тогда",f"        Э = Справочники.{cat}.СоздатьЭлемент();",f"        Э.Наименование = {q(name)};"]
+        if cat=="Номера":
+            lines += [f"        Э.Категория = {find('КатегорииНомеров',row[1])};",f"        Э.Этаж = {row[2]};",f"        Э.Вместимость = {row[3]};","        Э.Статус = Перечисления.СтатусыНомеров.Свободен;"]
+        else:
+            for key,v in zip(attrs[cat],row[1:]):lines.append(f"        Э.{key} = {literal(v)};")
+        lines+=["        Э.Записать();","    КонецЕсли;"]
+for i,(guest,room,days) in enumerate(zip(data["Гости"],data["Номера"],[2,3,2,4,4])):
+    lines += [f'    Если Документы.БронированиеНомера.НайтиПоНомеру("{i+1:011d}", Дата(2026,11,1)).Пустая() Тогда',
+              "        Б = Документы.БронированиеНомера.СоздатьДокумент();",
+              f'        Б.Номер = {find("Номера",room[0])};']
+    # Standard document Number is named Номер; custom room attribute must use a distinct name.
+    lines[-1]=f'        Б.Комната = {find("Номера",room[0])};'
+    lines += [f'        Б.УстановитьНовыйНомер();',f'        Б.Номер = "{i+1:011d}";',
+              f'        Б.Дата = Дата(2026,11,{i+1});',
+              f'        Б.Гость = {find("Гости",guest[0])};',
+              f'        Б.ДатаЗаезда = Дата(2026,11,{i+8});',
+              f'        Б.ДатаВыезда = Дата(2026,11,{i+8+days});',
+              f'        Б.Тариф = {find("Тарифы","Базовый")};',
+              f'        Б.Сотрудник = {find("Сотрудники",data["Сотрудники"][0][0])};',
+              f'        Б.ИсточникБронирования = {find("ИсточникиБронирования","Сайт")};',
+              '        Б.СтатусБронирования = Перечисления.СтатусыБронирования.Подтверждено;',
+              '        Б.Записать();',
+              '        П = Документы.Оплата.СоздатьДокумент();',
+              f'        П.Дата = Дата(2026,11,{i+1});',
+              '        П.Бронирование = Б.Ссылка;',
+              '        П.СуммаОплаты = Б.ИтоговаяСумма / 2;',
+              '        П.СпособОплаты = Перечисления.СпособыОплаты.БанковскаяКарта;',
+              '        П.Записать();',
+              '        У = Документы.ОказаниеУслуг.СоздатьДокумент();',
+              f'        У.Дата = Дата(2026,11,{i+9});',
+              '        У.Бронирование = Б.Ссылка;',
+              '        Стр = У.Услуги.Добавить();',
+              f'        Стр.Услуга = {find("ДополнительныеУслуги","Завтрак")};',
+              '        Стр.Количество = 2;',
+              '        У.Записать();',
+              '    КонецЕсли;']
+lines+=["КонецПроцедуры",""]
+(src/"CommonModules"/"НачальноеЗаполнение"/"Ext"/"Module.bsl").write_text("\n".join(lines),encoding="utf-8-sig")
+(src/"Ext"/"ManagedApplicationModule.bsl").write_text('Процедура ПриНачалеРаботыСистемы()\n    Если ПараметрЗапуска = "seed-hotel" Тогда\n        НачальноеЗаполнение.Заполнить();\n        Файл = Новый ЗаписьТекста(КаталогВременныхФайлов() + "7344000-seed.ok", КодировкаТекста.UTF8);\n        Файл.ЗаписатьСтроку("SEED_DONE");\n        Файл.Закрыть();\n        ЗавершитьРаботуСистемы(Ложь);\n    КонецЕсли;\nКонецПроцедуры\n',encoding="utf-8-sig")
+print("XML source generation finished (not native verification)")
