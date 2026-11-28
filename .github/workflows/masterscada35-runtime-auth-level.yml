@@ -180,15 +180,43 @@ jobs:
               if not calc:raise RuntimeError("renamed Level calculation missing")
               calc.click_input();time.sleep(.6);formula_tab(m)
               snap(m,"01_formula_empty.png")
-              # Drag calculation itself into formula variable table for recursive previous-value access.
+              # Create a formula input explicitly with the native "Добавить" button (control_id=205).
+              addbtns=[c for c in m.descendants() if c.class_name()=="Button" and c.is_visible() and c.control_id()==205]
+              if not addbtns:raise RuntimeError("formula Add button id 205 missing")
+              addbtns[0].click_input();time.sleep(1)
+              # Input editor dialog: set a stable ASCII alias Prev and accept.
+              ds=dialogs(pid)
+              if not ds:raise RuntimeError("formula input edit dialog missing")
+              inpdlg=ds[-1]
+              enabled_edits=[]
+              for c in inpdlg.descendants():
+                  try:
+                      if c.class_name()=="Edit" and c.is_visible() and c.is_enabled(): enabled_edits.append(c)
+                  except:pass
+              if not enabled_edits:raise RuntimeError("formula input name edit missing")
+              enabled_edits[0].set_edit_text("Prev")
+              ok=None
+              for c in inpdlg.descendants():
+                  try:
+                      if c.class_name()=="Button" and c.is_visible() and c.is_enabled() and c.window_text().strip().upper()=="OK":ok=c;break
+                  except:pass
+              if ok:ok.click_input()
+              else:inpdlg.type_keys("{ENTER}")
+              time.sleep(1.5)
+              # Bind the calculation itself to the first row's Source Data cell.
               calc=item(m,"Level")
               rr=calc.rectangle();sx=(rr.left+rr.right)//2;sy=(rr.top+rr.bottom)//2
-              pyautogui.moveTo(sx,sy);pyautogui.dragTo(650,320,duration=1.0,button="left");time.sleep(2)
+              lists=[c for c in m.descendants() if c.class_name()=="SysListView32" and c.control_id()==202 and c.is_visible()]
+              if not lists:raise RuntimeError("formula variable list id 202 missing")
+              lr=lists[0].rectangle()
+              tx=lr.left + int((lr.right-lr.left)*0.51)
+              ty=lr.top + 28
+              pyautogui.moveTo(sx,sy);pyautogui.mouseDown();time.sleep(.3);pyautogui.moveTo(tx,ty,duration=1.0);time.sleep(.3);pyautogui.mouseUp();time.sleep(2)
               snap(m,"02_formula_self_variable.png")
-              # Set native formula.
+              # Set native recursive formula using the explicit alias.
               edits=[c for c in m.descendants() if c.class_name()=="Edit" and c.is_visible() and c.control_id()==206]
               if not edits:raise RuntimeError("formula edit control id 206 missing")
-              edits[0].set_edit_text("Level + 1")
+              edits[0].set_edit_text("Prev + 1")
               time.sleep(1)
               snap(m,"03_formula_level_plus_one.png")
               # Inspect formula variable list and save.
@@ -206,7 +234,7 @@ jobs:
               edits=[c for c in m.descendants() if c.class_name()=="Edit" and c.is_visible() and c.control_id()==206]
               formula=edits[0].window_text() if edits else ""
               Path("formula_persistence.txt").write_text("FORMULA="+formula+"\n",encoding="utf-8")
-              if "Level" not in formula or "+ 1" not in formula.replace("  "," "):
+              if "Prev" not in formula or "+ 1" not in formula.replace("  "," "):
                   raise RuntimeError("formula did not persist: "+repr(formula))
 
               mode(m,"Отладка")
