@@ -41,6 +41,12 @@ jobs:
             -v "$SRC:/src:ro" -v "$out:/out" \
             logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508 -lc '
               set -u
+              export HOME=/tmp/home
+              mkdir -p "$HOME"
+              export DISPLAY=:99
+              Xvfb :99 -screen 0 1440x900x24 >/tmp/xvfb.log 2>&1 &
+              xvfb_pid=$!
+              sleep 2
               v8=/opt/1cv8/x86_64/8.3.27.1508/1cv8
               echo "V8=$v8" | tee /out/platform.txt
               "$v8" CREATEINFOBASE "File=/tmp/hotel;" /DisableStartupDialogs /Out /out/01-create.log
@@ -55,6 +61,8 @@ jobs:
               "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /CheckConfig /Out /out/04-check.log
               rc4=$?
               echo "CHECK_CONFIG_RC=$rc4" | tee -a /out/result.txt
+              kill $xvfb_pid 2>/dev/null || true
+              chmod -R a+rwX /out || true
               exit 0
             '
           docker_rc=$?
