@@ -1,0 +1,67 @@
+name: onec-7344000-public-platform-probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [onec-7344000-hotel]
+    paths:
+      - '.github/workflows/onec-7344000-public-platform-probe.yml'
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe official 1C Fresh public packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'onec-7344000/public-probe'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $version = '8.3.27.1737'
+          $urls = @(
+            ('https://1cfresh.com/downloads/platform/setup_' + $version + '_x86-64.exe'),
+            ('https://1cfresh.com/downloads/platform/setuptc_' + $version + '_x86-64.exe')
+          )
+          $results = @()
+          foreach ($u in $urls) {
+            $name = Split-Path $u -Leaf
+            $dst = Join-Path $env:RUNNER_TEMP $name
+            try {
+              Invoke-WebRequest -Uri $u -OutFile $dst -UseBasicParsing -TimeoutSec 120
+              $fi = Get-Item $dst
+              $results += [pscustomobject]@{Url=$u; Status='DOWNLOADED'; Bytes=$fi.Length; SHA256=(Get-FileHash $dst -Algorithm SHA256).Hash}
+            } catch {
+              $results += [pscustomobject]@{Url=$u; Status='FAILED'; Bytes=0; SHA256=''; Error=$_.Exception.Message}
+            }
+          }
+          $results | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $out 'probe-downloads.json') -Encoding utf8
+          $results | Format-Table -AutoSize
+      - name: Install Chocolatey 1cfresh client package and inspect binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'onec-7344000/public-probe'
+          choco install 1cfresh-client --version=8.3.27.1737 -y --no-progress | Tee-Object -FilePath (Join-Path $out 'choco-install.log')
+          $roots = @('C:\Program Files\1cv8','C:\Program Files (x86)\1cv8','C:\Program Files\1cv8t','C:\Program Files (x86)\1cv8t')
+          $bins = foreach ($root in $roots) {
+            if (Test-Path $root) {
+              Get-ChildItem $root -Filter '1cv8*.exe' -File -Recurse -ErrorAction SilentlyContinue |
+                Select-Object FullName,@{N='FileVersion';E={$_.VersionInfo.FileVersion}},Length,Name
+            }
+          }
+          $bins | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $out 'installed-binaries.json') -Encoding utf8
+          $bins | Format-Table -AutoSize
+          $designer = $bins | Where-Object { $_.Name -eq '1cv8.exe' -or $_.Name -eq '1cv8t.exe' } | Select-Object -First 1
+          if ($designer) {
+            'DESIGNER_CAPABLE_BINARY_FOUND=true' | Tee-Object -FilePath (Join-Path $out 'result.txt')
+            ('BINARY=' + $designer.FullName) | Add-Content (Join-Path $out 'result.txt')
+          } else {
+            'DESIGNER_CAPABLE_BINARY_FOUND=false' | Tee-Object -FilePath (Join-Path $out 'result.txt')
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: onec-7344000-public-platform-probe
+          path: onec-7344000/public-probe/
+          if-no-files-found: error
+          retention-days: 7
