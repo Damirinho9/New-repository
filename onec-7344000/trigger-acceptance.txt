@@ -1,1 +1,1 @@
-nonblocking conflict query acceptance
+isolated acceptance module plus nonblocking tests
