@@ -63,9 +63,10 @@ jobs:
           cleanup() { docker rm -f hotel-ibsrv >/dev/null 2>&1 || true; }
           trap cleanup EXIT
           docker run -d --name hotel-ibsrv --network host \
+            --entrypoint /opt/1cv8/x86_64/8.3.27.1508/ibsrv \
             -v "$WORK:/work" \
             logobobah/onec-server11_xvfb:8.3.27.1508 \
-            ibsrv --data=/work/data --db-path=/work/db > "$OUT/ibsrv-container-id.txt"
+            --data=/work/data --db-path=/work/db > "$OUT/ibsrv-container-id.txt"
           for i in $(seq 1 60); do
             if docker logs hotel-ibsrv 2>&1 | tee "$OUT/03-ibsrv.log" | grep -qiE 'ready|готов'; then break; fi
             if ! docker inspect -f '{{.State.Running}}' hotel-ibsrv 2>/dev/null | grep -q true; then
@@ -212,9 +213,10 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name hotel-ibsrv-restored --network host \
+            --entrypoint /opt/1cv8/x86_64/8.3.27.1508/ibsrv \
             -v "$WORK:/work" \
             logobobah/onec-server11_xvfb:8.3.27.1508 \
-            ibsrv --data=/work/restore-data --db-path=/work/restored-db > "$OUT/ibsrv-restored-container-id.txt"
+            --data=/work/restore-data --db-path=/work/restored-db > "$OUT/ibsrv-restored-container-id.txt"
           trap 'docker rm -f hotel-ibsrv-restored >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 60); do
             if docker logs hotel-ibsrv-restored 2>&1 | tee "$OUT/11-ibsrv-restored.log" | grep -qiE 'ready|готов'; then break; fi
