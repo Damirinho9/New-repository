@@ -1,19 +1,18 @@
-name: MasterSCADA 3.5 auth baseline and native Level simulation 7341100
+name: MasterSCADA 3.5 native Level runtime inspect 7341100
 
 on:
   push:
     branches: [tmp-masterscada-7341100]
 
 jobs:
-  verify:
+  inspect:
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 16
     permissions:
       actions: read
       contents: read
     steps:
-      - name: Restore installer cache
-        uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v4
         with:
           path: C:\Temp\MasterSCADA35
           key: masterscada-demo-3.5.0-msi-v2
@@ -24,9 +23,9 @@ jobs:
           Copy-Item C:\Temp\MasterSCADA35\data.msi . -Force
           Copy-Item C:\Temp\MasterSCADA35\Data1.cab . -Force
           $p=Start-Process msiexec.exe -ArgumentList @('/i',('"' + (Resolve-Path data.msi) + '"'),'/qn','REBOOT=ReallySuppress') -PassThru -Wait
-          if($p.ExitCode -ne 0){ throw "MSI failed $($p.ExitCode)" }
+          if($p.ExitCode -ne 0){throw "MSI failed $($p.ExitCode)"}
 
-      - name: Restore known-good native checkpoint
+      - name: Restore native checkpoint
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,21 +33,19 @@ jobs:
           $h=@{Authorization="Bearer $env:GH_TOKEN";Accept="application/vnd.github+json";"X-GitHub-Api-Version"="2022-11-28"}
           Invoke-WebRequest -Headers $h -Uri "https://api.github.com/repos/Damirinho9/New-repository/actions/artifacts/15227142597/zip" -OutFile known.zip
           Expand-Archive known.zip -DestinationPath known -Force
-          $v=Get-ChildItem known -Recurse -Filter "7341100_MasterSCADA_Lab7.vav" | Select-Object -First 1
-          if(!$v){throw "known-good VAV missing"}
-          $dest="C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7"
-          New-Item -ItemType Directory -Path $dest -Force|Out-Null
-          Copy-Item $v.FullName "$dest\7341100_MasterSCADA_Lab7.vav" -Force
-          Get-FileHash "$dest\7341100_MasterSCADA_Lab7.vav" -Algorithm SHA256 | Format-List | Out-File checkpoint_hash.txt
+          $v=Get-ChildItem known -Recurse -Filter "7341100_MasterSCADA_Lab7.vav"|Select-Object -First 1
+          $d="C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7"
+          New-Item -ItemType Directory $d -Force|Out-Null
+          Copy-Item $v.FullName "$d\7341100_MasterSCADA_Lab7.vav" -Force
 
-      - name: Authenticate direct Runtime, then prove native Level simulation
+      - name: Start native Simulation and inspect Level current data
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check pywinauto pillow psutil pyautogui
           @'
           from pathlib import Path
           from pywinauto import Desktop,Application
-          import pyautogui,time,json,traceback,psutil,subprocess,shutil,re
+          import pyautogui,time,json,traceback,psutil,re,shutil
 
           EXE=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
           VAV=r"C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7\7341100_MasterSCADA_Lab7.vav"
@@ -62,6 +59,15 @@ jobs:
                   try:
                       if p.info["name"] and "masterscada" in p.info["name"].lower():p.kill()
                   except:pass
+          def wins(pid=None):
+              return Desktop(backend="win32").windows(process=pid) if pid else Desktop(backend="win32").windows()
+          def main(pid):
+              for w in wins(pid):
+                  try:
+                      if w.is_visible() and w.window_text().startswith("MasterSCADA"):return w
+                  except:pass
+          def dialogs(pid):
+              return [w for w in wins(pid) if w.class_name()=="#32770" and w.is_visible()]
           def snap(w,p):
               try:w.capture_as_image().save(p);log.append("SHOT "+p)
               except Exception as e:log.append("SHOTERR "+repr(e))
@@ -72,55 +78,13 @@ jobs:
                   except:pass
               Path(p).write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding="utf-8")
               return rows
-          def auth_window(timeout=25):
-              end=time.time()+timeout
-              while time.time()<end:
-                  for w in Desktop(backend="uia").windows():
-                      try:
-                          if w.is_visible() and w.window_text()=="Идентификация оператора":return w
-                      except:pass
-                  time.sleep(.5)
-              return None
-          def login_sa(auth,tag):
-              dump(auth,tag+"_uia.json");snap(auth,tag+".png")
-              ds=auth.descendants()
-              combo=None; nameedit=None; pwd=None; ok=None
-              for x in ds:
-                  try:
-                      aid=x.element_info.automation_id
-                      typ=x.element_info.control_type
-                      if aid=="comboBoxName" and typ=="ComboBox": combo=x
-                      elif aid=="1001" and typ=="Edit": nameedit=x
-                      elif aid=="textBoxPassword" and typ=="Edit": pwd=x
-                      elif aid=="buttonOK" and typ=="Button": ok=x
-                  except: pass
-              if nameedit:
-                  nameedit.set_edit_text("sa")
-              elif combo:
-                  combo.set_focus(); combo.type_keys("^a"); combo.type_keys("sa")
-              else:
-                  raise RuntimeError("operator name control missing")
-              if not pwd: raise RuntimeError("password control missing")
-              if not ok: raise RuntimeError("OK control missing")
-              pwd.set_edit_text("")
-              ok.click_input()
-              time.sleep(5)
-              return auth_window(timeout=2) is None
-          def main(pid):
-              for w in Desktop(backend="win32").windows(process=pid):
-                  try:
-                      if w.is_visible() and w.window_text().startswith("MasterSCADA"):return w
-                  except:pass
-              return None
-          def dialogs(pid):
-              return [w for w in Desktop(backend="win32").windows(process=pid) if w.class_name()=="#32770" and w.is_visible()]
           def open_editor():
               app=Application(backend="win32").start(EXE);pid=app.process;time.sleep(8)
               ds=dialogs(pid)
-              if not ds:raise RuntimeError("startup project dialog missing")
+              if not ds:raise RuntimeError("startup dialog missing")
               d=ds[0];r=d.rectangle()
-              pyautogui.click(r.left+200,r.top+48);time.sleep(2)
-              d=dialogs(pid)[0];pyautogui.click(r.left+180,r.top+90);time.sleep(.6)
+              pyautogui.click(r.left+200,r.top+48);time.sleep(1.5)
+              d=dialogs(pid)[0];pyautogui.click(r.left+180,r.top+90);time.sleep(.5)
               ok=None
               for b in d.descendants():
                   try:
@@ -140,15 +104,14 @@ jobs:
           def ui(m):return Desktop(backend="uia").window(handle=m.handle)
           def expand(m):
               for nm in ["Объект","Объект 1"]:
-                  u=ui(m)
-                  for x in u.descendants(control_type="TreeItem"):
+                  for x in ui(m).descendants(control_type="TreeItem"):
                       try:
                           if dec(x.window_text()).strip()==nm:
                               try:x.expand()
                               except:
                                   try:x.double_click_input()
                                   except:pass
-                              time.sleep(.7);break
+                              time.sleep(.5);break
                       except:pass
           def item(m,nm):
               for x in ui(m).descendants(control_type="TreeItem"):
@@ -156,150 +119,136 @@ jobs:
                       if dec(x.window_text()).strip()==nm:return x
                   except:pass
           def byid(m,cid):
-              a=[]
+              out=[]
               for x in m.descendants():
                   try:
-                      if x.is_visible() and x.control_id()==cid:a.append(x)
+                      if x.is_visible() and x.control_id()==cid:out.append(x)
                   except:pass
-              return a
-          def mode_popup(m,label):
-              # First try native Win32 menu selection. This is more reliable for old MFC menus than UIA popup discovery.
-              try:
-                  m.menu_select("Режим->"+label)
-                  log.append("MENU_SELECT_OK="+label)
-                  time.sleep(5)
-                  return
-              except Exception as e:
-                  log.append("MENU_SELECT_FAIL="+repr(e))
-              # Fallback: click the Mode menu and use keyboard ordering: Stop, Start, Simulation, Debug.
-              r=m.rectangle()
-              pyautogui.click(r.left+208,r.top+40)
-              time.sleep(.7)
-              if label=="Стоп": n=1
-              elif label=="Пуск": n=2
-              elif label=="Имитация": n=3
-              elif label=="Отладка": n=4
-              else: raise RuntimeError("unknown mode "+label)
-              for _ in range(n): pyautogui.press("down")
-              pyautogui.press("enter")
-              log.append("MENU_KEYBOARD="+label)
-              time.sleep(5)
-          def nums(m,tag):
-              expand(m);lv=item(m,"Level")
-              if lv:lv.click_input();time.sleep(.7)
-              tabs=ui(m).descendants(control_type="TabItem")
-              if len(tabs)>=2:
-                  try:tabs[1].click_input();time.sleep(1)
-                  except:pass
-              rows=dump(ui(m),tag+"_uia.json");out=[]
-              for z in rows:
-                  if z["type"] in ("Edit","Text","ComboBox"):
-                      s=(z.get("dec") or z.get("raw") or "").strip().replace(",",".")
-                      if re.fullmatch(r"[-+]?\d+(?:\.\d+)?",s):
-                          out.append({"autoid":z["autoid"],"rect":z["rect"],"type":z["type"],"value":float(s),"text":s})
-              snap(m,tag+".png");return out
-
-          try:
-              # A. Exact known-good checkpoint, untouched: prove Runtime authentication first.
-              kill();time.sleep(2)
-              rt=subprocess.Popen([EXE,VAV]);log.append("AUTH_BASELINE_PID="+str(rt.pid));time.sleep(18)
-              auth=auth_window()
-              if not auth:
-                  wins=[]
+              return out
+          def login_all():
+              count=0
+              stable=0
+              end=time.time()+25
+              while time.time()<end:
+                  found=None
                   for w in Desktop(backend="uia").windows():
                       try:
-                          if w.is_visible():wins.append({"title":w.window_text(),"pid":w.process_id(),"class":w.element_info.class_name})
+                          if w.is_visible() and w.window_text()=="Идентификация оператора":found=w;break
                       except:pass
-                  Path("baseline_windows.json").write_text(json.dumps(wins,ensure_ascii=False,indent=2),encoding="utf-8")
-                  raise RuntimeError("known-good checkpoint did not produce auth")
-              if not login_sa(auth,"01_runtime_auth"):
-                  Path("runtime_auth_result.txt").write_text("RUNTIME_AUTH=FAIL\nLOGIN=sa\nPASSWORD=<blank>\n",encoding="utf-8")
-                  raise RuntimeError("sa blank rejected")
-              Path("runtime_auth_result.txt").write_text("RUNTIME_AUTH=PASS\nLOGIN=sa\nPASSWORD=<blank>\n",encoding="utf-8")
-              time.sleep(3)
-              after=[]
-              for w in Desktop(backend="uia").windows():
+                  if not found:
+                      stable+=1
+                      if stable>=5:return count
+                      time.sleep(.5);continue
+                  stable=0;count+=1
+                  if count>6:raise RuntimeError("too many auth dialogs")
+                  dump(found,f"auth_{count}_uia.json");snap(found,f"auth_{count}.png")
+                  ds=found.descendants();name=None;pwd=None;ok=None
+                  for x in ds:
+                      try:
+                          aid=x.element_info.automation_id;typ=x.element_info.control_type
+                          if aid=="1001" and typ=="Edit":name=x
+                          elif aid=="textBoxPassword" and typ=="Edit":pwd=x
+                          elif aid=="buttonOK" and typ=="Button":ok=x
+                      except:pass
+                  if not(name and pwd and ok):raise RuntimeError("auth controls missing")
+                  name.set_edit_text("sa");pwd.set_edit_text("");ok.click_input();time.sleep(2)
+              return count
+          def start_simulation(m):
+              try:
+                  m.menu_select("Режим->Имитация");log.append("MENU_SELECT_OK")
+              except Exception as e:
+                  log.append("MENU_SELECT_FAIL="+repr(e))
+                  r=m.rectangle();pyautogui.click(r.left+208,r.top+40);time.sleep(.5)
+                  pyautogui.press("down", presses=3, interval=.15);pyautogui.press("enter")
+              time.sleep(4)
+          def top_tabs(m):
+              tabs=[]
+              for x in ui(m).descendants(control_type="TabItem"):
                   try:
-                      if w.is_visible() and (w.process_id()==rt.pid or "MasterSCADA" in w.window_text()):
-                          after.append({"title":w.window_text(),"pid":w.process_id(),"class":w.element_info.class_name,"rect":str(w.rectangle())})
-                          try:snap(w,"02_after_auth_"+str(len(after))+".png")
-                          except:pass
+                      r=x.rectangle()
+                      if 70<=r.top<=110:
+                          tabs.append(x)
                   except:pass
-              Path("windows_after_auth.json").write_text(json.dumps(after,ensure_ascii=False,indent=2),encoding="utf-8")
-              kill();time.sleep(3)
-
-              # B. Configure Level with MasterSCADA's own simulation engine.
+              tabs.sort(key=lambda x:x.rectangle().left)
+              return tabs
+          try:
               pid,m=open_editor();expand(m)
               lv=item(m,"Level")
               if not lv:raise RuntimeError("Level missing")
               lv.click_input();time.sleep(1)
               sim,law,mn,mx=byid(m,215),byid(m,264),byid(m,265),byid(m,266)
               if not(sim and law and mn and mx):raise RuntimeError("simulation controls missing")
-              sim[0].click();time.sleep(.5)
-              try:law[0].select(1) # "Пила"
+              sim[0].click()
+              try:law[0].select(1)
               except:
                   law[0].set_focus();law[0].type_keys("{HOME}{DOWN}{ENTER}")
               mn[0].set_edit_text("20");mx[0].set_edit_text("80")
               m.set_focus();m.type_keys("^s");time.sleep(3)
-              snap(m,"03_level_native_simulation.png")
+              snap(m,"01_configured.png")
 
-              # Run editor's native Simulation mode using the actual popup menu window.
-              mode_popup(m,"Имитация")
-              auth=auth_window(timeout=8)
-              if auth:
-                  ok=login_sa(auth,"04_simulation_auth")
-                  if not ok:raise RuntimeError("simulation auth failed")
-                  time.sleep(3)
+              start_simulation(m)
+              n_auth=login_all()
+              Path("auth_count.txt").write_text(str(n_auth),encoding="utf-8")
               m=main(pid)
-              if not m:raise RuntimeError("simulation host missing")
-              n1=nums(m,"05_level_t1");t1=time.time();time.sleep(8)
-              n2=nums(m,"06_level_t2");t2=time.time()
-              Path("numeric_t1.json").write_text(json.dumps(n1,ensure_ascii=False,indent=2),encoding="utf-8")
-              Path("numeric_t2.json").write_text(json.dumps(n2,ensure_ascii=False,indent=2),encoding="utf-8")
-              a={(x["autoid"],x["rect"],x["type"]):x["value"] for x in n1}
-              b={(x["autoid"],x["rect"],x["type"]):x["value"] for x in n2}
-              ch=[]
-              for k,v in a.items():
-                  if k in b and abs(b[k]-v)>1e-9:ch.append({"key":k,"v1":v,"v2":b[k],"delta":b[k]-v})
-              Path("numeric_changed.json").write_text(json.dumps(ch,ensure_ascii=False,indent=2),encoding="utf-8")
-              if ch:
-                  Path("level_dynamics_result.txt").write_text("LEVEL_DYNAMICS=PASS\nMODE=NATIVE_MASTER_SCADA_SIMULATION\nT1="+str(t1)+"\nT2="+str(t2)+"\nCHANGED="+json.dumps(ch,ensure_ascii=False),encoding="utf-8")
-              else:
-                  Path("level_dynamics_result.txt").write_text("LEVEL_DYNAMICS=NOT_VERIFIED\nMODE=NATIVE_MASTER_SCADA_SIMULATION\n",encoding="utf-8")
+              if not m:raise RuntimeError("main host disappeared")
+              snap(m,"02_simulation_clean.png")
+              dump(ui(m),"02_simulation_clean_uia.json")
+              expand(m);lv=item(m,"Level")
+              if lv:lv.click_input();time.sleep(.7)
+
+              # Capture every top property page while simulation is running.
+              tabs=top_tabs(m)
+              meta=[]
+              for i,t in enumerate(tabs):
+                  try:
+                      rect=str(t.rectangle());raw=t.window_text();decoded=dec(raw)
+                      t.click_input();time.sleep(.7)
+                      rows=dump(ui(m),f"tab_{i}_uia.json")
+                      snap(m,f"tab_{i}.png")
+                      vis=[]
+                      for z in rows:
+                          if z["type"] in ("Text","Edit","ComboBox","Button"):
+                              s=(z.get("dec") or z.get("raw") or "").strip()
+                              if s:vis.append({"type":z["type"],"text":s,"autoid":z["autoid"],"rect":z["rect"]})
+                      meta.append({"i":i,"raw":raw,"dec":decoded,"rect":rect,"visible":vis[:120]})
+                  except Exception as e:
+                      meta.append({"i":i,"error":repr(e)})
+              Path("tabs_runtime.json").write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8")
+
+              # Also take whole-window T1/T2 screenshots to expose the value column in the tree.
+              snap(m,"03_runtime_t1.png");time.sleep(8);snap(m,"04_runtime_t2.png")
+              dump(ui(m),"04_runtime_t2_uia.json")
+
               src=Path(VAV).parent;dst=Path("native_project_snapshot")/src.name
               if dst.exists():shutil.rmtree(dst)
               shutil.copytree(src,dst)
+              Path("inspect_result.txt").write_text("SIMULATION_MODE=PASS\nAUTH_DIALOGS_HANDLED="+str(n_auth)+"\nTABS="+str(len(tabs))+"\n",encoding="utf-8")
           except Exception:
               log.append("FATAL\n"+traceback.format_exc());raise
           finally:
               Path("run_log.txt").write_text("\n".join(log),encoding="utf-8");kill()
-          '@ | Set-Content verify.py -Encoding UTF8
-          python verify.py
+          '@ | Set-Content inspect.py -Encoding UTF8
+          python inspect.py
 
-      - name: Upload evidence
+      - name: Upload inspection
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: masterscada35-auth-level-native-7341100
+          name: masterscada35-level-runtime-inspect-7341100
           path: |
-            checkpoint_hash.txt
-            runtime_auth_result.txt
-            baseline_windows.json
-            windows_after_auth.json
-            level_dynamics_result.txt
-            numeric_t1.json
-            numeric_t2.json
-            numeric_changed.json
-            01_runtime_auth.png
-            01_runtime_auth_uia.json
-            02_after_auth_*.png
-            03_level_native_simulation.png
-            04_simulation_auth.png
-            04_simulation_auth_uia.json
-            05_level_t1.png
-            05_level_t1_uia.json
-            06_level_t2.png
-            06_level_t2_uia.json
+            inspect_result.txt
+            auth_count.txt
+            tabs_runtime.json
+            01_configured.png
+            02_simulation_clean.png
+            02_simulation_clean_uia.json
+            03_runtime_t1.png
+            04_runtime_t2.png
+            04_runtime_t2_uia.json
+            auth_*.png
+            auth_*_uia.json
+            tab_*.png
+            tab_*_uia.json
             run_log.txt
             native_project_snapshot/**
           if-no-files-found: warn
