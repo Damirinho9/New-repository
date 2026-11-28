@@ -83,12 +83,27 @@ jobs:
               return None
           def login_sa(auth,tag):
               dump(auth,tag+"_uia.json");snap(auth,tag+".png")
-              combo=auth.child_window(auto_id="comboBoxName",control_type="ComboBox")
-              try:combo.child_window(control_type="Edit").set_edit_text("sa")
-              except:
-                  combo.set_focus();combo.type_keys("^a");combo.type_keys("sa")
-              auth.child_window(auto_id="textBoxPassword",control_type="Edit").set_edit_text("")
-              auth.child_window(auto_id="buttonOK",control_type="Button").click_input()
+              ds=auth.descendants()
+              combo=None; nameedit=None; pwd=None; ok=None
+              for x in ds:
+                  try:
+                      aid=x.element_info.automation_id
+                      typ=x.element_info.control_type
+                      if aid=="comboBoxName" and typ=="ComboBox": combo=x
+                      elif aid=="1001" and typ=="Edit": nameedit=x
+                      elif aid=="textBoxPassword" and typ=="Edit": pwd=x
+                      elif aid=="buttonOK" and typ=="Button": ok=x
+                  except: pass
+              if nameedit:
+                  nameedit.set_edit_text("sa")
+              elif combo:
+                  combo.set_focus(); combo.type_keys("^a"); combo.type_keys("sa")
+              else:
+                  raise RuntimeError("operator name control missing")
+              if not pwd: raise RuntimeError("password control missing")
+              if not ok: raise RuntimeError("OK control missing")
+              pwd.set_edit_text("")
+              ok.click_input()
               time.sleep(5)
               return auth_window(timeout=2) is None
           def main(pid):
