@@ -1,1 +1,1 @@
-diagnostic acceptance after VERIFY_ERROR handling
+acceptance with per-scenario PASS FAIL diagnostics
