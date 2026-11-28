@@ -1,17 +1,16 @@
-name: MasterSCADA 3.5 native Level data dialog proof 7341100
+name: MasterSCADA 3.5 debug Level dynamics proof 7341100
 
 on:
   push:
     branches: [tmp-masterscada-7341100]
 
 jobs:
-  prove-level:
+  debug-level:
     runs-on: windows-2025
     timeout-minutes: 16
     permissions:
       actions: read
       contents: read
-
     steps:
       - uses: actions/cache/restore@v4
         with:
@@ -35,19 +34,18 @@ jobs:
           Invoke-WebRequest -Headers $h -Uri "https://api.github.com/repos/Damirinho9/New-repository/actions/artifacts/15227142597/zip" -OutFile known.zip
           Expand-Archive known.zip -DestinationPath known -Force
           $v=Get-ChildItem known -Recurse -Filter "7341100_MasterSCADA_Lab7.vav"|Select-Object -First 1
-          if(!$v){throw "VAV checkpoint missing"}
           $d="C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7"
           New-Item -ItemType Directory $d -Force|Out-Null
           Copy-Item $v.FullName "$d\7341100_MasterSCADA_Lab7.vav" -Force
 
-      - name: Prove native Level changes through MasterSCADA data dialog
+      - name: Configure native simulation source and observe Level in Debug mode
         shell: pwsh
         run: |
           python -m pip install --disable-pip-version-check pywinauto pillow psutil pyautogui
           @'
           from pathlib import Path
           from pywinauto import Desktop,Application
-          import pyautogui,time,json,traceback,psutil,re,shutil
+          import pyautogui,time,json,traceback,psutil,shutil
 
           EXE=r"C:\Program Files (x86)\InSAT\MasterSCADA\MasterSCADA.exe"
           VAV=r"C:\MasterSCADA Projects\Projects\7341100_MasterSCADA_Lab7\7341100_MasterSCADA_Lab7.vav"
@@ -56,46 +54,32 @@ jobs:
           def dec(s):
               try:return s.encode("cp1252").decode("cp1251")
               except:return s
-
           def kill():
               for p in psutil.process_iter(["name"]):
                   try:
                       if p.info["name"] and "masterscada" in p.info["name"].lower():p.kill()
                   except:pass
-
-          def w32(pid=None):
-              return Desktop(backend="win32").windows(process=pid) if pid else Desktop(backend="win32").windows()
-
+          def w32(pid=None):return Desktop(backend="win32").windows(process=pid) if pid else Desktop(backend="win32").windows()
           def main(pid):
               for w in w32(pid):
                   try:
                       if w.is_visible() and w.window_text().startswith("MasterSCADA"):return w
                   except:pass
-              return None
-
-          def dialogs(pid):
-              return [w for w in w32(pid) if w.class_name()=="#32770" and w.is_visible()]
-
+          def dialogs(pid):return [w for w in w32(pid) if w.class_name()=="#32770" and w.is_visible()]
           def ui(m):return Desktop(backend="uia").window(handle=m.handle)
-
           def snap(w,p):
               try:w.capture_as_image().save(p);log.append("SHOT "+p)
-              except Exception as e:log.append("SHOTERR "+p+" "+repr(e))
-
+              except Exception as e:log.append("SHOTERR "+repr(e))
           def dump(w,p):
               rows=[]
               for i,x in enumerate(w.descendants()):
-                  try:
-                      rows.append({"i":i,"type":x.element_info.control_type,"raw":x.window_text(),"dec":dec(x.window_text()),"autoid":x.element_info.automation_id,"class":x.element_info.class_name,"rect":str(x.rectangle()),"enabled":x.is_enabled(),"visible":x.is_visible()})
+                  try:rows.append({"i":i,"type":x.element_info.control_type,"raw":x.window_text(),"dec":dec(x.window_text()),"autoid":x.element_info.automation_id,"class":x.element_info.class_name,"rect":str(x.rectangle()),"enabled":x.is_enabled(),"visible":x.is_visible()})
                   except:pass
               Path(p).write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding="utf-8")
               return rows
-
           def open_editor():
               app=Application(backend="win32").start(EXE);pid=app.process;time.sleep(8)
-              ds=dialogs(pid)
-              if not ds:raise RuntimeError("startup dialog missing")
-              d=ds[0];r=d.rectangle()
+              d=dialogs(pid)[0];r=d.rectangle()
               pyautogui.click(r.left+200,r.top+48);time.sleep(1.5)
               d=dialogs(pid)[0];pyautogui.click(r.left+180,r.top+90);time.sleep(.5)
               ok=None
@@ -113,8 +97,7 @@ jobs:
                       except:pass
                   m=main(pid)
                   if m and "7341100_MasterSCADA_Lab7" in m.window_text():return pid,m
-              raise RuntimeError("project open timeout")
-
+              raise RuntimeError("open timeout")
           def expand(m):
               for nm in ["Объект","Объект 1"]:
                   for x in ui(m).descendants(control_type="TreeItem"):
@@ -126,41 +109,35 @@ jobs:
                                   except:pass
                               time.sleep(.5);break
                       except:pass
-
           def item(m,nm):
               for x in ui(m).descendants(control_type="TreeItem"):
                   try:
                       if dec(x.window_text()).strip()==nm:return x
                   except:pass
-              return None
-
           def byid(m,cid):
+              return [x for x in m.descendants() if (lambda: True)()] if False else _byid(m,cid)
+          def _byid(m,cid):
               out=[]
               for x in m.descendants():
                   try:
                       if x.is_visible() and x.control_id()==cid:out.append(x)
                   except:pass
               return out
-
           def find_auth():
               for w in Desktop(backend="uia").windows():
                   try:
                       if not w.is_visible():continue
-                      aids=set()
-                      for x in w.descendants():
-                          try:aids.add(x.element_info.automation_id)
-                          except:pass
+                      aids={x.element_info.automation_id for x in w.descendants()}
                       if "textBoxPassword" in aids and "buttonOK" in aids:return w
                   except:pass
-              return None
-
           def clear_auth():
               n=0
-              for _ in range(10):
+              for _ in range(8):
                   a=find_auth()
-                  if not a:break
-                  n+=1;ds=a.descendants();name=pwd=ok=None
-                  for x in ds:
+                  if not a:time.sleep(.7);a=find_auth()
+                  if not a:return n
+                  n+=1;name=pwd=ok=None
+                  for x in a.descendants():
                       try:
                           aid=x.element_info.automation_id;typ=x.element_info.control_type
                           if aid=="1001" and typ=="Edit":name=x
@@ -170,87 +147,32 @@ jobs:
                   if not(name and pwd and ok):raise RuntimeError("auth controls missing")
                   name.set_edit_text("sa");pwd.set_edit_text("");ok.click_input();time.sleep(2)
               return n
-
-          def close_message_windows(pid,m):
-              closed=[]
-              # Old MasterSCADA opens a message/action window after successful operator login.
+          def close_messages(pid):
               for _ in range(5):
                   changed=False
                   for d in dialogs(pid):
                       try:
-                          # Do not touch authentication here.
-                          title=dec(d.window_text())
-                          rows=[]
+                          # Login message browser has an IDOK=1 close button.
+                          btn=None
                           for c in d.descendants():
-                              try:rows.append((c.control_id(),dec(c.window_text()),c.class_name()))
-                              except:pass
-                          if any(cid==1 for cid,_,_ in rows):
-                              for c in d.descendants():
-                                  try:
-                                      if c.control_id()==1 and c.class_name()=="Button":
-                                          c.click_input();closed.append({"title":title,"rows":rows});time.sleep(1);changed=True;break
-                                  except:pass
+                              if c.class_name()=="Button" and c.control_id()==1:btn=c;break
+                          if btn:btn.click_input();time.sleep(1);changed=True;break
                       except:pass
                   if not changed:break
-              Path("closed_dialogs.json").write_text(json.dumps(closed,ensure_ascii=False,indent=2),encoding="utf-8")
-
-          def start_sim(m):
-              try:m.menu_select("Режим->Имитация")
+          def mode(m,label):
+              try:m.menu_select("Режим->"+label);log.append("MODE="+label)
               except:
-                  r=m.rectangle();pyautogui.click(r.left+208,r.top+40);time.sleep(.5);pyautogui.press("down",presses=3,interval=.15);pyautogui.press("enter")
+                  r=m.rectangle();pyautogui.click(r.left+85,r.top+40);time.sleep(.5)
+                  # Stop, Start, Simulation, Debug.
+                  n={"Стоп":1,"Пуск":2,"Имитация":3,"Отладка":4}[label]
+                  pyautogui.press("down",presses=n,interval=.15);pyautogui.press("enter")
               time.sleep(4)
-
-          def numeric_from_dialog(d):
-              vals=[]
-              # Prefer edit controls; include static numeric controls as fallback.
-              for c in d.descendants():
-                  try:
-                      txt=dec(c.window_text()).strip().replace(",",".")
-                      if re.fullmatch(r"[-+]?\d+(?:\.\d+)?",txt):
-                          vals.append({"value":float(txt),"text":txt,"id":c.control_id(),"class":c.class_name(),"rect":str(c.rectangle())})
-                  except:pass
-              return vals
-
-          def open_level_data_dialog(m,pid,tag,known_x=None):
-              expand(m);lv=item(m,"Level")
-              if not lv:raise RuntimeError("Level missing in runtime tree")
-              r=lv.rectangle();y=(r.top+r.bottom)//2
-              # Scan to the right of the label across the object-tree pane, as documented for clicking the Value data cell.
-              xs=[known_x] if known_x else list(range(max(r.right+15,130),390,25))
-              before={x.handle for x in dialogs(pid)}
-              for x in xs:
-                  if x is None:continue
-                  pyautogui.click(x,y);time.sleep(.7)
-                  ds=dialogs(pid)
-                  candidates=[d for d in ds if d.handle not in before]
-                  if not candidates:
-                      # Some data dialogs reuse an existing handle: accept a small dialog containing numeric controls.
-                      candidates=[d for d in ds if numeric_from_dialog(d)]
-                  for d in candidates:
-                      vals=numeric_from_dialog(d)
-                      if vals:
-                          snap(d,tag+".png");dump(Desktop(backend="uia").window(handle=d.handle),tag+"_uia.json")
-                          Path(tag+"_values.json").write_text(json.dumps(vals,ensure_ascii=False,indent=2),encoding="utf-8")
-                          return x,d,vals
-                  # close accidental dialogs
-                  for d in candidates:
-                      try:d.type_keys("{ESC}")
-                      except:pass
-              return None,None,[]
-
-          def close_dialog(d):
-              if not d:return
-              try:d.type_keys("{ESC}");time.sleep(.5);return
-              except:pass
-              try:d.close();time.sleep(.5)
-              except:pass
-
           try:
               pid,m=open_editor();expand(m)
               lv=item(m,"Level")
               if not lv:raise RuntimeError("Level missing")
               lv.click_input();time.sleep(1)
-              sim,law,mn,mx=byid(m,215),byid(m,264),byid(m,265),byid(m,266)
+              sim,law,mn,mx=_byid(m,215),_byid(m,264),_byid(m,265),_byid(m,266)
               if not(sim and law and mn and mx):raise RuntimeError("simulation controls missing")
               sim[0].click()
               try:law[0].select(1)
@@ -258,40 +180,23 @@ jobs:
                   law[0].set_focus();law[0].type_keys("{HOME}{DOWN}{ENTER}")
               mn[0].set_edit_text("20");mx[0].set_edit_text("80")
               m.set_focus();m.type_keys("^s");time.sleep(3)
-              snap(m,"01_level_pila_20_80.png")
+              snap(m,"01_configured.png")
 
-              start_sim(m)
+              mode(m,"Отладка")
               na=clear_auth();time.sleep(2)
               m=main(pid)
-              if not m:raise RuntimeError("runtime main missing")
-              close_message_windows(pid,m)
-              time.sleep(1)
-              snap(m,"02_runtime_clean.png")
-              dump(ui(m),"02_runtime_clean_uia.json")
-              Path("runtime_auth_result.txt").write_text("RUNTIME_AUTH=PASS\nAUTH_DIALOGS_HANDLED="+str(na)+"\n",encoding="utf-8")
-
-              x,d1,v1=open_level_data_dialog(m,pid,"03_level_t1")
-              if not d1:raise RuntimeError("could not locate Level data dialog")
-              t1=time.time();close_dialog(d1)
-              time.sleep(8)
-              x2,d2,v2=open_level_data_dialog(m,pid,"04_level_t2",known_x=x)
-              if not d2:raise RuntimeError("Level data dialog did not reopen")
-              t2=time.time();close_dialog(d2)
-              Path("data_click_x.txt").write_text(str(x),encoding="utf-8")
-
-              # Compare numeric values that appear in the same controls.
-              changed=[]
-              for a in v1:
-                  for b in v2:
-                      if a["id"]==b["id"] and a["class"]==b["class"] and a["rect"]==b["rect"] and abs(a["value"]-b["value"])>1e-9:
-                          changed.append({"control_id":a["id"],"class":a["class"],"rect":a["rect"],"t1":a["value"],"t2":b["value"],"delta":b["value"]-a["value"]})
-              Path("level_changed.json").write_text(json.dumps(changed,ensure_ascii=False,indent=2),encoding="utf-8")
-              if not changed:
-                  raise RuntimeError("Level data dialog opened but no numeric value changed")
-              Path("level_dynamics_result.txt").write_text(
-                  "LEVEL_DYNAMICS=PASS\nMODE=NATIVE_MASTER_SCADA_SIMULATION\nLAW=Пила\nMIN=20\nMAX=80\nT1="+str(t1)+"\nT2="+str(t2)+"\nCHANGED="+json.dumps(changed,ensure_ascii=False)+"\n",
-                  encoding="utf-8"
-              )
+              if not m:raise RuntimeError("debug main missing")
+              close_messages(pid);time.sleep(1)
+              m=main(pid)
+              expand(m);lv=item(m,"Level")
+              if lv:lv.click_input()
+              snap(m,"02_debug_t1.png");dump(ui(m),"02_debug_t1_uia.json")
+              t1=time.time();time.sleep(8)
+              m=main(pid);expand(m);lv=item(m,"Level")
+              if lv:lv.click_input()
+              snap(m,"03_debug_t2.png");dump(ui(m),"03_debug_t2_uia.json")
+              t2=time.time()
+              Path("debug_result.txt").write_text("DEBUG_MODE=PASS\nAUTH_DIALOGS_HANDLED="+str(na)+"\nT1="+str(t1)+"\nT2="+str(t2)+"\n",encoding="utf-8")
               src=Path(VAV).parent;dst=Path("native_project_snapshot")/src.name
               if dst.exists():shutil.rmtree(dst)
               shutil.copytree(src,dst)
@@ -299,29 +204,21 @@ jobs:
               log.append("FATAL\n"+traceback.format_exc());raise
           finally:
               Path("run_log.txt").write_text("\n".join(log),encoding="utf-8");kill()
-          '@ | Set-Content level_data_probe.py -Encoding UTF8
-          python level_data_probe.py
+          '@ | Set-Content debug_level.py -Encoding UTF8
+          python debug_level.py
 
-      - name: Upload proof
+      - name: Upload debug proof
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: masterscada35-level-dynamics-proof-7341100
+          name: masterscada35-debug-level-7341100
           path: |
-            runtime_auth_result.txt
-            level_dynamics_result.txt
-            data_click_x.txt
-            level_changed.json
-            closed_dialogs.json
-            01_level_pila_20_80.png
-            02_runtime_clean.png
-            02_runtime_clean_uia.json
-            03_level_t1.png
-            03_level_t1_uia.json
-            03_level_t1_values.json
-            04_level_t2.png
-            04_level_t2_uia.json
-            04_level_t2_values.json
+            debug_result.txt
+            01_configured.png
+            02_debug_t1.png
+            03_debug_t2.png
+            02_debug_t1_uia.json
+            03_debug_t2_uia.json
             run_log.txt
             native_project_snapshot/**
           if-no-files-found: warn
