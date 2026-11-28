@@ -1,0 +1,264 @@
+name: onec-7344000-runtime
+on:
+  push:
+    branches: [onec-7344000-hotel]
+    paths:
+      - '.github/workflows/onec-7344000-runtime.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate hotel XML
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/cc-1c-skills"
+          git clone --quiet https://github.com/Nikolay-Shirokov/cc-1c-skills.git "$tools"
+          git -C "$tools" checkout --quiet 4fc37e1f992057847228a69837337bd3c141c059
+          python -m pip install -q lxml
+          src="$RUNNER_TEMP/hotel-xml"
+          python onec-7344000/generate.py "$tools" "$src"
+          echo "SRC=$src" >> "$GITHUB_ENV"
+
+      - name: Pull native 1C server and thin-client images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull logobobah/onec-server11_xvfb:8.3.27.1508
+          docker pull logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508
+
+      - name: Create native file infobase with ibcmd
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$GITHUB_WORKSPACE/onec-7344000/runtime-work"
+          out="$GITHUB_WORKSPACE/onec-7344000/runtime-output"
+          rm -rf "$work" "$out"
+          mkdir -p "$work/data" "$work/db" "$work/clienttmp" "$work/restore-data" "$work/restored-db" "$out"
+          chmod -R 777 "$work" "$out"
+          echo "WORK=$work" >> "$GITHUB_ENV"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          docker run --rm --entrypoint /bin/bash \
+            -v "$SRC:/src:ro" -v "$work:/work" -v "$out:/out" \
+            logobobah/onec-server11_xvfb:8.3.27.1508 -lc '
+              set -euo pipefail
+              IBCMD="$(find /opt/1cv8 -type f -name ibcmd -perm -111 | head -n1)"
+              "$IBCMD" infobase create --data=/work/data --db-path=/work/db --create-database --import=/src --apply --force \
+                2>&1 | tee /out/01-create.log
+              "$IBCMD" infobase config check --data=/work/data --db-path=/work/db \
+                2>&1 | tee /out/02-check.log
+              test -f /work/db/1Cv8.1CD
+            '
+
+      - name: Start standalone server and seed through real thin client
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() { docker rm -f hotel-ibsrv >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run -d --name hotel-ibsrv --network host \
+            -v "$WORK:/work" \
+            logobobah/onec-server11_xvfb:8.3.27.1508 \
+            ibsrv --data=/work/data --db-path=/work/db > "$OUT/ibsrv-container-id.txt"
+          for i in $(seq 1 60); do
+            if docker logs hotel-ibsrv 2>&1 | tee "$OUT/03-ibsrv.log" | grep -qiE 'ready|готов'; then break; fi
+            if ! docker inspect -f '{{.State.Running}}' hotel-ibsrv 2>/dev/null | grep -q true; then
+              docker logs hotel-ibsrv 2>&1 | tee "$OUT/03-ibsrv.log"
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs hotel-ibsrv 2>&1 | tee "$OUT/03-ibsrv.log"
+          curl -fsS --max-time 10 http://127.0.0.1:8314/ >/dev/null || true
+
+          rm -f "$WORK/clienttmp/7344000-seed.ok" "$WORK/clienttmp/seed-client.log"
+          chmod 777 "$WORK/clienttmp"
+          set +e
+          docker run --rm --network host --entrypoint /bin/bash \
+            -v "$WORK/clienttmp:/tmp" \
+            logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508 -lc '
+              set -u
+              export HOME=/tmp/home
+              mkdir -p "$HOME"
+              export DISPLAY=:99
+              Xvfb :99 -screen 0 1440x900x24 >/tmp/xvfb-seed.log 2>&1 &
+              xp=$!
+              sleep 2
+              CLIENT="$(find /opt/1cv8 -type f -name 1cv8c -perm -111 | head -n1)"
+              echo "CLIENT=$CLIENT" > /tmp/client-path.txt
+              timeout 120s "$CLIENT" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cseed-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/seed-client.log
+              rc=$?
+              echo "$rc" > /tmp/seed-client.rc
+              kill "$xp" >/dev/null 2>&1 || true
+              chmod -R a+rwX /tmp
+              exit "$rc"
+            '
+          seed_rc=$?
+          set -e
+          echo "SEED_CLIENT_RC=$seed_rc" | tee "$OUT/04-seed-result.txt"
+          cp -f "$WORK/clienttmp/seed-client.log" "$OUT/" 2>/dev/null || true
+          cp -f "$WORK/clienttmp/xvfb-seed.log" "$OUT/" 2>/dev/null || true
+          cp -f "$WORK/clienttmp/client-path.txt" "$OUT/" 2>/dev/null || true
+          test "$seed_rc" -eq 0
+          test -f "$WORK/clienttmp/7344000-seed.ok"
+          cat "$WORK/clienttmp/7344000-seed.ok" | tee -a "$OUT/04-seed-result.txt"
+
+      - name: Verify seeded data through real thin client
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$WORK/clienttmp/7344000-verify.ok" "$WORK/clienttmp/verify-client.log"
+          set +e
+          docker run --rm --network host --entrypoint /bin/bash \
+            -v "$WORK/clienttmp:/tmp" \
+            logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508 -lc '
+              set -u
+              export HOME=/tmp/home2
+              mkdir -p "$HOME"
+              export DISPLAY=:98
+              Xvfb :98 -screen 0 1440x900x24 >/tmp/xvfb-verify.log 2>&1 &
+              xp=$!
+              sleep 2
+              CLIENT="$(find /opt/1cv8 -type f -name 1cv8c -perm -111 | head -n1)"
+              timeout 120s "$CLIENT" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cverify-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/verify-client.log
+              rc=$?
+              echo "$rc" > /tmp/verify-client.rc
+              kill "$xp" >/dev/null 2>&1 || true
+              chmod -R a+rwX /tmp
+              exit "$rc"
+            '
+          verify_rc=$?
+          set -e
+          echo "VERIFY_CLIENT_RC=$verify_rc" | tee "$OUT/05-verify-result.txt"
+          cp -f "$WORK/clienttmp/verify-client.log" "$OUT/" 2>/dev/null || true
+          test "$verify_rc" -eq 0
+          test -f "$WORK/clienttmp/7344000-verify.ok"
+          cat "$WORK/clienttmp/7344000-verify.ok" | tee -a "$OUT/05-verify-result.txt"
+
+      - name: Capture real 1C GUI screenshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$WORK/clienttmp/01-main.png"
+          set +e
+          docker run --rm --network host --entrypoint /bin/bash \
+            -v "$WORK/clienttmp:/tmp" \
+            logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508 -lc '
+              set -u
+              export HOME=/tmp/home-gui
+              mkdir -p "$HOME"
+              export DISPLAY=:97
+              Xvfb :97 -screen 0 1440x900x24 >/tmp/xvfb-gui.log 2>&1 &
+              xp=$!
+              sleep 2
+              CLIENT="$(find /opt/1cv8 -type f -name 1cv8c -perm -111 | head -n1)"
+              "$CLIENT" ENTERPRISE "/WShttp://127.0.0.1:8314" /DisableStartupDialogs /DisableStartupMessages /Out/tmp/gui-client.log &
+              cp=$!
+              sleep 25
+              if command -v scrot >/dev/null 2>&1; then
+                scrot /tmp/01-main.png
+              elif command -v import >/dev/null 2>&1; then
+                import -display :97 -window root /tmp/01-main.png
+              elif command -v xwd >/dev/null 2>&1 && command -v convert >/dev/null 2>&1; then
+                xwd -display :97 -root -silent | convert xwd:- /tmp/01-main.png
+              else
+                echo "NO_SCREENSHOT_TOOL" > /tmp/screenshot-tool.txt
+              fi
+              kill "$cp" >/dev/null 2>&1 || true
+              kill "$xp" >/dev/null 2>&1 || true
+              chmod -R a+rwX /tmp
+              exit 0
+            '
+          gui_rc=$?
+          set -e
+          echo "GUI_CONTAINER_RC=$gui_rc" | tee "$OUT/06-gui-result.txt"
+          cp -f "$WORK/clienttmp/01-main.png" "$OUT/" 2>/dev/null || true
+          cp -f "$WORK/clienttmp/gui-client.log" "$OUT/" 2>/dev/null || true
+          cp -f "$WORK/clienttmp/xvfb-gui.log" "$OUT/" 2>/dev/null || true
+          cp -f "$WORK/clienttmp/screenshot-tool.txt" "$OUT/" 2>/dev/null || true
+          test -s "$OUT/01-main.png"
+
+      - name: Dump seeded DT, CF and restore roundtrip
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker stop hotel-ibsrv >/dev/null
+          docker rm hotel-ibsrv >/dev/null
+          docker run --rm --entrypoint /bin/bash \
+            -v "$WORK:/work" -v "$OUT:/out" \
+            logobobah/onec-server11_xvfb:8.3.27.1508 -lc '
+              set -euo pipefail
+              IBCMD="$(find /opt/1cv8 -type f -name ibcmd -perm -111 | head -n1)"
+              "$IBCMD" infobase config save --data=/work/data --db-path=/work/db /out/7344000_Variant10.cf \
+                2>&1 | tee /out/07-save-cf.log
+              "$IBCMD" infobase dump --data=/work/data --db-path=/work/db /out/7344000_Variant10.dt \
+                2>&1 | tee /out/08-dump-dt.log
+              "$IBCMD" infobase create --data=/work/restore-data --db-path=/work/restored-db --create-database --restore=/out/7344000_Variant10.dt \
+                2>&1 | tee /out/09-restore-dt.log
+              "$IBCMD" infobase config check --data=/work/restore-data --db-path=/work/restored-db \
+                2>&1 | tee /out/10-restored-check.log
+              sha256sum /out/7344000_Variant10.cf /out/7344000_Variant10.dt | tee /out/sha256.txt
+              chmod -R a+rwX /out /work
+            '
+
+      - name: Verify restored DT through real thin client
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name hotel-ibsrv-restored --network host \
+            -v "$WORK:/work" \
+            logobobah/onec-server11_xvfb:8.3.27.1508 \
+            ibsrv --data=/work/restore-data --db-path=/work/restored-db > "$OUT/ibsrv-restored-container-id.txt"
+          trap 'docker rm -f hotel-ibsrv-restored >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 60); do
+            if docker logs hotel-ibsrv-restored 2>&1 | tee "$OUT/11-ibsrv-restored.log" | grep -qiE 'ready|готов'; then break; fi
+            if ! docker inspect -f '{{.State.Running}}' hotel-ibsrv-restored 2>/dev/null | grep -q true; then
+              docker logs hotel-ibsrv-restored 2>&1 | tee "$OUT/11-ibsrv-restored.log"
+              exit 1
+            fi
+            sleep 2
+          done
+          rm -f "$WORK/clienttmp/7344000-verify.ok"
+          set +e
+          docker run --rm --network host --entrypoint /bin/bash \
+            -v "$WORK/clienttmp:/tmp" \
+            logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508 -lc '
+              set -u
+              export HOME=/tmp/home-restored
+              mkdir -p "$HOME"
+              export DISPLAY=:96
+              Xvfb :96 -screen 0 1440x900x24 >/tmp/xvfb-restored.log 2>&1 &
+              xp=$!
+              sleep 2
+              CLIENT="$(find /opt/1cv8 -type f -name 1cv8c -perm -111 | head -n1)"
+              timeout 120s "$CLIENT" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cverify-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/restored-client.log
+              rc=$?
+              kill "$xp" >/dev/null 2>&1 || true
+              chmod -R a+rwX /tmp
+              exit "$rc"
+            '
+          rc=$?
+          set -e
+          echo "RESTORED_VERIFY_RC=$rc" | tee "$OUT/12-restored-verify.txt"
+          cp -f "$WORK/clienttmp/restored-client.log" "$OUT/" 2>/dev/null || true
+          test "$rc" -eq 0
+          test -f "$WORK/clienttmp/7344000-verify.ok"
+          cat "$WORK/clienttmp/7344000-verify.ok" | tee -a "$OUT/12-restored-verify.txt"
+          docker rm -f hotel-ibsrv-restored >/dev/null 2>&1 || true
+          trap - EXIT
+          echo "RUNTIME_NATIVE=PASS" | tee "$OUT/runtime-pass.txt"
+
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onec-7344000-runtime-native
+          path: onec-7344000/runtime-output/
+          if-no-files-found: error
+          retention-days: 7
