@@ -1,0 +1,63 @@
+name: MasterSCADA installer cache 7341100
+on:
+  push:
+    branches: [tmp-masterscada-7341100]
+jobs:
+  packages:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Download MasterSCADA 3.5 complete
+        shell: pwsh
+        run: |
+          New-Item -Type Directory out35 -Force | Out-Null
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.5"
+          curl.exe -k -L --fail "$b/version.txt" -o out35/version.txt
+          curl.exe -k -L --fail "$b/data.msi" -o out35/data.msi
+          curl.exe -k -L --fail "$b/Data1.cab" -o out35/Data1.cab
+          curl.exe -k -L --fail "$b/setup.exe" -o out35/setup.exe
+          curl.exe -k -L --fail "$b/setup.bmp" -o out35/setup.bmp
+          Get-FileHash out35/* -Algorithm SHA256 | Format-Table -AutoSize | Out-File out35/SHA256SUMS.txt
+          Get-Content out35/version.txt | Out-File out35/version_copy.txt
+
+      - name: Upload MasterSCADA 3.5 installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: MasterSCADA-3.5-complete
+          path: out35/**
+          compression-level: 0
+
+      - name: Download MasterSCADA 3.9 fallback
+        shell: pwsh
+        run: |
+          New-Item -Type Directory out39 -Force | Out-Null
+          $b="https://download.mps-soft.ru/demo/Old%20Demo/3.9"
+          curl.exe -k -L --fail "$b/version.txt" -o out39/version.txt
+          curl.exe -k -L --fail "$b/setup.exe" -o out39/setup.exe
+          Get-FileHash out39/* -Algorithm SHA256 | Format-Table -AutoSize | Out-File out39/SHA256SUMS.txt
+          Get-Content out39/version.txt | Out-File out39/version_copy.txt
+
+      - name: Upload MasterSCADA 3.9 installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: MasterSCADA-3.9-fallback
+          path: out39/**
+          compression-level: 0
+
+      - name: Download current MasterSCADA 3.X Demo fallback
+        shell: pwsh
+        run: |
+          New-Item -Type Directory out3x -Force | Out-Null
+          $b="https://download.mps-soft.ru/demo/MasterSCADA_3.X_Free/MasterSCADA_Demo"
+          curl.exe -k -L --fail "$b/version.txt" -o out3x/version.txt
+          curl.exe -k -L --fail "$b/checksum.md5" -o out3x/checksum.md5
+          curl.exe -k -L --fail "$b/MasterSCADASetup.exe" -o out3x/MasterSCADASetup.exe
+          Get-FileHash out3x/* -Algorithm SHA256 | Format-Table -AutoSize | Out-File out3x/SHA256SUMS.txt
+          Get-Content out3x/version.txt | Out-File out3x/version_copy.txt
+
+      - name: Upload current MasterSCADA 3.X installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: MasterSCADA-3.X-current-demo
+          path: out3x/**
+          compression-level: 0
