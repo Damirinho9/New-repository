@@ -1,1 +1,1 @@
-acceptance with per-scenario PASS FAIL diagnostics
+acceptance merged into proven НачальноеЗаполнение module
