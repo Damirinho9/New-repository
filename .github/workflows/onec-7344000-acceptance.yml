@@ -110,6 +110,7 @@ jobs:
             timeout 120s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Ctest-live-autosum /DisableStartupDialogs /DisableStartupMessages /Out/tmp/live-autosum.log
             kill "$xp" >/dev/null 2>&1 || true
             test -f /tmp/7344000-live-autosum.ok
+            cat /tmp/7344000-live-autosum.ok
             grep -q "INTERACTIVE_AUTOSUM=PASS" /tmp/7344000-live-autosum.ok
             chmod -R a+rwX /tmp
           '
