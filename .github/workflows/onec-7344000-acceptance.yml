@@ -92,7 +92,7 @@ jobs:
             timeout 120s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cseed-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/seed.log
             kill "$xp" >/dev/null 2>&1 || true
             test -f /tmp/7344000-seed.ok
-            chmod -R a+rwX /tmp
+            chmod -R a+rwX /tmp 2>/dev/null || true
           '
           cat "$WORK/tmp/7344000-seed.ok" | tee "$OUT/04-seed.txt"
           echo "TEST_DATA=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
@@ -112,7 +112,7 @@ jobs:
             test -f /tmp/7344000-live-autosum.ok
             cat /tmp/7344000-live-autosum.ok
             grep -q "INTERACTIVE_AUTOSUM=PASS" /tmp/7344000-live-autosum.ok
-            chmod -R a+rwX /tmp
+            chmod -R a+rwX /tmp 2>/dev/null || true
           '
           cp "$WORK/tmp/7344000-live-autosum.ok" "$OUT/04a-live-autosum.txt"
           echo "INTERACTIVE_AUTOSUM=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
@@ -139,7 +139,7 @@ jobs:
             timeout 180s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cverify-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/verify.log
             kill "$xp" >/dev/null 2>&1 || true
             test -f /tmp/7344000-verify.ok
-            chmod -R a+rwX /tmp
+            chmod -R a+rwX /tmp 2>/dev/null || true
           '
           cp "$WORK/tmp/7344000-verify.ok" "$OUT/05-functional-acceptance.txt"
           cp "$WORK/tmp/verify.log" "$OUT/" 2>/dev/null || true
@@ -168,7 +168,7 @@ jobs:
               pkill -9 -x 1cv8c >/dev/null 2>&1 || true
               pkill -9 -x 1cv8 >/dev/null 2>&1 || true
               kill \"\$xp\" >/dev/null 2>&1 || true
-              chmod -R a+rwX /tmp
+              chmod -R a+rwX /tmp 2>/dev/null || true
             "
             cp "$WORK/tmp/$file" "$OUT/$file"
             test -s "$OUT/$file"
@@ -224,7 +224,7 @@ jobs:
             timeout 180s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cverify-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/restored.log
             kill "$xp" >/dev/null 2>&1 || true
             test -f /tmp/7344000-verify.ok
-            chmod -R a+rwX /tmp
+            chmod -R a+rwX /tmp 2>/dev/null || true
           '
           cp "$WORK/tmp/7344000-verify.ok" "$OUT/10-restored-functional-acceptance.txt"
           for marker in TEST_DATA AUTOSUM THRESHOLD_LOGIC BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT; do
