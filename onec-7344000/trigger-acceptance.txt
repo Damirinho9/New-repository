@@ -1,1 +1,1 @@
-isolated acceptance module plus nonblocking tests
+pure read-only native acceptance
