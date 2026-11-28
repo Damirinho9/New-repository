@@ -125,22 +125,31 @@ jobs:
                       if x.is_visible() and x.control_id()==cid:out.append(x)
                   except:pass
               return out
+          def find_auth():
+              for w in Desktop(backend="uia").windows():
+                  try:
+                      if not w.is_visible(): continue
+                      ds=w.descendants()
+                      aids=set()
+                      for x in ds:
+                          try:aids.add(x.element_info.automation_id)
+                          except:pass
+                      if "textBoxPassword" in aids and "buttonOK" in aids:
+                          return w
+                  except:pass
+              return None
           def login_all():
               count=0
               stable=0
-              end=time.time()+25
+              end=time.time()+30
               while time.time()<end:
-                  found=None
-                  for w in Desktop(backend="uia").windows():
-                      try:
-                          if w.is_visible() and w.window_text()=="Идентификация оператора":found=w;break
-                      except:pass
+                  found=find_auth()
                   if not found:
                       stable+=1
-                      if stable>=5:return count
+                      if stable>=8:return count
                       time.sleep(.5);continue
                   stable=0;count+=1
-                  if count>6:raise RuntimeError("too many auth dialogs")
+                  if count>8:raise RuntimeError("too many auth dialogs")
                   dump(found,f"auth_{count}_uia.json");snap(found,f"auth_{count}.png")
                   ds=found.descendants();name=None;pwd=None;ok=None
                   for x in ds:
