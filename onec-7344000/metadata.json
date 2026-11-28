@@ -1,0 +1,157 @@
+[
+  {
+    "type": "Enum",
+    "name": "СтатусыБронирования",
+    "values": [
+      "Создано",
+      "Подтверждено",
+      "Заселен",
+      "Завершено",
+      "Отменено"
+    ]
+  },
+  {
+    "type": "Enum",
+    "name": "СпособыОплаты",
+    "values": [
+      "Наличные",
+      "БанковскаяКарта",
+      "БезналичныйПеревод"
+    ]
+  },
+  {
+    "type": "Enum",
+    "name": "СтатусыНомеров",
+    "values": [
+      "Свободен",
+      "Занят",
+      "НаОбслуживании"
+    ]
+  },
+  {
+    "type": "Catalog",
+    "name": "Гости",
+    "descriptionLength": 100,
+    "attributes": [
+      "Телефон: String(20)",
+      "ЭлектроннаяПочта: String(100)"
+    ]
+  },
+  {
+    "type": "Catalog",
+    "name": "КатегорииНомеров",
+    "descriptionLength": 100,
+    "attributes": [
+      "СтоимостьСуток: Number(15,2) | nonneg",
+      "Описание: String(150)"
+    ]
+  },
+  {
+    "type": "Catalog",
+    "name": "Номера",
+    "descriptionLength": 100,
+    "attributes": [
+      "Категория: CatalogRef.КатегорииНомеров",
+      "Этаж: Number(3,0)",
+      "Вместимость: Number(3,0)",
+      "Статус: EnumRef.СтатусыНомеров"
+    ]
+  },
+  {
+    "type": "Catalog",
+    "name": "ДополнительныеУслуги",
+    "descriptionLength": 100,
+    "attributes": [
+      "Стоимость: Number(15,2) | nonneg"
+    ]
+  },
+  {
+    "type": "Catalog",
+    "name": "Сотрудники",
+    "descriptionLength": 100,
+    "attributes": [
+      "Должность: String(100)"
+    ]
+  },
+  {
+    "type": "Catalog",
+    "name": "Тарифы",
+    "descriptionLength": 100,
+    "attributes": [
+      "Коэффициент: Number(5,2) | nonneg"
+    ]
+  },
+  {
+    "type": "Catalog",
+    "name": "ИсточникиБронирования",
+    "descriptionLength": 100,
+    "attributes": [
+      "Описание: String(150)"
+    ]
+  },
+  {
+    "type": "Document",
+    "name": "БронированиеНомера",
+    "posting": "Deny",
+    "attributes": [
+      "Гость: CatalogRef.Гости | req",
+      "Номер: CatalogRef.Номера | req",
+      "ДатаЗаезда: Date | req",
+      "ДатаВыезда: Date | req",
+      "КоличествоСуток: Number(5,0) | nonneg",
+      "Тариф: CatalogRef.Тарифы | req",
+      "СтоимостьСуток: Number(15,2) | nonneg",
+      "СуммаПроживания: Number(15,2) | nonneg",
+      "СуммаДополнительныхУслуг: Number(15,2) | nonneg",
+      "ИтоговаяСумма: Number(15,2) | nonneg",
+      "СтатусБронирования: EnumRef.СтатусыБронирования",
+      "Сотрудник: CatalogRef.Сотрудники",
+      "ИсточникБронирования: CatalogRef.ИсточникиБронирования"
+    ],
+    "tabularSections": {
+      "Услуги": [
+        "Услуга: CatalogRef.ДополнительныеУслуги",
+        "Количество: Number(10,0) | nonneg",
+        "Цена: Number(15,2) | nonneg",
+        "Сумма: Number(15,2) | nonneg"
+      ]
+    }
+  },
+  {
+    "type": "Document",
+    "name": "ОказаниеУслуг",
+    "posting": "Deny",
+    "attributes": [
+      "Гость: CatalogRef.Гости",
+      "Бронирование: DocumentRef.БронированиеНомера | req",
+      "Сотрудник: CatalogRef.Сотрудники",
+      "ИтоговаяСумма: Number(15,2) | nonneg"
+    ],
+    "tabularSections": {
+      "Услуги": [
+        "Услуга: CatalogRef.ДополнительныеУслуги",
+        "Количество: Number(10,0) | nonneg",
+        "Цена: Number(15,2) | nonneg",
+        "Сумма: Number(15,2) | nonneg"
+      ]
+    }
+  },
+  {
+    "type": "Document",
+    "name": "Оплата",
+    "posting": "Deny",
+    "attributes": [
+      "Гость: CatalogRef.Гости",
+      "Бронирование: DocumentRef.БронированиеНомера | req",
+      "СуммаОплаты: Number(15,2) | nonneg",
+      "СпособОплаты: EnumRef.СпособыОплаты",
+      "Сотрудник: CatalogRef.Сотрудники"
+    ]
+  },
+  {
+    "type": "Report",
+    "name": "БронированиеИВыручка",
+    "synonym": "Бронирование и выручка гостиницы за период",
+    "mainDataCompositionSchema": "Report.БронированиеИВыручка.Template.ОсновнаяСхемаКомпоновкиДанных"
+  }
+]
