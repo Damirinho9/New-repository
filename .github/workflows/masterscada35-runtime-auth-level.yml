@@ -241,7 +241,10 @@ jobs:
               snap(m,"02_level_simulation_configured.png")
               Path("level_simulation_config.txt").write_text("LEVEL_SOURCE=NATIVE_MASTER_SCADA_SIMULATION\nMIN=20\nMAX=80\n",encoding="utf-8")
 
-              click_mode(m,"Пуск")
+              import subprocess
+              rt=subprocess.Popen([EXE,VAV])
+              log.append("DIRECT_RUNTIME_PID="+str(rt.pid))
+              time.sleep(14)
               auth=auth_window()
               if not auth: raise RuntimeError("auth window missing")
               dump_uia(auth.handle,"runtime_auth_uia.json")
@@ -269,8 +272,17 @@ jobs:
                   raise RuntimeError("sa blank login rejected or not accepted")
               Path("runtime_auth_result.txt").write_text("RUNTIME_AUTH=PASS\nLOGIN=sa\nPASSWORD=<blank>\nAUTH_DIALOG_CLOSED=YES\n",encoding="utf-8")
 
+              runtime_windows=[]
+              for w in Desktop(backend="uia").windows():
+                  try:
+                      if w.is_visible() and (w.process_id()==rt.pid or "MasterSCADA" in w.window_text()):
+                          runtime_windows.append({"title":w.window_text(),"pid":w.process_id(),"class":w.element_info.class_name,"rect":str(w.rectangle())})
+                          try:snap(w,"runtime_after_auth_"+str(len(runtime_windows))+".png")
+                          except:pass
+                  except:pass
+              Path("runtime_windows_after_auth.json").write_text(json.dumps(runtime_windows,ensure_ascii=False,indent=2),encoding="utf-8")
               m=main(pid)
-              if not m: raise RuntimeError("main runtime host missing after auth")
+              if not m: raise RuntimeError("editor host missing after auth")
               snap(m,"04_runtime_authenticated.png")
               dump_uia(m.handle,"runtime_after_auth_uia.json")
 
@@ -320,6 +332,8 @@ jobs:
             windows_after_auth.json
             runtime_auth_uia.json
             runtime_after_auth_uia.json
+            runtime_windows_after_auth.json
+            runtime_after_auth_*.png
             level_config_probe.json
             numeric_t1.json
             numeric_t2.json
