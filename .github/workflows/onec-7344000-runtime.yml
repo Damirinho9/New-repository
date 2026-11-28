@@ -157,6 +157,10 @@ jobs:
               xp=$!
               sleep 2
               CLIENT="$(find /opt/1cv8 -type f -name 1cv8c -perm -111 | head -n1)"
+              if ! command -v scrot >/dev/null 2>&1; then
+                apt-get update -qq
+                DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scrot
+              fi
               "$CLIENT" ENTERPRISE "/WShttp://127.0.0.1:8314" /DisableStartupDialogs /DisableStartupMessages /Out/tmp/gui-client.log &
               cp=$!
               sleep 25
