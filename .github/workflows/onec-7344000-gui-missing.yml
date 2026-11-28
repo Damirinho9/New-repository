@@ -1,0 +1,104 @@
+name: onec-7344000-gui-missing
+on:
+  push:
+    branches: [onec-7344000-hotel]
+    paths:
+      - '.github/workflows/onec-7344000-gui-missing.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gui-missing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate configuration and pull platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/cc-1c-skills"
+          git clone --quiet https://github.com/Nikolay-Shirokov/cc-1c-skills.git "$tools"
+          git -C "$tools" checkout --quiet 4fc37e1f992057847228a69837337bd3c141c059
+          python -m pip install -q lxml
+          src="$RUNNER_TEMP/hotel-xml"
+          python onec-7344000/generate.py "$tools" "$src"
+          echo "SRC=$src" >> "$GITHUB_ENV"
+          docker pull logobobah/onec-server11_xvfb:8.3.27.1508
+          docker pull logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508
+          cat > "$RUNNER_TEMP/Dockerfile.client" <<'EOF'
+          FROM logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508
+          RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scrot
+          EOF
+          docker build -q -t hotel-client-tools -f "$RUNNER_TEMP/Dockerfile.client" "$RUNNER_TEMP"
+      - name: Create, seed and start native infobase
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/hotel-missing-work"; out="$GITHUB_WORKSPACE/onec-7344000/gui-missing"
+          rm -rf "$work" "$out"; mkdir -p "$work/data" "$work/db" "$work/tmp" "$out"; chmod -R 777 "$work" "$out"
+          echo "WORK=$work" >> "$GITHUB_ENV"; echo "OUT=$out" >> "$GITHUB_ENV"
+          docker run --rm --entrypoint /bin/bash -v "$SRC:/src:ro" -v "$work:/work" logobobah/onec-server11_xvfb:8.3.27.1508 -lc '
+            set -euo pipefail
+            IBCMD=/opt/1cv8/x86_64/8.3.27.1508/ibcmd
+            "$IBCMD" infobase create --data=/work/data --db-path=/work/db --create-database --import=/src --apply --force
+          '
+          docker run -d --name hotel-missing-ibsrv --network host --entrypoint /opt/1cv8/x86_64/8.3.27.1508/ibsrv \
+            -v "$work:/work" logobobah/onec-server11_xvfb:8.3.27.1508 --data=/work/data --db-path=/work/db >/dev/null
+          for i in $(seq 1 50); do docker logs hotel-missing-ibsrv 2>&1 | grep -qi ready && break; sleep 2; done
+          docker run --rm --network host --entrypoint /bin/bash -v "$work/tmp:/tmp" hotel-client-tools -lc '
+            set -euo pipefail
+            export HOME=/tmp/seedhome; mkdir -p "$HOME"; export DISPLAY=:99
+            Xvfb :99 -screen 0 1440x900x24 >/tmp/xvfb-seed.log 2>&1 & xp=$!; sleep 2
+            C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
+            timeout 120s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cseed-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/seed.log
+            kill "$xp" >/dev/null 2>&1 || true
+          '
+      - name: Capture payments and report with session cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminate_sessions() {
+            list="$OUT/session-list.txt"
+            docker exec hotel-missing-ibsrv /opt/1cv8/x86_64/8.3.27.1508/ibcmd --pid=1 session list > "$list" 2>&1 || true
+            while read -r sid; do
+              [ -n "$sid" ] || continue
+              docker exec hotel-missing-ibsrv /opt/1cv8/x86_64/8.3.27.1508/ibcmd --pid=1 session terminate --session="$sid" >> "$OUT/session-terminate.txt" 2>&1 || true
+            done < <(sed -nE 's/^[[:space:]]*session[[:space:]]*:[[:space:]]*([^[:space:]]+).*$/\1/p' "$list")
+            sleep 2
+          }
+          terminate_sessions
+          capture_one() {
+            param="$1"; file="$2"; disp="$3"
+            docker run --rm --network host --entrypoint /bin/bash -v "$WORK/tmp:/tmp" hotel-client-tools -lc "
+              set -u
+              export HOME=/tmp/home-$param; mkdir -p \"\$HOME\"; export DISPLAY=:$disp
+              Xvfb :$disp -screen 0 1440x900x24 >/tmp/xvfb-$param.log 2>&1 & xp=\$!; sleep 2
+              C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
+              \"\$C\" ENTERPRISE \"/WShttp://127.0.0.1:8314\" \"/C$param\" /DisableStartupDialogs /DisableStartupMessages \"/Out/tmp/$param.log\" &
+              p=\$!; sleep 15; scrot \"/tmp/$file\"
+              kill \"\$p\" >/dev/null 2>&1 || true
+              pkill -9 -x 1cv8c >/dev/null 2>&1 || true; pkill -9 -x 1cv8 >/dev/null 2>&1 || true
+              kill \"\$xp\" >/dev/null 2>&1 || true
+              chmod -R a+rwX /tmp
+            "
+            cp "$WORK/tmp/$file" "$OUT/$file"
+            cp "$WORK/tmp/$param.log" "$OUT/$param.log" 2>/dev/null || true
+            terminate_sessions
+          }
+          capture_one shot-payments 05-payments.png 97
+          capture_one shot-report 06-report.png 96
+          test -s "$OUT/05-payments.png"; test -s "$OUT/06-report.png"
+      - name: Cleanup and upload
+        if: always()
+        run: |
+          docker rm -f hotel-missing-ibsrv >/dev/null 2>&1 || true
+          sudo chmod -R a+rwX onec-7344000/gui-missing 2>/dev/null || true
+      - name: Upload GUI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onec-7344000-gui-missing
+          path: onec-7344000/gui-missing/
+          if-no-files-found: error
+          retention-days: 7
