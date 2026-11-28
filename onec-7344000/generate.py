@@ -121,7 +121,9 @@ lines += [
     "КонецФункции",
     ""
 ]
-base_module="\\n".join(lines)\nacceptance_module=(project/"acceptance.bsl").read_text(encoding="utf-8")\n(src/"CommonModules"/"НачальноеЗаполнение"/"Ext"/"Module.bsl").write_text(base_module+"\\n"+acceptance_module,encoding="utf-8-sig")
+base_module="\\n".join(lines)
+acceptance_module=(project/"acceptance.bsl").read_text(encoding="utf-8")
+(src/"CommonModules"/"НачальноеЗаполнение"/"Ext"/"Module.bsl").write_text(base_module+"\\n"+acceptance_module,encoding="utf-8-sig")
 managed_module = '''Процедура ПриНачалеРаботыСистемы()
     Если ПараметрЗапуска = "seed-hotel" Тогда
         НачальноеЗаполнение.Заполнить();
