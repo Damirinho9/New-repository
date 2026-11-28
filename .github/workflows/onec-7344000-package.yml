@@ -1,0 +1,112 @@
+name: onec-7344000-package
+on:
+  push:
+    branches: [onec-7344000-hotel]
+    paths:
+      - '.github/workflows/onec-7344000-package.yml'
+      - 'onec-7344000/trigger-package.txt'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install document validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libreoffice-writer poppler-utils unzip
+
+      - name: Download already built native delivery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input output validation/rendered
+          gh run download 46177776868 -n 7344000-final-delivery -D input
+          find input -maxdepth 2 -type f -printf '%P %s bytes\n' | sort | tee validation/input-files.txt
+          test -s "input/7344000_Вариант10_Отчет.docx"
+          test -s "input/7344000_Вариант10.dt"
+          test -s "input/7344000_Вариант10.cf"
+          cp "input/7344000_Вариант10_Отчет.docx" output/
+          cp "input/7344000_Вариант10.dt" output/
+          cp "input/7344000_Вариант10.cf" output/
+
+      - name: Re-render and validate university report
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 180s libreoffice --headless --convert-to pdf --outdir validation/rendered "output/7344000_Вариант10_Отчет.docx" > validation/libreoffice.txt 2>&1
+          pdf="validation/rendered/7344000_Вариант10_Отчет.pdf"
+          test -s "$pdf"
+          pdfinfo "$pdf" | tee validation/pdfinfo.txt
+          pages="$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')"
+          test "$pages" -ge 10
+          pdftotext "$pdf" validation/report-text.txt
+          tr '\n\r\t' '   ' < validation/report-text.txt | tr -s ' ' > validation/report-text-normalized.txt
+          grep -qi 'бронирования номеров' validation/report-text-normalized.txt
+          grep -qE '109[[:space:]]*300' validation/report-text-normalized.txt
+          grep -qE '51[[:space:]]*150' validation/report-text-normalized.txt
+          grep -qE '58[[:space:]]*150' validation/report-text-normalized.txt
+          unzip -t "output/7344000_Вариант10_Отчет.docx" | tee validation/docx-zip-test.txt
+          echo "DOCX_RENDER_VALIDATION=PASS" | tee validation/package-status.txt
+
+      - name: Create method-compliant submission ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+          root=Path("output")
+          names=["7344000_Вариант10_Отчет.docx","7344000_Вариант10.dt"]
+          package=root/"7344000_Вариант10_Сдача.zip"
+          with zipfile.ZipFile(package,"w",compression=zipfile.ZIP_DEFLATED,compresslevel=1) as z:
+              for name in names:
+                  z.write(root/name,arcname=name)
+          with zipfile.ZipFile(package,"r") as z:
+              assert z.namelist()==names, z.namelist()
+              assert all((i.flag_bits & 0x1)==0 for i in z.infolist())
+              assert z.testzip() is None
+          print("ZIP_INTEGRITY=PASS")
+          PY
+          unzip -l "output/7344000_Вариант10_Сдача.zip" | tee validation/zip-list.txt
+          unzip -t "output/7344000_Вариант10_Сдача.zip" | tee validation/zip-test.txt
+          echo "ZIP_INTEGRITY=PASS" >> validation/package-status.txt
+
+      - name: Hash and assert final files
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum output/* | tee validation/final-sha256.txt
+          for f in             "7344000_Вариант10_Отчет.docx"             "7344000_Вариант10.dt"             "7344000_Вариант10.cf"             "7344000_Вариант10_Сдача.zip"; do
+            test -s "output/$f"
+          done
+          grep -q 'DOCX_RENDER_VALIDATION=PASS' validation/package-status.txt
+          grep -q 'ZIP_INTEGRITY=PASS' validation/package-status.txt
+          echo "FINAL_PACKAGE=PASS" >> validation/package-status.txt
+          cat validation/package-status.txt
+
+      - name: Upload completed final delivery
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7344000-final-delivery-complete
+          path: output/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload packaging evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7344000-package-evidence
+          path: validation/
+          if-no-files-found: error
+          retention-days: 7
