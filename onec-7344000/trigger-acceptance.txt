@@ -1,1 +1,1 @@
-trigger after newline fix b0abe12a82add4096a574b08d56bfeb79ed5f4d9
+acceptance after managed live autosum 2026-11-28T18:34:59.223Z
