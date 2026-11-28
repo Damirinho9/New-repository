@@ -49,16 +49,16 @@ jobs:
               sleep 2
               v8=/opt/1cv8/x86_64/8.3.27.1508/1cv8
               echo "V8=$v8" | tee /out/platform.txt
-              "$v8" CREATEINFOBASE "File=/tmp/hotel;" /DisableStartupDialogs /Out /out/01-create.log
+              timeout 25s "$v8" CREATEINFOBASE "File=/tmp/hotel;" /DisableStartupDialogs /Out /out/01-create.log
               rc1=$?
               echo "CREATEINFOBASE_RC=$rc1" | tee -a /out/result.txt
-              "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /LoadConfigFromFiles /src /Out /out/02-load.log
+              timeout 25s "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /LoadConfigFromFiles /src /Out /out/02-load.log
               rc2=$?
               echo "LOAD_CONFIG_RC=$rc2" | tee -a /out/result.txt
-              "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /UpdateDBCfg /Out /out/03-update.log
+              timeout 25s "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /UpdateDBCfg /Out /out/03-update.log
               rc3=$?
               echo "UPDATE_DB_RC=$rc3" | tee -a /out/result.txt
-              "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /CheckConfig /Out /out/04-check.log
+              timeout 25s "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /CheckConfig /Out /out/04-check.log
               rc4=$?
               echo "CHECK_CONFIG_RC=$rc4" | tee -a /out/result.txt
               kill $xvfb_pid 2>/dev/null || true
