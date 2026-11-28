@@ -156,7 +156,7 @@ jobs:
           capture_one shot-booking-object 07-booking-object.png 97 18
           capture_one shot-services 08-services.png 96 18
           capture_one shot-threshold 09-threshold.png 95 20
-          identify "$OUT/"0*.png | tee "$OUT/evidence-images.txt"
+          file "$OUT/"0*.png | tee "$OUT/evidence-images.txt"
           echo "GUI_SCREENSHOTS=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
 
       - name: Dump CF and DT then restore DT
