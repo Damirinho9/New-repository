@@ -1,1 +1,1 @@
-final delivery after live autosum and restore display fix 2026-11-28T18:39:43.988Z
+final deterministic live autosum 2026-11-28T18:44:01.220Z
