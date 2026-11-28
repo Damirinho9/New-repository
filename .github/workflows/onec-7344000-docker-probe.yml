@@ -1,0 +1,72 @@
+name: onec-7344000-docker-probe
+on:
+  push:
+    branches: [onec-7344000-hotel]
+    paths:
+      - '.github/workflows/onec-7344000-docker-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate hotel XML
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/cc-1c-skills"
+          git clone --quiet https://github.com/Nikolay-Shirokov/cc-1c-skills.git "$tools"
+          git -C "$tools" checkout --quiet 4fc37e1f992057847228a69837337bd3c141c059
+          python -m pip install -q lxml
+          src="$RUNNER_TEMP/hotel-xml"
+          python onec-7344000/generate.py "$tools" "$src"
+          echo "SRC=$src" >> "$GITHUB_ENV"
+      - name: Pull real 1C 8.3.27.1508 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508
+          docker image inspect logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508 --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+      - name: Native CLI/license probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/onec-7344000/docker-probe-output"
+          mkdir -p "$out"
+          set +e
+          docker run --rm --entrypoint /bin/bash \
+            -v "$SRC:/src:ro" -v "$out:/out" \
+            logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508 -lc '
+              set -u
+              v8=/opt/1cv8/x86_64/8.3.27.1508/1cv8
+              echo "V8=$v8" | tee /out/platform.txt
+              "$v8" CREATEINFOBASE "File=/tmp/hotel;" /DisableStartupDialogs /Out /out/01-create.log
+              rc1=$?
+              echo "CREATEINFOBASE_RC=$rc1" | tee -a /out/result.txt
+              "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /LoadConfigFromFiles /src /Out /out/02-load.log
+              rc2=$?
+              echo "LOAD_CONFIG_RC=$rc2" | tee -a /out/result.txt
+              "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /UpdateDBCfg /Out /out/03-update.log
+              rc3=$?
+              echo "UPDATE_DB_RC=$rc3" | tee -a /out/result.txt
+              "$v8" DESIGNER /F/tmp/hotel /DisableStartupDialogs /CheckConfig /Out /out/04-check.log
+              rc4=$?
+              echo "CHECK_CONFIG_RC=$rc4" | tee -a /out/result.txt
+              exit 0
+            '
+          docker_rc=$?
+          echo "DOCKER_RC=$docker_rc" >> "$out/result.txt"
+          cat "$out/result.txt"
+          grep -RniE 'license|лиценз|ошиб|error|exception' "$out" || true
+          set -e
+      - name: Upload probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onec-7344000-docker-probe
+          path: onec-7344000/docker-probe-output/
+          if-no-files-found: warn
+          retention-days: 7
