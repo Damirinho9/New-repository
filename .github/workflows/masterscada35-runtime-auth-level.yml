@@ -163,27 +163,27 @@ jobs:
                   except:pass
               return a
           def mode_popup(m,label):
-              u=ui(m);root=None
-              for x in u.descendants(control_type="MenuItem"):
-                  try:
-                      if dec(x.window_text()).strip()=="Режим":root=x;break
-                  except:pass
-              if not root:raise RuntimeError("mode root missing")
-              root.click_input();time.sleep(.6)
-              popup_items=[]
-              target=None
-              for w in Desktop(backend="uia").windows():
-                  try:
-                      if w.element_info.class_name!="#32768":continue
-                      for x in w.descendants(control_type="MenuItem"):
-                          if not x.is_visible():continue
-                          s=dec(x.window_text()).strip();popup_items.append(s)
-                          if s==label:target=x
-                  except:pass
-              log.append("POPUP_"+label+"="+repr(popup_items))
-              if not target:
-                  m.type_keys("{ESC}");raise RuntimeError("popup mode item missing "+label)
-              target.click_input();time.sleep(5)
+              # First try native Win32 menu selection. This is more reliable for old MFC menus than UIA popup discovery.
+              try:
+                  m.menu_select("Режим->"+label)
+                  log.append("MENU_SELECT_OK="+label)
+                  time.sleep(5)
+                  return
+              except Exception as e:
+                  log.append("MENU_SELECT_FAIL="+repr(e))
+              # Fallback: click the Mode menu and use keyboard ordering: Stop, Start, Simulation, Debug.
+              r=m.rectangle()
+              pyautogui.click(r.left+208,r.top+40)
+              time.sleep(.7)
+              if label=="Стоп": n=1
+              elif label=="Пуск": n=2
+              elif label=="Имитация": n=3
+              elif label=="Отладка": n=4
+              else: raise RuntimeError("unknown mode "+label)
+              for _ in range(n): pyautogui.press("down")
+              pyautogui.press("enter")
+              log.append("MENU_KEYBOARD="+label)
+              time.sleep(5)
           def nums(m,tag):
               expand(m);lv=item(m,"Level")
               if lv:lv.click_input();time.sleep(.7)
