@@ -227,8 +227,8 @@ jobs:
               log.append("FATAL\n"+traceback.format_exc());raise
           finally:
               Path("run_log.txt").write_text("\n".join(log),encoding="utf-8");kill()
-          '@ | Set-Content inspect.py -Encoding UTF8
-          python inspect.py
+          '@ | Set-Content runtime_inspect.py -Encoding UTF8
+          python runtime_inspect.py
 
       - name: Upload inspection
         if: always()
