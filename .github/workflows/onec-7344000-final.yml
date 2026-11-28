@@ -110,6 +110,25 @@ jobs:
           cp "$WORK/tmp/7344000-seed.ok" "$OUT/04-seed.txt"
           echo TEST_DATA=PASS >> "$OUT/native-status.txt"
 
+      - name: Verify interactive autosum in real managed form
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$WORK/tmp/7344000-live-autosum.ok"
+          docker run --rm --network host --entrypoint /bin/bash -v "$WORK/tmp:/tmp" hotel-client-tools -lc '
+            set -euo pipefail
+            export HOME=/tmp/home-live; mkdir -p "$HOME"; export DISPLAY=:87
+            Xvfb :87 -screen 0 1440x900x24 >/tmp/xvfb-live.log 2>&1 & xp=$!; sleep 2
+            C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
+            timeout 180s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Ctest-live-autosum /DisableStartupDialogs /DisableStartupMessages /Out/tmp/live-autosum.log
+            kill "$xp" >/dev/null 2>&1 || true
+            test -f /tmp/7344000-live-autosum.ok
+            grep -q "INTERACTIVE_AUTOSUM=PASS" /tmp/7344000-live-autosum.ok
+            chmod -R a+rwX /tmp
+          '
+          cp "$WORK/tmp/7344000-live-autosum.ok" "$OUT/04a-live-autosum.txt"
+          echo INTERACTIVE_AUTOSUM=PASS >> "$OUT/native-status.txt"
+
       - name: Detailed native functional tests
         shell: bash
         run: |
@@ -229,8 +248,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp "$OUT/7344000_Variant10.dt" "$FINAL/7344000_Variant10.dt"
-          cp "$OUT/7344000_Variant10.cf" "$FINAL/7344000_Variant10.cf"
+          cp "$OUT/7344000_Variant10.dt" "$FINAL/7344000_Вариант10.dt"
+          cp "$OUT/7344000_Variant10.cf" "$FINAL/7344000_Вариант10.cf"
           python onec-7344000/build_report.py "$OUT/screenshots" "$FINAL" "$OUT/native-status.txt" | tee "$OUT/docx-build.txt"
           grep -q 'DOCX_VALIDATION=PASS' "$OUT/docx-build.txt"
           echo DOCX_VALIDATION=PASS >> "$OUT/native-status.txt"
@@ -260,9 +279,9 @@ jobs:
           from pathlib import Path
           import zipfile
           root=Path("onec-7344000/final-delivery")
-          package=root/"7344000_Вариант10_Комплект.zip"
-          names=["7344000_Вариант10_Отчет.docx","7344000_Variant10.dt"]
-          with zipfile.ZipFile(package,"w",compression=zipfile.ZIP_STORED) as z:
+          package=root/"7344000_Вариант10_Сдача.zip"
+          names=["7344000_Вариант10_Отчет.docx","7344000_Вариант10.dt"]
+          with zipfile.ZipFile(package,"w",compression=zipfile.ZIP_DEFLATED,compresslevel=1) as z:
               for name in names:
                   z.write(root/name,arcname=name)
           with zipfile.ZipFile(package,"r") as z:
@@ -280,14 +299,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for marker in PLATFORM_INSTALL CREATEINFOBASE LOAD_CONFIG UPDATE_DB_CFG CHECK_MODULES TEST_DATA AUTOSUM THRESHOLD_MESSAGE BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT GUI_SCREENSHOTS DUMP_IB RESTORE_IB RESTORED_RUNTIME DOCX_VALIDATION ZIP_INTEGRITY; do
+          for marker in PLATFORM_INSTALL CREATEINFOBASE LOAD_CONFIG UPDATE_DB_CFG CHECK_MODULES TEST_DATA AUTOSUM INTERACTIVE_AUTOSUM THRESHOLD_MESSAGE BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT GUI_SCREENSHOTS DUMP_IB RESTORE_IB RESTORED_RUNTIME DOCX_VALIDATION ZIP_INTEGRITY; do
             grep -q "$marker=PASS" "$OUT/native-status.txt" || { echo "FINAL_MISSING=$marker"; exit 1; }
           done
           printf '%s\n' FINAL_ACCEPTANCE=PASS >> "$OUT/native-status.txt"
           test -s "$FINAL/7344000_Вариант10_Отчет.docx"
-          test -s "$FINAL/7344000_Variant10.dt"
-          test -s "$FINAL/7344000_Variant10.cf"
-          test -s "$FINAL/7344000_Вариант10_Комплект.zip"
+          test -s "$FINAL/7344000_Вариант10.dt"
+          test -s "$FINAL/7344000_Вариант10.cf"
+          test -s "$FINAL/7344000_Вариант10_Сдача.zip"
 
       - name: Cleanup native services
         if: always()
