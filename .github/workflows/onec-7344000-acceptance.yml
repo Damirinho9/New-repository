@@ -97,6 +97,25 @@ jobs:
           cat "$WORK/tmp/7344000-seed.ok" | tee "$OUT/04-seed.txt"
           echo "TEST_DATA=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
 
+      - name: Verify interactive autosum through real managed form
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$WORK/tmp/7344000-live-autosum.ok"
+          docker run --rm --network host --entrypoint /bin/bash -v "$WORK/tmp:/tmp" hotel-client-tools -lc '
+            set -euo pipefail
+            export HOME=/tmp/home-live; mkdir -p "$HOME"; export DISPLAY=:94
+            Xvfb :94 -screen 0 1440x900x24 >/tmp/xvfb-live.log 2>&1 & xp=$!; sleep 2
+            C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
+            timeout 120s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Ctest-live-autosum /DisableStartupDialogs /DisableStartupMessages /Out/tmp/live-autosum.log
+            kill "$xp" >/dev/null 2>&1 || true
+            test -f /tmp/7344000-live-autosum.ok
+            grep -q "INTERACTIVE_AUTOSUM=PASS" /tmp/7344000-live-autosum.ok
+            chmod -R a+rwX /tmp
+          '
+          cp "$WORK/tmp/7344000-live-autosum.ok" "$OUT/04a-live-autosum.txt"
+          echo "INTERACTIVE_AUTOSUM=PASS" | sudo tee -a "$OUT/native-status.txt" >/dev/null
+
       - name: Run detailed functional acceptance inside 1C
         shell: bash
         run: |
@@ -153,7 +172,7 @@ jobs:
             cp "$WORK/tmp/$file" "$OUT/$file"
             test -s "$OUT/$file"
           }
-          capture_one shot-booking-object 07-booking-object.png 97 18
+          capture_one shot-live-autosum 07-live-autosum.png 97 18
           capture_one shot-services 08-services.png 96 18
           capture_one shot-threshold 09-threshold.png 95 20
           file "$OUT/"0*.png | tee "$OUT/evidence-images.txt"
