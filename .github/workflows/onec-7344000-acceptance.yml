@@ -5,6 +5,7 @@ on:
     branches: [onec-7344000-hotel]
     paths:
       - '.github/workflows/onec-7344000-acceptance.yml'
+      - 'onec-7344000/trigger-acceptance.txt'
 permissions:
   contents: read
 jobs:
