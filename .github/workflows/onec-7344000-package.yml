@@ -50,11 +50,28 @@ jobs:
           pages="$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')"
           test "$pages" -ge 10
           pdftotext "$pdf" validation/report-text.txt
-          tr '\n\r\t' '   ' < validation/report-text.txt | tr -s ' ' > validation/report-text-normalized.txt
-          grep -qi 'бронирования номеров' validation/report-text-normalized.txt
-          grep -qE '109[[:space:]]*300' validation/report-text-normalized.txt
-          grep -qE '51[[:space:]]*150' validation/report-text-normalized.txt
-          grep -qE '58[[:space:]]*150' validation/report-text-normalized.txt
+          python - <<'PY'
+          import re, zipfile, xml.etree.ElementTree as ET
+          from pathlib import Path
+          docx=Path("output/7344000_Вариант10_Отчет.docx")
+          with zipfile.ZipFile(docx) as z:
+              root=ET.fromstring(z.read("word/document.xml"))
+          ns={"w":"http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+          text=" ".join((n.text or "") for n in root.findall(".//w:t",ns))
+          text=re.sub(r"\s+"," ",text.replace("\xa0"," ")).strip()
+          Path("validation/docx-text-normalized.txt").write_text(text,encoding="utf-8")
+          required=[
+              "бронирования номеров",
+              "109 300",
+              "51 150",
+              "58 150",
+              "Возможна скидка на проживание",
+          ]
+          low=text.lower()
+          for value in required:
+              assert value.lower() in low, value
+          print("DOCX_TEXT_VALIDATION=PASS")
+          PY
           unzip -t "output/7344000_Вариант10_Отчет.docx" | tee validation/docx-zip-test.txt
           echo "DOCX_RENDER_VALIDATION=PASS" | tee validation/package-status.txt
 
