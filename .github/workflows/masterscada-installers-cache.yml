@@ -17,7 +17,7 @@ jobs:
           curl.exe -k -L --fail "$b/Data1.cab" -o out35/Data1.cab
           curl.exe -k -L --fail "$b/setup.exe" -o out35/setup.exe
           curl.exe -k -L --fail "$b/setup.bmp" -o out35/setup.bmp
-          Get-FileHash out35/* -Algorithm SHA256 | Format-Table -AutoSize | Out-File out35/SHA256SUMS.txt
+          Get-ChildItem out35 -File | Where-Object {$_.Name -ne "SHA256SUMS.txt"} | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-File out35/SHA256SUMS.txt
           Get-Content out35/version.txt | Out-File out35/version_copy.txt
 
       - name: Upload MasterSCADA 3.5 installer
@@ -34,7 +34,7 @@ jobs:
           $b="https://download.mps-soft.ru/demo/Old%20Demo/3.9"
           curl.exe -k -L --fail "$b/version.txt" -o out39/version.txt
           curl.exe -k -L --fail "$b/setup.exe" -o out39/setup.exe
-          Get-FileHash out39/* -Algorithm SHA256 | Format-Table -AutoSize | Out-File out39/SHA256SUMS.txt
+          Get-ChildItem out39 -File | Where-Object {$_.Name -ne "SHA256SUMS.txt"} | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-File out39/SHA256SUMS.txt
           Get-Content out39/version.txt | Out-File out39/version_copy.txt
 
       - name: Upload MasterSCADA 3.9 installer
@@ -52,7 +52,7 @@ jobs:
           curl.exe -k -L --fail "$b/version.txt" -o out3x/version.txt
           curl.exe -k -L --fail "$b/checksum.md5" -o out3x/checksum.md5
           curl.exe -k -L --fail "$b/MasterSCADASetup.exe" -o out3x/MasterSCADASetup.exe
-          Get-FileHash out3x/* -Algorithm SHA256 | Format-Table -AutoSize | Out-File out3x/SHA256SUMS.txt
+          Get-ChildItem out3x -File | Where-Object {$_.Name -ne "SHA256SUMS.txt"} | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-File out3x/SHA256SUMS.txt
           Get-Content out3x/version.txt | Out-File out3x/version_copy.txt
 
       - name: Upload current MasterSCADA 3.X installer
