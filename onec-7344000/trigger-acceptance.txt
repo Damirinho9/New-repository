@@ -1,1 +1,1 @@
-pure read-only native acceptance
+trigger after newline fix b0abe12a82add4096a574b08d56bfeb79ed5f4d9
