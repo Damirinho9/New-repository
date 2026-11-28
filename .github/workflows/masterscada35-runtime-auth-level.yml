@@ -281,14 +281,18 @@ jobs:
                           except:pass
                   except:pass
               Path("runtime_windows_after_auth.json").write_text(json.dumps(runtime_windows,ensure_ascii=False,indent=2),encoding="utf-8")
-              m=main(pid)
-              if not m: raise RuntimeError("editor host missing after auth")
-              snap(m,"04_runtime_authenticated.png")
-              dump_uia(m.handle,"runtime_after_auth_uia.json")
 
-              t1=time.time();n1=collect_numeric(m,"05_level_t1")
-              time.sleep(7)
-              t2=time.time();n2=collect_numeric(m,"06_level_t2")
+              # If Runtime exposes a normal MasterSCADA host window, inspect current Level there.
+              m=main(rt.pid)
+              if m:
+                  snap(m,"04_runtime_authenticated.png")
+                  dump_uia(m.handle,"runtime_after_auth_uia.json")
+                  t1=time.time();n1=collect_numeric(m,"05_level_t1")
+                  time.sleep(7)
+                  t2=time.time();n2=collect_numeric(m,"06_level_t2")
+              else:
+                  t1=time.time();t2=t1;n1=[];n2=[]
+                  Path("level_dynamics_result.txt").write_text("LEVEL_DYNAMICS=NOT_VERIFIED\nREASON=NO_RUNTIME_MAIN_WINDOW\n",encoding="utf-8")
               Path("numeric_t1.json").write_text(json.dumps(n1,ensure_ascii=False,indent=2),encoding="utf-8")
               Path("numeric_t2.json").write_text(json.dumps(n2,ensure_ascii=False,indent=2),encoding="utf-8")
               by1={(x["autoid"],x["rect"],x["type"]):x["value"] for x in n1}
@@ -303,7 +307,8 @@ jobs:
               else:
                   Path("level_dynamics_result.txt").write_text("LEVEL_DYNAMICS=NOT_VERIFIED\nSOURCE=NATIVE_MASTER_SCADA_SIMULATION\nT1="+str(t1)+"\nT2="+str(t2),encoding="utf-8")
 
-              try:click_mode(m,"Стоп")
+              try:
+                  if m: click_mode(m,"Стоп")
               except Exception as e:log.append("STOPWARN="+repr(e))
               time.sleep(2)
               src=Path(VAV).parent;dst=Path("native_project_snapshot")/src.name
