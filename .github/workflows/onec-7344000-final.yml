@@ -1,0 +1,314 @@
+name: onec-7344000-final
+on:
+  workflow_dispatch:
+  push:
+    branches: [onec-7344000-hotel]
+    paths:
+      - 'onec-7344000/trigger-final.txt'
+permissions:
+  contents: read
+jobs:
+  final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install report and visual validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libreoffice-writer poppler-utils tesseract-ocr tesseract-ocr-rus imagemagick fonts-liberation2
+          python -m pip install -q lxml python-docx pillow
+
+      - name: Generate current hotel configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/cc-1c-skills"
+          git clone --quiet https://github.com/Nikolay-Shirokov/cc-1c-skills.git "$tools"
+          git -C "$tools" checkout --quiet 4fc37e1f992057847228a69837337bd3c141c059
+          src="$RUNNER_TEMP/hotel-xml"
+          python onec-7344000/generate.py "$tools" "$src"
+          echo "SRC=$src" >> "$GITHUB_ENV"
+
+      - name: Pull real 1C 8.3.27.1508 platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull logobobah/onec-server11_xvfb:8.3.27.1508
+          docker pull logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508
+          cat > "$RUNNER_TEMP/Dockerfile.client" <<'EOF'
+          FROM logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508
+          RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scrot xdotool
+          EOF
+          docker build -q -t hotel-client-tools -f "$RUNNER_TEMP/Dockerfile.client" "$RUNNER_TEMP"
+
+      - name: Prepare work directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/hotel-final-work"
+          out="$GITHUB_WORKSPACE/onec-7344000/final-evidence"
+          final="$GITHUB_WORKSPACE/onec-7344000/final-delivery"
+          rm -rf "$work" "$out" "$final"
+          mkdir -p "$work/data" "$work/db" "$work/tmp" "$work/restore-data" "$work/restored-db" "$out/screenshots" "$final"
+          chmod -R 777 "$work" "$out" "$final"
+          touch "$out/native-status.txt"
+          chmod 666 "$out/native-status.txt"
+          echo "WORK=$work" >> "$GITHUB_ENV"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          echo "FINAL=$final" >> "$GITHUB_ENV"
+          echo "PLATFORM_INSTALL=PASS" >> "$out/native-status.txt"
+
+      - name: Native create, import, apply and check
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/bash -v "$SRC:/src:ro" -v "$WORK:/work" -v "$OUT:/out" \
+            logobobah/onec-server11_xvfb:8.3.27.1508 -lc '
+              set -euo pipefail
+              IBCMD=/opt/1cv8/x86_64/8.3.27.1508/ibcmd
+              "$IBCMD" --version 2>&1 | tee /out/platform.txt || true
+              "$IBCMD" infobase create --data=/work/data --db-path=/work/db --create-database --import=/src --apply --force 2>&1 | tee /out/01-create-import.log
+              "$IBCMD" infobase config check --data=/work/data --db-path=/work/db 2>&1 | tee /out/02-config-check.log
+              test -f /work/db/1Cv8.1CD
+            '
+          printf '%s\n' CREATEINFOBASE=PASS LOAD_CONFIG=PASS UPDATE_DB_CFG=PASS CHECK_MODULES=PASS >> "$OUT/native-status.txt"
+
+      - name: Start native 1C standalone server
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name hotel-final-ibsrv --network host \
+            --entrypoint /opt/1cv8/x86_64/8.3.27.1508/ibsrv \
+            -v "$WORK:/work" logobobah/onec-server11_xvfb:8.3.27.1508 \
+            --data=/work/data --db-path=/work/db >/dev/null
+          for i in $(seq 1 60); do
+            if docker logs hotel-final-ibsrv 2>&1 | tee "$OUT/03-ibsrv.log" | grep -qi ready; then break; fi
+            docker inspect -f '{{.State.Running}}' hotel-final-ibsrv 2>/dev/null | grep -q true || { docker logs hotel-final-ibsrv; exit 1; }
+            sleep 2
+          done
+
+      - name: Seed database in real 1C thin client
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$WORK/tmp/7344000-seed.ok"
+          docker run --rm --network host --entrypoint /bin/bash -v "$WORK/tmp:/tmp" hotel-client-tools -lc '
+            set -euo pipefail
+            export HOME=/tmp/home-seed; mkdir -p "$HOME"; export DISPLAY=:99
+            Xvfb :99 -screen 0 1440x900x24 >/tmp/xvfb-seed.log 2>&1 & xp=$!; sleep 2
+            C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
+            timeout 180s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cseed-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/seed.log
+            kill "$xp" >/dev/null 2>&1 || true
+            test -f /tmp/7344000-seed.ok
+            chmod -R a+rwX /tmp
+          '
+          cp "$WORK/tmp/7344000-seed.ok" "$OUT/04-seed.txt"
+          echo TEST_DATA=PASS >> "$OUT/native-status.txt"
+
+      - name: Detailed native functional tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminate_sessions() {
+            docker exec hotel-final-ibsrv /opt/1cv8/x86_64/8.3.27.1508/ibcmd --pid=1 session list > "$OUT/sessions-functional.txt" 2>&1 || true
+            while read -r sid; do
+              [ -n "$sid" ] || continue
+              docker exec hotel-final-ibsrv /opt/1cv8/x86_64/8.3.27.1508/ibcmd --pid=1 session terminate --session="$sid" >> "$OUT/session-terminate-functional.txt" 2>&1 || true
+            done < <(sed -nE 's/^[[:space:]]*session[[:space:]]*:[[:space:]]*([^[:space:]]+).*$/\1/p' "$OUT/sessions-functional.txt")
+            sleep 2
+          }
+          terminate_sessions
+          rm -f "$WORK/tmp/7344000-verify.ok"
+          docker run --rm --network host --entrypoint /bin/bash -v "$WORK/tmp:/tmp" hotel-client-tools -lc '
+            set -euo pipefail
+            export HOME=/tmp/home-verify; mkdir -p "$HOME"; export DISPLAY=:98
+            Xvfb :98 -screen 0 1440x900x24 >/tmp/xvfb-verify.log 2>&1 & xp=$!; sleep 2
+            C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
+            timeout 240s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cverify-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/verify.log
+            kill "$xp" >/dev/null 2>&1 || true
+            test -f /tmp/7344000-verify.ok
+            chmod -R a+rwX /tmp
+          '
+          cp "$WORK/tmp/7344000-verify.ok" "$OUT/05-functional-acceptance.txt"
+          cp "$WORK/tmp/verify.log" "$OUT/" 2>/dev/null || true
+          cat "$OUT/05-functional-acceptance.txt"
+          for marker in TEST_DATA AUTOSUM THRESHOLD_LOGIC BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT; do
+            grep -q "$marker=PASS" "$OUT/05-functional-acceptance.txt" || { echo "MISSING_NATIVE_MARKER=$marker"; exit 1; }
+          done
+          printf '%s\n' AUTOSUM=PASS BOOKING_VALIDATION=PASS PAYMENT_ACCOUNTING=PASS PERIOD_REPORT=PASS >> "$OUT/native-status.txt"
+          terminate_sessions
+
+      - name: Capture nine real 1C screenshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x onec-7344000/capture_gui.sh
+          WORK="$WORK" OUT="$OUT" SERVER_CONTAINER=hotel-final-ibsrv CLIENT_IMAGE=hotel-client-tools onec-7344000/capture_gui.sh
+          for f in "$OUT/screenshots/"*.png; do
+            identify "$f"
+            test "$(identify -format '%w' "$f")" -ge 1000
+            test "$(identify -format '%h' "$f")" -ge 700
+          done
+          test "$(find "$OUT/screenshots" -maxdepth 1 -name '*.png' | wc -l)" -eq 9
+          echo GUI_SCREENSHOTS=PASS >> "$OUT/native-status.txt"
+
+      - name: Visual OCR acceptance for threshold and report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT/ocr"
+          for f in "$OUT/screenshots/"*.png; do
+            base="$(basename "$f" .png)"
+            tesseract "$f" "$OUT/ocr/$base" -l rus+eng --psm 11 >/dev/null 2>&1 || true
+          done
+          cat "$OUT/ocr/09-threshold.txt" | tee "$OUT/ocr-threshold.txt"
+          cat "$OUT/ocr/06-report.txt" | tee "$OUT/ocr-report.txt"
+          grep -qiE 'скидк|discount' "$OUT/ocr/09-threshold.txt" || { echo "THRESHOLD_MESSAGE_NOT_VISIBLE"; exit 1; }
+          grep -qiE 'Начисл|Оплачен|Задолж|Бронирован' "$OUT/ocr/06-report.txt" || { echo "REPORT_RESULT_NOT_VISIBLE"; exit 1; }
+          echo THRESHOLD_MESSAGE=PASS >> "$OUT/native-status.txt"
+
+      - name: Dump native DT and CF and restore clean infobase
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec hotel-final-ibsrv /opt/1cv8/x86_64/8.3.27.1508/ibcmd --pid=1 session list > "$OUT/sessions-before-dump.txt" 2>&1 || true
+          while read -r sid; do
+            [ -n "$sid" ] || continue
+            docker exec hotel-final-ibsrv /opt/1cv8/x86_64/8.3.27.1508/ibcmd --pid=1 session terminate --session="$sid" >> "$OUT/session-terminate-before-dump.txt" 2>&1 || true
+          done < <(sed -nE 's/^[[:space:]]*session[[:space:]]*:[[:space:]]*([^[:space:]]+).*$/\1/p' "$OUT/sessions-before-dump.txt")
+          docker rm -f hotel-final-ibsrv >/dev/null 2>&1 || true
+          sleep 2
+          docker run --rm --entrypoint /bin/bash -v "$WORK:/work" -v "$OUT:/out" logobobah/onec-server11_xvfb:8.3.27.1508 -lc '
+            set -euo pipefail
+            IBCMD=/opt/1cv8/x86_64/8.3.27.1508/ibcmd
+            "$IBCMD" infobase config save --data=/work/data --db-path=/work/db /out/7344000_Variant10.cf 2>&1 | tee /out/06-save-cf.log
+            "$IBCMD" infobase dump --data=/work/data --db-path=/work/db /out/7344000_Variant10.dt 2>&1 | tee /out/07-dump-dt.log
+            test -s /out/7344000_Variant10.cf
+            test -s /out/7344000_Variant10.dt
+            "$IBCMD" infobase create --data=/work/restore-data --db-path=/work/restored-db --create-database --restore=/out/7344000_Variant10.dt 2>&1 | tee /out/08-restore-dt.log
+            "$IBCMD" infobase config check --data=/work/restore-data --db-path=/work/restored-db 2>&1 | tee /out/09-restored-check.log
+            sha256sum /out/7344000_Variant10.cf /out/7344000_Variant10.dt | tee /out/native-sha256.txt
+            chmod -R a+rwX /out /work
+          '
+          echo DUMP_IB=PASS >> "$OUT/native-status.txt"
+          echo RESTORE_IB=PASS >> "$OUT/native-status.txt"
+
+      - name: Verify restored DT in real 1C client
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name hotel-final-restored --network host \
+            --entrypoint /opt/1cv8/x86_64/8.3.27.1508/ibsrv \
+            -v "$WORK:/work" logobobah/onec-server11_xvfb:8.3.27.1508 \
+            --data=/work/restore-data --db-path=/work/restored-db >/dev/null
+          trap 'docker rm -f hotel-final-restored >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 60); do docker logs hotel-final-restored 2>&1 | grep -qi ready && break; sleep 2; done
+          rm -f "$WORK/tmp/7344000-verify.ok"
+          docker run --rm --network host --entrypoint /bin/bash -v "$WORK/tmp:/tmp" hotel-client-tools -lc '
+            set -euo pipefail
+            export HOME=/tmp/home-restored; mkdir -p "$HOME"; export DISPLAY=:88
+            Xvfb :88 -screen 0 1440x900x24 >/tmp/xvfb-restored.log 2>&1 & xp=$!; sleep 2
+            C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
+            timeout 240s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cverify-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/restored.log
+            kill "$xp" >/dev/null 2>&1 || true
+            test -f /tmp/7344000-verify.ok
+            chmod -R a+rwX /tmp
+          '
+          cp "$WORK/tmp/7344000-verify.ok" "$OUT/10-restored-acceptance.txt"
+          for marker in TEST_DATA AUTOSUM THRESHOLD_LOGIC BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT; do
+            grep -q "$marker=PASS" "$OUT/10-restored-acceptance.txt" || exit 1
+          done
+          echo RESTORED_RUNTIME=PASS >> "$OUT/native-status.txt"
+
+      - name: Build final DOCX from real 1C evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$OUT/7344000_Variant10.dt" "$FINAL/7344000_Variant10.dt"
+          cp "$OUT/7344000_Variant10.cf" "$FINAL/7344000_Variant10.cf"
+          python onec-7344000/build_report.py "$OUT/screenshots" "$FINAL" "$OUT/native-status.txt" | tee "$OUT/docx-build.txt"
+          grep -q 'DOCX_VALIDATION=PASS' "$OUT/docx-build.txt"
+          echo DOCX_VALIDATION=PASS >> "$OUT/native-status.txt"
+
+      - name: Render and validate DOCX
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT/rendered"
+          libreoffice --headless --convert-to pdf --outdir "$OUT/rendered" "$FINAL/7344000_Вариант10_Отчет.docx" > "$OUT/libreoffice.txt" 2>&1
+          pdf="$OUT/rendered/7344000_Вариант10_Отчет.pdf"
+          test -s "$pdf"
+          pdfinfo "$pdf" | tee "$OUT/pdfinfo.txt"
+          pages="$(pdfinfo "$pdf" | awk '/^Pages:/ {print $2}')"
+          test "$pages" -ge 10
+          pdftotext "$pdf" "$OUT/report-text.txt"
+          grep -q 'Разработка принципов бронирования номеров для гостиницы' "$OUT/report-text.txt"
+          grep -q '109 300' "$OUT/report-text.txt"
+          unzip -t "$FINAL/7344000_Вариант10_Отчет.docx" > "$OUT/docx-zip-test.txt"
+
+      - name: Create method-compliant ZIP with only DOCX and DT
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+          root=Path("onec-7344000/final-delivery")
+          package=root/"7344000_Вариант10_Комплект.zip"
+          names=["7344000_Вариант10_Отчет.docx","7344000_Variant10.dt"]
+          with zipfile.ZipFile(package,"w",compression=zipfile.ZIP_STORED) as z:
+              for name in names:
+                  z.write(root/name,arcname=name)
+          with zipfile.ZipFile(package,"r") as z:
+              assert z.namelist()==names, z.namelist()
+              assert all(i.flag_bits & 0x1 == 0 for i in z.infolist())
+              bad=z.testzip()
+              assert bad is None, bad
+          print("ZIP_INTEGRITY=PASS")
+          PY
+          echo ZIP_INTEGRITY=PASS >> "$OUT/native-status.txt"
+          sha256sum "$FINAL/"* | tee "$OUT/final-sha256.txt"
+          cat "$OUT/native-status.txt"
+
+      - name: Assert complete final acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          for marker in PLATFORM_INSTALL CREATEINFOBASE LOAD_CONFIG UPDATE_DB_CFG CHECK_MODULES TEST_DATA AUTOSUM THRESHOLD_MESSAGE BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT GUI_SCREENSHOTS DUMP_IB RESTORE_IB RESTORED_RUNTIME DOCX_VALIDATION ZIP_INTEGRITY; do
+            grep -q "$marker=PASS" "$OUT/native-status.txt" || { echo "FINAL_MISSING=$marker"; exit 1; }
+          done
+          printf '%s\n' FINAL_ACCEPTANCE=PASS >> "$OUT/native-status.txt"
+          test -s "$FINAL/7344000_Вариант10_Отчет.docx"
+          test -s "$FINAL/7344000_Variant10.dt"
+          test -s "$FINAL/7344000_Variant10.cf"
+          test -s "$FINAL/7344000_Вариант10_Комплект.zip"
+
+      - name: Cleanup native services
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f hotel-final-ibsrv hotel-final-restored >/dev/null 2>&1 || true
+          sudo chmod -R a+rwX onec-7344000/final-evidence onec-7344000/final-delivery 2>/dev/null || true
+
+      - name: Upload final delivery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7344000-final-delivery
+          path: onec-7344000/final-delivery/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7344000-final-evidence
+          path: onec-7344000/final-evidence/
+          if-no-files-found: error
+          retention-days: 7
