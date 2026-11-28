@@ -70,7 +70,7 @@ capture_one shot-rooms 03-rooms.png 95 15
 capture_one shot-bookings 04-bookings.png 94 15
 capture_one shot-payments 05-payments.png 93 15
 capture_one shot-report 06-report.png 92 10
-capture_one shot-booking-object 07-booking-object.png 91 18
+capture_one shot-live-autosum 07-live-autosum.png 91 18
 capture_one shot-services 08-services.png 90 18
 capture_one shot-threshold 09-threshold.png 89 20
 terminate_sessions
