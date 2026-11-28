@@ -1,1 +1,1 @@
-retry 2 after explicit permission fix
+diagnostic acceptance after VERIFY_ERROR handling
