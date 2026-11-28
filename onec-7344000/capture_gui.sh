@@ -57,7 +57,7 @@ capture_one() {
       pkill -9 -x 1cv8c >/dev/null 2>&1 || true
       pkill -9 -x 1cv8 >/dev/null 2>&1 || true
       kill "$xp" >/dev/null 2>&1 || true
-      chmod -R a+rwX /tmp
+      chmod -R a+rwX /tmp 2>/dev/null || true
     '
   cp "$WORK/tmp/$file" "$OUT/screenshots/$file"
   cp "$WORK/tmp/$param.log" "$OUT/" 2>/dev/null || true
