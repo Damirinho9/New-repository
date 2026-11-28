@@ -217,8 +217,8 @@ jobs:
           rm -f "$WORK/tmp/7344000-verify.ok"
           docker run --rm --network host --entrypoint /bin/bash -v "$WORK/tmp:/tmp" hotel-client-tools -lc '
             set -euo pipefail
-            export HOME=/tmp/home-restored; mkdir -p "$HOME"; export DISPLAY=:94
-            Xvfb :94 -screen 0 1440x900x24 >/tmp/xvfb-restored.log 2>&1 & xp=$!; sleep 2
+            export HOME=/tmp/home-restored; mkdir -p "$HOME"; export DISPLAY=:86
+            Xvfb :86 -screen 0 1440x900x24 >/tmp/xvfb-restored.log 2>&1 & xp=$!; sleep 2
             C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
             timeout 180s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cverify-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/restored.log
             kill "$xp" >/dev/null 2>&1 || true
