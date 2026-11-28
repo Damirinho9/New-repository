@@ -78,8 +78,18 @@ jobs:
               \"\$C\" ENTERPRISE \"/WShttp://127.0.0.1:8314\" \"/C$param\" /DisableStartupDialogs /DisableStartupMessages \"/Out/tmp/$param.log\" &
               p=\$!; sleep 10
               if [ \"$param\" = \"shot-report\" ]; then
-                xdotool mousemove 465 238 click 1
-                sleep 12
+                win=\$(xdotool search --onlyvisible --name 'Бронирование и выручка гостиницы за период' | head -n1 || true)
+                if [ -n \"\$win\" ]; then
+                  xdotool windowactivate --sync \"\$win\"
+                  xdotool mousemove --window \"\$win\" 285 118 click 1
+                  sleep 3
+                  xdotool key --window \"\$win\" ctrl+Return
+                else
+                  xdotool mousemove 465 238 click 1
+                  sleep 3
+                  xdotool key ctrl+Return
+                fi
+                sleep 20
               else
                 sleep 5
               fi
