@@ -124,7 +124,7 @@ jobs:
           cp "$WORK/tmp/7344000-verify.ok" "$OUT/05-functional-acceptance.txt"
           cp "$WORK/tmp/verify.log" "$OUT/" 2>/dev/null || true
           cat "$OUT/05-functional-acceptance.txt"
-          for marker in TEST_DATA AUTOSUM THRESHOLD_MESSAGE BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT; do
+          for marker in TEST_DATA AUTOSUM THRESHOLD_LOGIC BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT; do
             grep -q "$marker=PASS" "$OUT/05-functional-acceptance.txt" || { echo "MISSING_MARKER=$marker"; exit 1; }
             echo "$marker=PASS" >> "$OUT/native-status.txt"
           done
@@ -207,7 +207,7 @@ jobs:
             chmod -R a+rwX /tmp
           '
           cp "$WORK/tmp/7344000-verify.ok" "$OUT/10-restored-functional-acceptance.txt"
-          for marker in TEST_DATA AUTOSUM THRESHOLD_MESSAGE BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT; do
+          for marker in TEST_DATA AUTOSUM THRESHOLD_LOGIC BOOKING_VALIDATION PAYMENT_ACCOUNTING PERIOD_REPORT; do
             grep -q "$marker=PASS" "$OUT/10-restored-functional-acceptance.txt" || exit 1
           done
           echo "RESTORED_RUNTIME=PASS" >> "$OUT/native-status.txt"
