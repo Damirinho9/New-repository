@@ -28,7 +28,7 @@ jobs:
           docker pull logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508
           cat > "$RUNNER_TEMP/Dockerfile.client" <<'EOF'
           FROM logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508
-          RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scrot
+          RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scrot xdotool
           EOF
           docker build -q -t hotel-client-tools -f "$RUNNER_TEMP/Dockerfile.client" "$RUNNER_TEMP"
       - name: Create, seed and start native infobase
@@ -76,7 +76,14 @@ jobs:
               Xvfb :$disp -screen 0 1440x900x24 >/tmp/xvfb-$param.log 2>&1 & xp=\$!; sleep 2
               C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
               \"\$C\" ENTERPRISE \"/WShttp://127.0.0.1:8314\" \"/C$param\" /DisableStartupDialogs /DisableStartupMessages \"/Out/tmp/$param.log\" &
-              p=\$!; sleep 15; scrot \"/tmp/$file\"
+              p=\$!; sleep 10
+              if [ \"$param\" = \"shot-report\" ]; then
+                xdotool mousemove 465 238 click 1
+                sleep 12
+              else
+                sleep 5
+              fi
+              scrot \"/tmp/$file\"
               kill \"\$p\" >/dev/null 2>&1 || true
               pkill -9 -x 1cv8c >/dev/null 2>&1 || true; pkill -9 -x 1cv8 >/dev/null 2>&1 || true
               kill \"\$xp\" >/dev/null 2>&1 || true
