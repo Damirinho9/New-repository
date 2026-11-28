@@ -79,6 +79,7 @@ def add_page_number(section):
     footer = section.footer
     p = footer.paragraphs[0]
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run()
     fld_begin = OxmlElement("w:fldChar")
     fld_begin.set(qn("w:fldCharType"), "begin")
     instr = OxmlElement("w:instrText")
@@ -86,13 +87,14 @@ def add_page_number(section):
     instr.text = " PAGE "
     fld_end = OxmlElement("w:fldChar")
     fld_end.set(qn("w:fldCharType"), "end")
-    p._p.append(fld_begin)
-    p._p.append(instr)
-    p._p.append(fld_end)
+    r._r.append(fld_begin)
+    r._r.append(instr)
+    r._r.append(fld_end)
 
 def add_toc():
     p = doc.add_paragraph()
     p.paragraph_format.first_line_indent = Cm(0)
+    r1 = p.add_run()
     fld_begin = OxmlElement("w:fldChar")
     fld_begin.set(qn("w:fldCharType"), "begin")
     instr = OxmlElement("w:instrText")
@@ -100,11 +102,17 @@ def add_toc():
     instr.text = ' TOC \\o "1-3" \\h \\z \\u '
     fld_sep = OxmlElement("w:fldChar")
     fld_sep.set(qn("w:fldCharType"), "separate")
-    text = OxmlElement("w:t")
-    text.text = "Содержание обновляется при открытии документа."
+    r1._r.append(fld_begin)
+    r1._r.append(instr)
+    r1._r.append(fld_sep)
+    r2 = p.add_run("Содержание обновляется при открытии документа.")
+    r2.font.name = "Times New Roman"
+    r2._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
+    r2.font.size = Pt(12)
+    r3 = p.add_run()
     fld_end = OxmlElement("w:fldChar")
     fld_end.set(qn("w:fldCharType"), "end")
-    p._p.extend([fld_begin, instr, fld_sep, text, fld_end])
+    r3._r.append(fld_end)
 
 def add_para(text="", bold=False, center=False, indent=True):
     p = doc.add_paragraph()
