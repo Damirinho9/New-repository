@@ -191,8 +191,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          IBCMD=/opt/1cv8/x86_64/8.3.27.1508/ibcmd
+          docker exec hotel-ibsrv "$IBCMD" --pid=1 session list > "$OUT/sessions-before-dump.txt" 2>&1 || true
+          mapfile -t sessions < <(sed -nE 's/^[[:space:]]*session[[:space:]]*:[[:space:]]*([^[:space:]]+).*$/\1/p' "$OUT/sessions-before-dump.txt")
+          for sid in "${sessions[@]}"; do
+            docker exec hotel-ibsrv "$IBCMD" --pid=1 session terminate --session="$sid" >> "$OUT/session-terminate.txt" 2>&1 || true
+          done
+          sleep 3
           docker stop hotel-ibsrv >/dev/null
           docker rm hotel-ibsrv >/dev/null
+          sleep 3
           docker run --rm --entrypoint /bin/bash \
             -v "$WORK:/work" -v "$OUT:/out" \
             logobobah/onec-server11_xvfb:8.3.27.1508 -lc '
@@ -257,6 +265,12 @@ jobs:
           docker rm -f hotel-ibsrv-restored >/dev/null 2>&1 || true
           trap - EXIT
           echo "RUNTIME_NATIVE=PASS" | tee "$OUT/runtime-pass.txt"
+
+      - name: Normalize runtime artifact permissions
+        if: always()
+        shell: bash
+        run: |
+          sudo chmod -R a+rwX onec-7344000/runtime-output onec-7344000/runtime-work 2>/dev/null || true
 
       - name: Upload runtime evidence
         if: always()
