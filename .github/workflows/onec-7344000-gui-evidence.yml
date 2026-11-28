@@ -1,0 +1,113 @@
+name: onec-7344000-gui-evidence
+on:
+  push:
+    branches: [onec-7344000-hotel]
+    paths:
+      - '.github/workflows/onec-7344000-gui-evidence.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate current hotel configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/cc-1c-skills"
+          git clone --quiet https://github.com/Nikolay-Shirokov/cc-1c-skills.git "$tools"
+          git -C "$tools" checkout --quiet 4fc37e1f992057847228a69837337bd3c141c059
+          python -m pip install -q lxml
+          src="$RUNNER_TEMP/hotel-xml"
+          python onec-7344000/generate.py "$tools" "$src"
+          echo "SRC=$src" >> "$GITHUB_ENV"
+      - name: Pull native platform images
+        run: |
+          docker pull logobobah/onec-server11_xvfb:8.3.27.1508
+          docker pull logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508
+      - name: Create and seed native infobase
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/hotel-gui-work"
+          out="$GITHUB_WORKSPACE/onec-7344000/gui-evidence"
+          rm -rf "$work" "$out"; mkdir -p "$work/data" "$work/db" "$work/tmp" "$out"
+          chmod -R 777 "$work" "$out"
+          echo "WORK=$work" >> "$GITHUB_ENV"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          docker run --rm --entrypoint /bin/bash -v "$SRC:/src:ro" -v "$work:/work" \
+            logobobah/onec-server11_xvfb:8.3.27.1508 -lc '
+              set -euo pipefail
+              IBCMD=/opt/1cv8/x86_64/8.3.27.1508/ibcmd
+              "$IBCMD" infobase create --data=/work/data --db-path=/work/db --create-database --import=/src --apply --force
+            '
+          docker run -d --name hotel-gui-ibsrv --network host \
+            --entrypoint /opt/1cv8/x86_64/8.3.27.1508/ibsrv \
+            -v "$work:/work" logobobah/onec-server11_xvfb:8.3.27.1508 \
+            --data=/work/data --db-path=/work/db
+          for i in $(seq 1 50); do
+            docker logs hotel-gui-ibsrv 2>&1 | grep -qi 'ready' && break
+            sleep 2
+          done
+          docker run --rm --network host --entrypoint /bin/bash -v "$work/tmp:/tmp" \
+            logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508 -lc '
+              set -euo pipefail
+              export HOME=/tmp/home-seed; mkdir -p "$HOME"; export DISPLAY=:99
+              Xvfb :99 -screen 0 1440x900x24 >/tmp/xvfb-seed.log 2>&1 & xp=$!; sleep 2
+              C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
+              timeout 120s "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" /Cseed-hotel /DisableStartupDialogs /DisableStartupMessages /Out/tmp/seed.log
+              kill "$xp" >/dev/null 2>&1 || true
+              test -f /tmp/7344000-seed.ok
+            '
+      - name: Capture real forms from 1C thin client
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network host --entrypoint /bin/bash -v "$WORK/tmp:/tmp" \
+            logobobah/onec-client-xorgxrdp-lxde:8.3.27.1508 -lc '
+              set -euo pipefail
+              export HOME=/tmp/home-gui; mkdir -p "$HOME"; export DISPLAY=:97
+              Xvfb :97 -screen 0 1440x900x24 >/tmp/xvfb-gui.log 2>&1 & xp=$!; sleep 2
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scrot
+              C=/opt/1cv8/x86_64/8.3.27.1508/1cv8c
+              capture() {
+                param="$1"; file="$2"
+                "$C" ENTERPRISE "/WShttp://127.0.0.1:8314" "/C$param" /DisableStartupDialogs /DisableStartupMessages "/Out/tmp/$param.log" &
+                p=$!
+                sleep 14
+                scrot "/tmp/$file"
+                kill "$p" >/dev/null 2>&1 || true
+                pkill -9 -x 1cv8c >/dev/null 2>&1 || true
+                pkill -9 -x 1cv8 >/dev/null 2>&1 || true
+                sleep 2
+              }
+              capture shot-guests 02-guests.png
+              capture shot-rooms 03-rooms.png
+              capture shot-bookings 04-bookings.png
+              capture shot-payments 05-payments.png
+              capture shot-report 06-report.png
+              kill "$xp" >/dev/null 2>&1 || true
+              chmod -R a+rwX /tmp
+            '
+          cp "$WORK/tmp/"0*.png "$OUT/"
+          cp "$WORK/tmp/"shot-*.log "$OUT/" 2>/dev/null || true
+          identify "$OUT/"*.png | tee "$OUT/screenshots.txt"
+          test "$(find "$OUT" -maxdepth 1 -name '*.png' | wc -l)" -eq 5
+      - name: Stop server and upload GUI evidence
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f hotel-gui-ibsrv >/dev/null 2>&1 || true
+          sudo chmod -R a+rwX onec-7344000/gui-evidence 2>/dev/null || true
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onec-7344000-gui-evidence
+          path: onec-7344000/gui-evidence/
+          if-no-files-found: error
+          retention-days: 7
